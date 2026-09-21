@@ -1,0 +1,17 @@
+# 대용량 데이터 (git에 올리지 않음 — 나중에 HuggingFace Hub로)
+bags/
+bag_lerobot_intermediate/
+lerobot_dataset_v21/
+lerobot_dataset_v30/
+lerobot_dataset/
+inspect_out/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 임시/출력물
+*.xlsx
+*.png
+*.mp4
+*.mcap
