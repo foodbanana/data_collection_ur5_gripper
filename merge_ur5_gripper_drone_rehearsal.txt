@@ -1,0 +1,6 @@
+# ~/data_collection_ur5_gripper/merge_ur5_gripper_drone.txt
+# 병합 대상 에피소드 목록 -> foodbanana/ur5_gripper_drone 생성
+# 작성 파일 이름 = bag_lerobot_intermediate/폴더 -> 폴더 이름만 
+20260921_172851_test_clamp
+20260921_173008_test_clamp
+20260921_173043_test_clamp
