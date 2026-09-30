@@ -307,6 +307,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   - **결정: armature 0.01, D 1.3758** (수렴·안정 전달·D 약 2.13 s 유지를 만족하는 가장 작은 값). mimic 3 관절 armature 는 0:
     실물은 모터 하나가 링크로 네 관절을 움직이므로 회전자 관성은 구동 관절에 한 번만 붙음. mimic 에도 나눠 넣어도(0.0025 × 4) 전달률 97% 로 같음.
     armature 는 관성이라 mimic gain 0 규칙과 별개 (mimic 에 넣어도 K·D 는 0 그대로 확인)
+  - 변경 후 tune_drives D·E·F 재확인 (모두 통과): D 닫힘·열림 2.15 s, 반응 0.033 s / E 떨림 0.00001°, 6.76 ms/step /
+    F 빈손 닫기 64.215° (이전 64.233°), 손가락 떨림 0.00007°
   - 참고 (6.1.0 에셋·공개 설정): Isaac Sim 예제 Franka·UR10e+Robotiq 2F-140 에셋, Isaac Lab UR10e+Robotiq 2F-85/140 설정 모두 armature 0.
     Robotiq 예제는 maxForce 200 Nm 로 힘을 크게 줘서 잡음 (실물 파지력 보정에는 못 씀). Isaac Sim 매뉴얼은 mimic 이 많은 그리퍼에 위치/속도 반복 64/4 권장.
     특정 armature 값을 권장한 자료는 없음
