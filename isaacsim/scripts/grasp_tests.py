@@ -25,6 +25,7 @@
 # 실행:
 #   ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_tests.py --headless
 #   일부만: --tests K,G1   /   GUI: --headless 빼고 --realtime
+#   손목 카메라 창 같이 보기 (GUI): --wrist-view  (tilt 비교는 --wrist-tilt 10)
 #   마찰 조합 비교: --frictions 0.4/0.3 0.6/0.5 ... (정지/운동, 손가락·박스 재질 함께. 조합마다 씬을 새로 만들고 끝에 요약표)
 #
 # 단위: 리포트의 거리 mm, 각도 degree, 힘 N
@@ -51,6 +52,9 @@ parser.add_argument("--max-forces", type=float, nargs="+", default=[1.0, 2.0, 2.
 parser.add_argument("--realtime", action="store_true", help="sim 시간을 실제 시간에 맞춤 (GUI 로 눈으로 볼 때)")
 parser.add_argument("--frictions", nargs="+", default=None,
                     help="마찰 조합 비교: '정지/운동' 여러 개 (예: 0.4/0.3 0.6/0.5). 손가락·박스 재질을 함께 바꿔 조합마다 씬을 새로 만들고 요약표를 낸다")
+parser.add_argument("--wrist-view", action="store_true",
+                    help="GUI: 손목 카메라(config/wrist_camera.yaml)를 만들고 'Wrist camera' 뷰포트 창을 추가로 띄운다 (메인 뷰포트는 그대로)")
+parser.add_argument("--wrist-tilt", type=float, default=0.0, help="--wrist-view 카메라 tilt [degree] (씬 레이어 비교용, 0 = 실물 마운트)")
 parser.add_argument("--mimic-armature", type=float, default=None,
                     help="비교 시험용: mimic 3 관절에도 이 armature [kg·m²] 를 준다 (설정 파일은 구동 관절 rh_r1_joint 에만 줌)")
 args, _ = parser.parse_known_args()
@@ -373,6 +377,7 @@ def open_scene(cfg):
     c.stage, c.robot, c.info = ts.build_test_scene(args.usd, args.physics_variant, base="fixed", config=cfg,
                                                    light=not args.headless)
     c.paths = build_objects(c.stage)
+    c.cam_path = ts.add_wrist_camera(c.stage, ts.load_camera_config(), math.radians(args.wrist_tilt)) if args.wrist_view else None
     c.shapes, c.link_paths = cg.collect(c.stage)
     for n in SENSORS:  # 접촉 보고 (재생 전에 켜야 PhysX 가 접촉 데이터를 만든다). 물리에는 영향 없음
         PhysxSchema.PhysxContactReportAPI.Apply(c.stage.GetPrimAtPath(ts.find_link_path(c.stage, n))) \
@@ -414,7 +419,25 @@ def open_scene(cfg):
         p = c.P0
         set_camera_view(eye=list(p + np.array([0.7, 0.7, 0.25])), target=list(p + np.array([0, 0, -0.1])),
                         camera_prim_path="/OmniverseKit_Persp")
+        if c.cam_path:
+            show_wrist_window(c.cam_path)
     return c
+
+
+_WRIST_WINDOW = []
+
+
+def show_wrist_window(cam_path):
+    """손목 카메라 뷰포트 창 (한 번 만들고, 씬을 새로 만들 때마다 카메라만 다시 연결)."""
+    from omni.kit.viewport.utility import create_viewport_window
+    from pxr import Sdf
+
+    w, h = (int(x) for x in ts.load_camera_config()["resolution"])
+    if not _WRIST_WINDOW:
+        _WRIST_WINDOW.append(create_viewport_window("Wrist camera", width=w, height=h, camera_path=Sdf.Path(cam_path)))
+    api = _WRIST_WINDOW[0].viewport_api
+    api.camera_path = Sdf.Path(cam_path)
+    api.resolution = (w, h)
 
 
 def close_scene(c):

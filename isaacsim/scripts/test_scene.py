@@ -213,6 +213,80 @@ def bound_physics_material(prim):
     return str(mat.GetPath()) if mat else ""
 
 
+WRIST_CAMERA_CONFIG = os.path.join(CONFIG_DIR, "wrist_camera.yaml")
+WRIST_CAMERA_NAME = "wrist_color_camera"
+CAMERA_TILT_PIVOT = "wrist_camera_mount"   # xacro cam_tilt 가 이 프레임의 x 축으로 돈다
+
+
+def load_camera_config(path=WRIST_CAMERA_CONFIG):
+    import yaml
+
+    with open(path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    for key in ("frame", "resolution", "intrinsics", "distortion", "horizontal_aperture", "clipping_range"):
+        if key not in cfg:
+            raise KeyError(f"{path}: '{key}' 항목이 없습니다")
+    if any(abs(float(x)) > 0 for x in cfg["distortion"]):
+        raise ValueError(f"{path}: 왜곡 계수가 0 이 아님 {cfg['distortion']} — sim 카메라는 왜곡 없는 핀홀")
+    return cfg
+
+
+def _rx(angle):
+    from pxr import Gf
+
+    return Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), float(np.degrees(angle))))
+
+
+def camera_local_matrix(stage, optical_path, tilt):
+    """optical frame 기준 Camera prim 의 local 행렬 (USD 행벡터 규약).
+    tilt [rad]: xacro cam_tilt 흉내 — wrist_camera_mount 를 자기 x 축으로 돌린 것과 같은 자세 (씬 레이어 비교용).
+    optical(+z 전방, +y 아래) → USD camera(−z 전방, +y 위) 는 x 축 180°."""
+    from pxr import Usd, UsdGeom
+
+    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    opt = cache.GetLocalToWorldTransform(stage.GetPrimAtPath(optical_path))
+    mount = cache.GetLocalToWorldTransform(stage.GetPrimAtPath(find_link_path(stage, CAMERA_TILT_PIVOT)))
+    a = opt * mount.GetInverse()            # optical → mount (행벡터: p_mount = p_opt · a)
+    return _rx(np.pi) * a * _rx(tilt) * a.GetInverse()
+
+
+def add_wrist_camera(stage, cam_cfg, tilt=0.0):
+    """손목 color 카메라 Camera prim 을 optical frame 아래에 만든다 (메모리 stage 에만). prim 경로를 돌려준다."""
+    from pxr import Gf, UsdGeom
+
+    optical = find_link_path(stage, cam_cfg["frame"])
+    path = f"{optical}/{WRIST_CAMERA_NAME}"
+    cam = UsdGeom.Camera.Define(stage, path)
+    w, h = (int(x) for x in cam_cfg["resolution"])
+    k = cam_cfg["intrinsics"]
+    pix = float(cam_cfg["horizontal_aperture"]) / w
+    cam.CreateProjectionAttr().Set("perspective")
+    cam.CreateFocalLengthAttr().Set(float(k["fx"]) * pix)
+    cam.CreateHorizontalApertureAttr().Set(w * pix)
+    cam.CreateVerticalApertureAttr().Set(h * pix)
+    # aperture offset 부호: 가로는 −, 세로는 +. 2026-09-30 check_wrist_camera.py 표식으로 확인
+    #   (가로를 + 로 두면 렌더링이 OpenCV 투영보다 2 × (cx − w/2) = 24.5 px 왼쪽에 찍힘)
+    # + 0.5: OpenCV 는 픽셀 (i, j) 중심이 (i, j), 렌더러 영상 평면은 (i + 0.5, j + 0.5) → 주점을 0.5 px 옮겨 맞춤
+    cam.CreateHorizontalApertureOffsetAttr().Set(-(float(k["cx"]) + 0.5 - w / 2) * pix)
+    cam.CreateVerticalApertureOffsetAttr().Set((float(k["cy"]) + 0.5 - h / 2) * pix)
+    cam.CreateClippingRangeAttr().Set(Gf.Vec2f(*[float(x) for x in cam_cfg["clipping_range"]]))
+    _set_matrix(cam.GetPrim(), camera_local_matrix(stage, optical, tilt))
+    return path
+
+
+def _set_matrix(prim, m):
+    """prim 의 변환을 행렬 op 하나로 (다른 코드가 translate/orient op 로 바꿔 놓아도 다시 행렬 하나로)."""
+    from pxr import UsdGeom
+
+    UsdGeom.Xformable(prim).MakeMatrixXform().Set(m)
+
+
+def set_wrist_camera_tilt(stage, cam_path, tilt):
+    """재생 중에도 Camera prim 자세만 바꿔 tilt 비교 (카메라 몸체·충돌 형상은 그대로)."""
+    prim = stage.GetPrimAtPath(cam_path)
+    _set_matrix(prim, camera_local_matrix(stage, str(prim.GetParent().GetPath()), tilt))
+
+
 def filtered_pairs(stage):
     from pxr import Usd, UsdPhysics
 

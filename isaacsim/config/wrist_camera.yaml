@@ -1,0 +1,18 @@
+# =============================================================
+# wrist_camera.yaml — 손목 D435i color 카메라 (docs/PLAN.md 1-7)
+#
+# 씬 레이어에서 로봇 USD 의 wrist_camera_color_optical_frame 아래에 Camera prim 을 만든다 (로봇 USD 원본은 그대로).
+# intrinsics 는 실물 camera_info (OpenCV 핀홀) → USD Camera 속성으로 환산 (test_scene.add_wrist_camera)
+#   픽셀 크기 = horizontal_aperture / width, focalLength = fx × 픽셀 크기, verticalAperture = height × 픽셀 크기,
+#   aperture offset = (−(cx + 0.5 − width/2), cy + 0.5 − height/2) × 픽셀 크기 (가로 부호 반대, 0.5 = 픽셀 중심 규약, 표식으로 확인). USD Camera 는 초점거리가 하나라 fy 는 fx 로 근사 (차이 0.07%)
+# =============================================================
+
+# 실물: 손목에 단 D435i (serial 843112074130, 이전에는 third view 로 쓰던 카메라), 녹화와 같은 color 640x480
+#   2026-09-30 ros2 topic echo --once /d435i/d435i/color/camera_info (distortion plumb_bob, 계수 모두 0)
+serial: "843112074130"
+frame: wrist_camera_color_optical_frame
+resolution: [640, 480]          # [width, height]
+intrinsics: {fx: 618.5508422851562, fy: 618.956298828125, cx: 332.2762756347656, cy: 239.38070678710938}
+distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # plumb_bob. sim 은 왜곡 없는 핀홀 → 0 이 아니면 에러
+horizontal_aperture: 20.955     # [mm] 임의로 정한 센서 폭 (비율만 의미 있음)
+clipping_range: [0.01, 10.0]    # [m] 손가락이 카메라에서 수 cm 거리
