@@ -1,0 +1,268 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.3.2"
+    }
+    defaultPrim = "ur5_rh_p12_d435i"
+    endTimeCode = 1000000
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    startTimeCode = 0
+    upAxis = "Z"
+)
+
+over "ur5_rh_p12_d435i" (
+    prepend apiSchemas = ["IsaacRobotAPI"]
+)
+{
+    prepend rel isaac:physics:robotJoints = [
+        </ur5_rh_p12_d435i/Physics/root_joint>,
+        </ur5_rh_p12_d435i/Physics/tn__base_linkbase_link_inertia_kc0>,
+        </ur5_rh_p12_d435i/Physics/shoulder_pan_joint>,
+        </ur5_rh_p12_d435i/Physics/shoulder_lift_joint>,
+        </ur5_rh_p12_d435i/Physics/elbow_joint>,
+        </ur5_rh_p12_d435i/Physics/wrist_1_joint>,
+        </ur5_rh_p12_d435i/Physics/wrist_2_joint>,
+        </ur5_rh_p12_d435i/Physics/wrist_3_joint>,
+        </ur5_rh_p12_d435i/Physics/wrist_mount_joint>,
+        </ur5_rh_p12_d435i/Physics/gripper_bracket_joint>,
+        </ur5_rh_p12_d435i/Physics/rh_p12_rn_mount_joint>,
+        </ur5_rh_p12_d435i/Physics/rh_r1_joint>,
+        </ur5_rh_p12_d435i/Physics/rh_r2>,
+        </ur5_rh_p12_d435i/Physics/rh_l1>,
+        </ur5_rh_p12_d435i/Physics/rh_l2>,
+        </ur5_rh_p12_d435i/Physics/wrist_camera_link_joint>,
+    ]
+    prepend rel isaac:physics:robotLinks = [
+        </ur5_rh_p12_d435i/Geometry/robot_mount>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket/rh_p12_rn_base>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket/rh_p12_rn_base/rh_p12_rn_r1>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket/rh_p12_rn_base/rh_p12_rn_r1/rh_p12_rn_r2>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket/rh_p12_rn_base/rh_p12_rn_l1>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/gripper_bracket/rh_p12_rn_base/rh_p12_rn_l1/rh_p12_rn_l2>,
+        </ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/wrist_camera_mount/wrist_camera_bottom_screw_frame/wrist_camera_link>,
+    ]
+    token isaac:robotType = "Default"
+
+    over "Geometry"
+    {
+        over "robot_mount" (
+            prepend apiSchemas = ["IsaacLinkAPI"]
+        )
+        {
+            over "base_link"
+            {
+                over "base_link_inertia" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "shoulder_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                        over "upper_arm_link" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                            over "forearm_link" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                                over "wrist_1_link" (
+                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                )
+                                {
+                                    over "wrist_2_link" (
+                                        prepend apiSchemas = ["IsaacLinkAPI"]
+                                    )
+                                    {
+                                        over "wrist_3_link" (
+                                            prepend apiSchemas = ["IsaacLinkAPI"]
+                                        )
+                                        {
+                                            over "flange"
+                                            {
+                                                over "tool0"
+                                                {
+                                                    over "wrist_mount" (
+                                                        prepend apiSchemas = ["IsaacLinkAPI"]
+                                                    )
+                                                    {
+                                                        over "gripper_bracket" (
+                                                            prepend apiSchemas = ["IsaacLinkAPI"]
+                                                        )
+                                                        {
+                                                            over "rh_p12_rn_base" (
+                                                                prepend apiSchemas = ["IsaacLinkAPI"]
+                                                            )
+                                                            {
+                                                                over "rh_p12_rn_r1" (
+                                                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                                                )
+                                                                {
+                                                                    over "rh_p12_rn_r2" (
+                                                                        prepend apiSchemas = ["IsaacLinkAPI"]
+                                                                    )
+                                                                    {
+                                                                    }
+                                                                }
+
+                                                                over "rh_p12_rn_l1" (
+                                                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                                                )
+                                                                {
+                                                                    over "rh_p12_rn_l2" (
+                                                                        prepend apiSchemas = ["IsaacLinkAPI"]
+                                                                    )
+                                                                    {
+                                                                    }
+                                                                }
+
+                                                                over "rh_p12_rn_tcp" (
+                                                                    prepend apiSchemas = ["IsaacSiteAPI"]
+                                                                )
+                                                                {
+                                                                }
+                                                            }
+                                                        }
+
+                                                        over "wrist_camera_mount"
+                                                        {
+                                                            over "wrist_camera_bottom_screw_frame"
+                                                            {
+                                                                over "wrist_camera_link" (
+                                                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                                                )
+                                                                {
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            over "ft_frame" (
+                                                prepend apiSchemas = ["IsaacSiteAPI"]
+                                            )
+                                            {
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        over "root_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "tn__base_linkbase_link_inertia_kc0" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "shoulder_pan_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "shoulder_lift_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "elbow_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_1_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_2_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_3_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_mount_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "gripper_bracket_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rh_p12_rn_mount_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rh_r1_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rh_r2" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rh_l1" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rh_l2" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_camera_link_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+    }
+}
+

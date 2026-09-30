@@ -1,0 +1,176 @@
+<?xml version="1.0"?>
+<!--
+  UR5 (CB3) + sandwich wrist mount + RH-P12-RN(A) + RealSense D435i  (single articulation for Isaac Sim)
+
+  Chain:  robot_mount -> base_link ... wrist_3_link -> flange -> tool0
+          tool0 -> wrist_mount (sandwich, thickness = mount_thickness)
+          wrist_mount -> rh_p12_rn_base (at z = mount_thickness)
+          wrist_mount -> camera_bottom_screw_frame (the 1/4" screw hole on the mount)
+
+  Build with scripts/build_urdf.sh (resolves all mesh paths to absolute paths).
+
+  ### Mount geometry is measured from the STL. Values marked "CHECK"/"MEASURE" must be confirmed on the real hardware. ###
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ur5_rh_p12_d435i">
+
+  <!-- ================= arguments ================= -->
+  <xacro:arg name="kinematics_params"
+             default="$(find ur_description)/config/ur5/default_kinematics.yaml"/>
+  <!-- tip: pass your real calibration for sim/real consistency:
+       kinematics_params:=$HOME/my_robot_calibration.yaml -->
+
+  <!-- ===== wrist mount: "Realsense Support UniversalRobots" (meshes/mount/wrist_mount.stl, mm) =====
+       Measured from the STL:
+         - 5.0 mm base plate sandwiched between UR flange and gripper (flange face = mesh y=0, gripper face = mesh y=-5)
+         - 6.45 mm rim (inner D63.5) wraps around the UR flange (behind the flange face, no offset)
+         - 4x D6.5 on PCD50 (ISO 9409-1-50-4-M6), D6.5 pin hole on PCD50, D34 bore
+         - camera tab: 2x M3 clearance holes, 45 mm apart (= D435 rear M3 spacing), 57.5 mm from flange axis
+       wrist_mount frame = tool0 frame (origin on flange face, +z toward the gripper). Tab points to +y. -->
+  <xacro:arg name="mount_thickness" default="0.005"/>   <!-- plate thickness: flange face -> gripper face [m] -->
+  <xacro:arg name="mount_mass" default="0.05"/>         <!-- MEASURE: 45.1 cm^3; PLA 100% ~0.056 kg, Al ~0.122 kg -->
+  <xacro:arg name="mount_yaw" default="0.0"/>           <!-- CHECK vs real: rotation of mount(+camera+gripper) about tool0 z -->
+  <!-- RH-P12-RN-UR bracket (FRP42-A120K) between mount and gripper: mount face -> gripper mesh z=0.
+       ~10 mm estimated from the RH-P12-RN-UR manual side view (scale from the 54 mm body width):
+       flange->wide body 18.8 mm - mesh boss 8.9 mm = 9.9 mm, cross-check flange->fingertip 126.5 - 116.3 = 10.2 mm.
+       CHECK with calipers (+-1 mm). -->
+  <xacro:arg name="adapter_thickness" default="0.010"/>
+  <xacro:arg name="adapter_mass" default="0.08"/>        <!-- MEASURE [kg] -->
+
+  <!-- gripper rotation about wrist_mount z. pi/2: fingers open along the camera's horizontal axis
+       (both fingers side by side in the wrist image). 0 would make an open finger touch the camera body. -->
+  <xacro:arg name="gripper_yaw" default="1.5708"/>      <!-- CHECK vs real -->
+
+  <!-- camera_bottom_screw_frame pose in wrist_mount frame (+x = viewing direction, +z = camera top).
+       Camera back face on the tab (z=0.005), rear M3 holes at (+-0.0225, 0.0575).
+       Assumes D435 rear M3 holes at half body height (12.5 mm) -> CHECK on the real camera.
+       values below are relative to wrist_camera_mount (hole centre on the tab face):
+       default = camera top toward the tool axis:        xyz="0 0.0125 0.01015"  rpy="1.5708 -1.5708 0"
+       upside-down (camera top away from the tool axis): xyz="0 -0.0125 0.01015" rpy="-1.5708 -1.5708 0" -->
+  <!-- wrist_camera_mount frame: centre of the two rear M3 holes on the tab face, tilted about x by cam_tilt.
+       cam_tilt > 0 pitches the camera toward the tool axis (for evaluating a tilted mount; 0 = downloaded mount). -->
+  <xacro:arg name="cam_tilt" default="0.0"/>             <!-- [rad] -->
+  <xacro:arg name="cam_xyz" default="0.0 0.0125 0.01015"/>  <!-- screw frame in wrist_camera_mount (top toward axis) -->
+  <xacro:arg name="cam_rpy" default="1.5708 -1.5708 0.0"/>
+
+  <!-- absolute path of this package (build_urdf.sh passes it automatically) -->
+  <xacro:arg name="pkg_dir" default=""/>
+  <xacro:property name="pkg_dir" value="$(arg pkg_dir)"/>
+  <xacro:property name="t_mount" value="$(arg mount_thickness)"/>
+  <xacro:property name="m_mount" value="$(arg mount_mass)"/>
+
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435i.urdf.xacro"/>
+  <xacro:include filename="rh_p12_rn_a.urdf.xacro"/>
+
+  <!-- ================= root: mounting plate =================
+       This is the link you fix (FixedJoint) to the table now, and to the 6-DOF base later.
+       No "world" link on purpose, so the importer does not weld the robot to the world origin. -->
+  <link name="robot_mount">
+    <inertial>
+      <origin xyz="0 0 -0.005" rpy="0 0 0"/>
+      <mass value="1.0"/>
+      <inertia ixx="1.7e-3" ixy="0" ixz="0" iyy="1.7e-3" iyz="0" izz="3.3e-3"/>
+    </inertial>
+  </link>
+
+  <!-- ================= UR5 (CB3) ================= -->
+  <xacro:ur_robot
+    name="ur5"
+    tf_prefix=""
+    parent="robot_mount"
+    joint_limits_parameters_file="$(find ur_description)/config/ur5/joint_limits.yaml"
+    kinematics_parameters_file="$(arg kinematics_params)"
+    physical_parameters_file="$(find ur_description)/config/ur5/physical_parameters.yaml"
+    visual_parameters_file="$(find ur_description)/config/ur5/visual_parameters.yaml"
+    force_abs_paths="true">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:ur_robot>
+
+  <!-- ================= sandwich wrist mount ================= -->
+  <joint name="wrist_mount_joint" type="fixed">
+    <parent link="tool0"/>
+    <child link="wrist_mount"/>
+    <origin xyz="0 0 0" rpy="0 0 $(arg mount_yaw)"/>
+  </joint>
+
+  <link name="wrist_mount">
+    <visual>
+      <!-- mesh frame -> wrist_mount: Rx(-90deg) (mesh -y -> +z, mesh +z -> +y) -->
+      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
+      <geometry><mesh filename="${pkg_dir}/meshes/mount/wrist_mount.stl" scale="0.001 0.001 0.001"/></geometry>
+      <material name="mount_black"><color rgba="0.1 0.1 0.1 1"/></material>
+    </visual>
+    <!-- simple collision (a convex hull of the mesh would fill the bore and the rim) -->
+    <collision>
+      <origin xyz="0 0 ${t_mount/2}" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.0375" length="${t_mount}"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.015 0.0544 -0.0007" rpy="0 0 0"/>
+      <geometry><box size="0.085 0.018 0.0114"/></geometry>
+    </collision>
+    <inertial>
+      <!-- COM and per-kg inertia computed from the STL (uniform density) -->
+      <origin xyz="-0.0019 0.0224 0.0001" rpy="0 0 0"/>
+      <mass value="${m_mount}"/>
+      <inertia ixx="${m_mount*8.910e-04}" ixy="${m_mount*6.40e-05}" ixz="${m_mount*3.1e-06}"
+               iyy="${m_mount*4.615e-04}" iyz="${m_mount*1.22e-05}" izz="${m_mount*1.3319e-03}"/>
+    </inertial>
+  </link>
+
+  <!-- ================= RH-P12-RN-UR bracket (simple shapes) ================= -->
+  <xacro:property name="t_adp" value="$(arg adapter_thickness)"/>
+  <xacro:property name="m_adp" value="$(arg adapter_mass)"/>
+  <joint name="gripper_bracket_joint" type="fixed">
+    <parent link="wrist_mount"/>
+    <child link="gripper_bracket"/>
+    <origin xyz="0 0 ${t_mount}" rpy="0 0 $(arg gripper_yaw)"/>
+  </joint>
+  <link name="gripper_bracket">
+    <!-- round plate D63 x 4 mm on the mount, then a 42 x 42 square frame up to the gripper -->
+    <visual>
+      <origin xyz="0 0 0.002" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.0315" length="0.004"/></geometry>
+      <material name="bracket_black"><color rgba="0.08 0.08 0.08 1"/></material>
+    </visual>
+    <visual>
+      <origin xyz="0 0 ${0.004 + (t_adp-0.004)/2}" rpy="0 0 0"/>
+      <geometry><box size="0.042 0.042 ${t_adp-0.004}"/></geometry>
+      <material name="bracket_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.002" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.0315" length="0.004"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 ${0.004 + (t_adp-0.004)/2}" rpy="0 0 0"/>
+      <geometry><box size="0.042 0.042 ${t_adp-0.004}"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${t_adp/2}" rpy="0 0 0"/>
+      <mass value="${m_adp}"/>
+      <inertia ixx="${m_adp*(3*0.0315**2 + t_adp**2)/12}" ixy="0" ixz="0"
+               iyy="${m_adp*(3*0.0315**2 + t_adp**2)/12}" iyz="0" izz="${m_adp*0.0315**2/2}"/>
+    </inertial>
+  </link>
+
+  <!-- ================= gripper ================= -->
+  <xacro:rh_p12_rn_a prefix="" parent="gripper_bracket" mesh_dir="${pkg_dir}/meshes/rh_p12_rn_a">
+    <origin xyz="0 0 ${t_adp}" rpy="0 0 0"/>
+  </xacro:rh_p12_rn_a>
+
+  <!-- ================= wrist camera (D435i) =================
+       use_nominal_extrinsics=true -> creates camera_color_frame / camera_color_optical_frame
+       (in the real robot the driver publishes these; in sim we need them in the model). -->
+  <joint name="wrist_camera_mount_joint" type="fixed">
+    <parent link="wrist_mount"/>
+    <child link="wrist_camera_mount"/>
+    <origin xyz="0 0.0575 ${t_mount}" rpy="$(arg cam_tilt) 0 0"/>
+  </joint>
+  <link name="wrist_camera_mount"/>
+
+  <xacro:sensor_d435i parent="wrist_camera_mount" name="wrist_camera" use_nominal_extrinsics="true" add_plug="false" use_mesh="true">
+    <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
+  </xacro:sensor_d435i>
+
+</robot>
