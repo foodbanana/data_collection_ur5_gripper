@@ -4,8 +4,8 @@
 #
 # drive 설정 파일(들)로 A~D 시험을 돌리고 나란히 비교한다. 테스트 씬은 1-4 와 같다 (fixed base, z = 0.762 m).
 #   A. 스텝 응답: 홈 자세에서 팔 관절별 +0.05 rad (판정), +0.2·+1.0 rad (참고: 50 Hz 텔레옵 명령 사이 변화는 최대 0.063 rad)
-#   B. 중력 유지: gravity_worst_cases.yaml 의 관절별 최악 자세 + 드론 1.5 kg (무게중심 공구 축에서 3·5 cm) → 정상상태 오차
-#                드론은 별도 강체로 붙인다 (gravity_ff 가 보상하지 않도록). 바닥 없음 (팔이 바닥에 닿지 않게)
+#   B. 중력 유지: gravity_worst_cases.yaml(--cases)의 관절별 최악 자세 + 드론 1.5 kg (무게중심 공구 축에서 3·5 cm) → 정상상태 오차
+#                드론 무게는 그리퍼 base 링크에 매 스텝 외력으로 가한다 (gravity_ff 가 보상하지 않음). 씬은 설정마다 한 번. 바닥 없음
 #   C. 텔레옵식 추종: 50 Hz zero-order hold 명령으로 부드러운 궤적 → 추종 오차와 지연
 #   D. 그리퍼 열림·닫힘 시간 (정의: 명령 순간부터 위치 변화가 멈출 때(최종값의 2% 이내)까지). 목표값 이동 방식
 #   E. 홈 자세에서 가만히 3 초: 명령 위치에서 벗어남·떨림(peak-to-peak), 최대 관절 속도, NaN, physics 스텝당 계산 시간
@@ -241,28 +241,45 @@ def a_pass(r):
 
 # ── B ──
 def test_b(cfg, cases):
+    """드론 무게는 매 physics 스텝 그리퍼 base 링크의 (TCP + offset) 점에 가하는 외력 (0, 0, −m·g) 으로 흉내낸다.
+    articulation 밖의 힘이라 gravity_ff 가 보상하지 않는다. 씬은 설정마다 한 번만 만들고 경우마다 자세만 바꾼다
+    (예전: 경우마다 씬을 새로 만들고 별도 강체를 FixedJoint 로 붙임 → 느림). 정적 시험이라 드론 관성은 무시."""
+    from isaacsim.core.experimental.prims import RigidPrim
+
     res = []
     pay_kg, pay_pos = cases["payload_kg"], np.array(cases["payload_pos"], dtype=float)
-    for case in cases["cases"]:
-        local = pay_pos + np.array([case["offset"][0], case["offset"][1], 0.0])
-        c = open_scene(cfg, ground=False, payload_pos=local, payload_kg=pay_kg)
-        try:
-            ai = np.array([c.drive.idx[n] for n in ts.ARM_JOINTS])
+    c = open_scene(cfg, ground=False)
+    try:
+        ai = np.array([c.drive.idx[n] for n in ts.ARM_JOINTS])
+        link = RigidPrim(ts.find_link_path(c.stage, ts.PAYLOAD_LINK))
+        force = np.array([[0.0, 0.0, -pay_kg * 9.81]])
+        state = {"local": pay_pos}
+
+        def push(t):  # pre-step: 링크 현재 자세에서 드론 무게중심 위치에 무게를 가함
+            pos, quat = (x.numpy()[0] for x in link.get_world_poses())
+            w, x, y, z = quat
+            R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                          [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                          [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+            p = pos + R @ state["local"]
+            link.apply_forces_and_torques_at_pos(forces=force, positions=p.reshape(1, 3), local_frame=False)
+
+        c.rec.cmd = push
+        for case in cases["cases"]:
+            state["local"] = pay_pos + np.array([case["offset"][0], case["offset"][1], 0.0])
             pose = np.array(case["pose"], dtype=float)
             c.drive.reset_pose(pose)
-            simulation_app.update()
-            c.drive.reset_pose(pose)
-            ts.snap_payload(c.link, local)
             run_for(c, B_RUN - B_AVG)
-            t0 = c.rec.start()
+            c.rec.start()
             run_for(c, B_AVG)
             t, q, qd = c.rec.stop()
             err = np.degrees(np.abs(q[:, ai].mean(axis=0) - pose))
             j = ts.ARM_JOINTS.index(case["joint"])
             res.append(dict(joint=case["joint"], off=case["offset_cm"], tau=case["tau"], err_j=float(err[j]),
                             err_max=float(err.max()), err_all=err, nan=not np.isfinite(q).all()))
-        finally:
-            close_scene(c)
+        c.rec.cmd = None
+    finally:
+        close_scene(c)
     return res
 
 

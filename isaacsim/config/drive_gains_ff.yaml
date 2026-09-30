@@ -26,6 +26,19 @@ articulation:
   sleep_threshold: 0.0             # 수면 끔. 팔이 멈춘 채 가벼운 손가락만 움직이면 운동에너지가 작아 articulation 이 잠들어
                                    # 그리퍼가 중간에 멈춘다 (2026-09-30 D 시험에서 확인)
 
+# 충돌 형상 (씬 레이어에서 적용, 로봇 USD 원본은 그대로)
+collision_shapes:
+  # convex decomposition: 지정한 링크의 충돌 메시를 convex hull 하나 대신 여러 볼록 조각으로 근사.
+  #   forearm 은 convex hull 이 오목한 부분을 메워, 실물로는 닿지 않는 자세에서 wrist_2 등과 겹친다고 판정됨 (2026-09-30, PLAN 1-6)
+  convex_decomposition:
+    enabled: false
+    links: [forearm_link]
+    max_convex_hulls: 32
+    hull_vertex_limit: 64
+    voxel_resolution: 500000
+    error_percentage: 2.0
+    shrink_wrap: true
+
 home_pose: [0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0]   # 팔 6관절 [rad]. 드론 파지 시작 자세는 2단계에서 정함
 
 # 팔: gravity_ff 켬, ω = 30 rad/s (정착시간 기준 20~40 의 가운데). K = I·ω², D = 2·I·ω (ζ = 1), I 는 drive_gains.yaml 과 같음

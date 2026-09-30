@@ -243,6 +243,21 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     - `check_articulation.py`: 켠 상태 8/8 PASS
     - 계산 시간: 끈 상태 대비 **약 +1%**
     - B 는 비교하지 않음: 자기 충돌 자세가 섞여 있어, 가능한 자세만으로 최악 경우를 다시 찾은 뒤 따로 결정
+- **가능한 자세 기준 B (2026-09-30)**: `compute_gain_seed.py --collision-free` 로 자기 충돌 자세를 버리고 가능한 자세 302 개만으로
+  최악 중력 경우를 다시 찾아 `isaacsim/config/gravity_worst_cases.yaml` 을 교체 (823 번 뽑아 521 개 버림).
+  K 는 기존 대비 −0.6 ~ +1.1% 로 거의 같아 `drive_gains.yaml` 은 그대로. 새 경우로 B 12/12 통과 (최대 오차 0.067°, self-collision 켬)
+  - B 는 드론 무게를 별도 강체 대신 **그리퍼 base 링크에 매 스텝 가하는 외력**으로 바꿈 (씬을 설정마다 한 번만 만듦 → 설정 하나 약 33 s)
+- **forearm convex decomposition (2026-09-30)**: `collision_shapes.convex_decomposition` (links: [forearm_link], 씬 레이어에서 적용,
+  그 링크의 instance 만 풀어 approximation 을 convexDecomposition 으로. 로봇 USD 원본은 그대로)
+  - 이유: forearm 의 convex hull 이 오목한 부분을 메워, 원래 메시로는 겹치지 않는 자세 62 개가 겹친다고 판정됨 (주로 forearm–wrist_2)
+  - 확인 (`check_self_collision.py --skip-distances --physx-poses`, 순간이동 직후 PhysX 접촉 보고로 파고듦 > 0.5 mm 인 자세 수):
+    - convex hull 때문에만 겹침 62 개: decomposition 끔 58 → 켬 **2** (남은 2 개는 upper_arm 쪽 쌍, forearm 과 무관)
+    - 실제 겹침 274 개: 끔 270 → 켬 263 (**8 개는 켜면 PhysX 가 겹침을 보고하지 않음** — decomposition 조각이 원래 메시보다 조금 작아 얕은 겹침을 놓치는 것으로 추정)
+    - 가능한 자세 302 개: 끔 1 → 켬 0
+  - E·F: 켜기 전과 같음 (가만히 떨림 0.00001°, 빈손 닫기 64.233°·떨림 0.00003°). 계산 시간 약 +3~5% (E 6.79 → 7.00 ms/step, 전체 7.00 → 7.35 ms/step, 1 회 측정)
+- **메모 — base–upper_arm 판정 불가 자세 (약 187 개)**: `base_link_inertia` 원래 메시가 닫혀 있지 않아(watertight 아님) convex hull 겹침이
+  실제 겹침인지 판정하지 못함. upper_arm 이 base 쪽으로 크게 내려오는 자세라 공중 드론 파지에서는 거의 쓰지 않으므로 지금은 넘어감.
+  필요하면 base 메시를 닫거나 decomposition 을 base 에도 적용해 다시 확인
   - 끄는 기준 (하나라도 해당하면 false 로 되돌리고 원인·겹친 쌍을 여기에 기록): 가만히 있을 때 관절 0.01° 이상 흔들림이나 링크 튐 /
     끈 상태에서 통과하던 A~D 항목 실패 / 실물에서는 닿지 않을 자세에서 막힘 / 계산 시간 크게 증가
 

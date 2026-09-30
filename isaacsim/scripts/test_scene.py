@@ -49,7 +49,7 @@ def load_config(path=DEFAULT_CONFIG):
         if parts[-1] not in node:
             raise KeyError(f"설정 덮어쓰기 대상이 없음: {key}")
         node[parts[-1]] = yaml.safe_load(val)
-    for key in ("gravity_ff", "articulation", "home_pose", "arm", "gripper", "mimic"):
+    for key in ("gravity_ff", "articulation", "collision_shapes", "home_pose", "arm", "gripper", "mimic"):
         if key not in cfg:
             raise KeyError(f"{path}: '{key}' 항목이 없습니다")
     return cfg
@@ -79,6 +79,56 @@ def _apply_filter_pairs(stage, pairs):
     for a, b in pairs:
         pa, pb = stage.GetPrimAtPath(find_link_path(stage, a)), find_link_path(stage, b)
         UsdPhysics.FilteredPairsAPI.Apply(pa).CreateFilteredPairsRel().AddTarget(pb)
+
+
+def _link_collision_meshes(stage, body):
+    """링크(강체) 자신의 충돌 메시 prim 경로 (자식 링크 것은 제외, instance proxy 포함)."""
+    from pxr import Usd, UsdGeom, UsdPhysics
+
+    out = []
+    for p in Usd.PrimRange(body, Usd.TraverseInstanceProxies()):
+        if not (p.HasAPI(UsdPhysics.CollisionAPI) and p.IsA(UsdGeom.Mesh)):
+            continue
+        b = p
+        while b and not b.HasAPI(UsdPhysics.RigidBodyAPI):
+            b = b.GetParent()
+        if b and b.GetPath() == body.GetPath():
+            out.append(str(p.GetPath()))
+    return out
+
+
+def _apply_convex_decomposition(stage, cd):
+    """지정 링크의 충돌 메시를 convexDecomposition 으로 (메모리 stage 에만). instance 로 들어온 메시는
+    그 instance 를 풀어야(instanceable=false) 속성을 쓸 수 있다 → 해당 링크 부분만 푼다. 적용한 prim 경로 목록을 돌려줌."""
+    from pxr import PhysxSchema, UsdPhysics
+
+    if not cd["enabled"]:
+        return []
+    applied = []
+    for link in cd["links"]:
+        body = stage.GetPrimAtPath(find_link_path(stage, link))
+        paths = _link_collision_meshes(stage, body)
+        if not paths:
+            raise RuntimeError(f"{link} 에 충돌 메시가 없음")
+        for path in paths:
+            a = stage.GetPrimAtPath(path)
+            while a and a.GetPath() != body.GetPath():
+                if a.IsInstance():
+                    a.SetInstanceable(False)
+                a = a.GetParent()
+        for path in paths:
+            prim = stage.GetPrimAtPath(path)
+            if prim.IsInstanceProxy():
+                raise RuntimeError(f"instance 를 풀지 못함: {path}")
+            UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr().Set("convexDecomposition")
+            api = PhysxSchema.PhysxConvexDecompositionCollisionAPI.Apply(prim)
+            api.CreateMaxConvexHullsAttr().Set(int(cd["max_convex_hulls"]))
+            api.CreateHullVertexLimitAttr().Set(int(cd["hull_vertex_limit"]))
+            api.CreateVoxelResolutionAttr().Set(int(cd["voxel_resolution"]))
+            api.CreateErrorPercentageAttr().Set(float(cd["error_percentage"]))
+            api.CreateShrinkWrapAttr().Set(bool(cd["shrink_wrap"]))
+            applied.append(path)
+    return applied
 
 
 def filtered_pairs(stage):
@@ -159,6 +209,7 @@ def build_test_scene(usd_path, physics_variant="physx", base_z=ROBOT_BASE_Z, bas
     root_prim = _make_fixed_base(stage) if base == "fixed" else stage.GetPrimAtPath(MOUNT_PATH)
     _apply_articulation_settings(root_prim, config["articulation"])
     _apply_filter_pairs(stage, config["articulation"]["collision_filter_pairs"])
+    info["convex_decomposition"] = _apply_convex_decomposition(stage, config["collision_shapes"]["convex_decomposition"])
     info["root"] = str(root_prim.GetPath())
 
     return stage, Articulation(ROBOT_PATH), info
@@ -186,6 +237,16 @@ def verify_articulation(stage, robot, info, config):
         "self_collision": api.GetEnabledSelfCollisionsAttr().Get(),
         "sleep_threshold": api.GetSleepThresholdAttr().Get(),
     }
+    cd = config["collision_shapes"]["convex_decomposition"]
+    cd_got = []
+    for link in (cd["links"] if cd["enabled"] else []):
+        from pxr import UsdPhysics
+
+        for path in _link_collision_meshes(stage, stage.GetPrimAtPath(find_link_path(stage, link))):
+            cd_got.append((link, UsdPhysics.MeshCollisionAPI(stage.GetPrimAtPath(path)).GetApproximationAttr().Get()))
+    lines.append(f"convex_decomposition: enabled={cd['enabled']} " + ", ".join(f"{l}={a}" for l, a in cd_got))
+    if cd["enabled"] and (not cd_got or any(a != "convexDecomposition" for _, a in cd_got)):
+        problems.append(f"convex decomposition 이 적용되지 않음: {cd_got}")
     want_pairs = {frozenset(p) for p in config["articulation"]["collision_filter_pairs"]}
     got_pairs = filtered_pairs(stage)
     lines.append(f"collision_filter_pairs: {sorted(tuple(sorted(p)) for p in got_pairs)} (설정 {len(want_pairs)} 쌍)")

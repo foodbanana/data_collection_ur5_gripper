@@ -8,6 +8,9 @@
 #           ω = max(정착시간 기준 ω, 중력 처짐 기준 ω). 중력은 드론 1.5 kg, 무게중심이 공구 축에서 5 cm 벗어난 최악 방향
 #   gravity_ff 설정(drive_gains_ff.yaml)용: ω = W_FF (정착시간 기준), 드론 무게만 남는 부하로 예상 처짐 출력
 #   B 시험용 관절별 최악 경우를 isaacsim/config/gravity_worst_cases.yaml 로 저장
+#   --collision-free: 자기 충돌(관절 연결이 아닌 링크 쌍의 충돌 형상 겹침) 자세를 버리고 가능한 자세만 쓴다.
+#                     버린 자세 중 원래 메시로는 겹치지 않는(충돌 형상 convex hull 때문에만 겹치는) 자세를 따로 센다.
+#                     결과(최악 경우·K 비교)는 isaacsim/reports/ 에만 저장하고 config 는 바꾸지 않는다
 #   그리퍼: K ≥ 파지 토크 / 최소 남은 오차 (물체에 닿으면 힘 한계로 누르는 상태), D = 2·√(K·I) (임계감쇠)
 #           I = mimic 으로 묶인 4개 DOF 질량행렬 부분합 (네 조인트가 같이 움직이므로)
 #
@@ -31,6 +34,7 @@ parser.add_argument("--headless", action="store_true")
 parser.add_argument("--usd", default=ts.DEFAULT_USD)
 parser.add_argument("--physics-variant", default="physx")
 parser.add_argument("--config", default=ts.DEFAULT_CONFIG)
+parser.add_argument("--collision-free", action="store_true", help="자기 충돌 자세 제외 (결과는 reports/ 에만)")
 args, _ = parser.parse_known_args()
 
 from isaacsim import SimulationApp  # noqa: E402
@@ -83,6 +87,30 @@ def read_state(robot, idx):
     return arm_I, grip_I, arm_g
 
 
+def collision_free_poses(stage, robot, idx, rng, lim, log):
+    """홈·관절 0 + 무작위 자세를 뽑아 자기 충돌 자세를 버린다. (자세 목록, '충돌 형상 때문에만 겹침' 마스크).
+    반환 목록 = 가능한 자세 N_SAMPLES+2 개 + 원래 메시로는 겹치지 않는 자세 (마스크 True, 기본 계산에서는 제외)."""
+    import collision_geom as cg
+
+    r = cg.classify_random_poses(stage, lambda q: set_pose(robot, idx, q), rng, lim, N_SAMPLES + 2,
+                                 first=(HOME, ZERO))
+    if len(r["valid"]) < N_SAMPLES + 2:
+        raise RuntimeError(f"가능한 자세가 모자람: {len(r['valid'])} / {N_SAMPLES + 2} ({r['draws']} 번 뽑음)")
+    log(f"[자기 충돌 거르기] {r['draws']} 번 뽑아 가능한 자세 {len(r['valid'])} 개 (홈·관절 0 포함). "
+        f"버린 자세 {r['draws'] - len(r['valid'])} 개:")
+    log(f"  - 원래 메시로도 겹침 (실제 자기 충돌): {len(r['real'])}")
+    log(f"  - 원래 메시로는 겹치지 않음 (충돌 형상 convex hull 때문에만 겹침): {len(r['hull_only'])}")
+    log(f"  - 판정 불가 (원래 메시가 닫혀 있지 않음): {len(r['unknown'])}")
+    log("  원래 메시 닫힘(watertight): " + ", ".join(f"{n} {v}" for n, v in r["watertight"].items() if v))
+    log("  겹친 링크 쌍 (횟수): " + ", ".join(f"{a}-{b} {c}" for (a, b), c in
+                                        sorted(r["pair_count"].items(), key=lambda x: -x[1])))
+    for q, coll in r["hull_only"][:10]:
+        log(f"    convex hull 때문에만: {np.round(q, 2).tolist()} → " + ", ".join(f"{a}-{b} {d * 1000:.1f} mm" for a, b, d in coll))
+    poses = [q for q, _ in r["valid"]] + [q for q, _ in r["hull_only"]]
+    mask = np.array([False] * len(r["valid"]) + [True] * len(r["hull_only"]))
+    return poses, mask
+
+
 def main():
     lines = []
 
@@ -94,6 +122,9 @@ def main():
     log(f"robot USD: {args.usd}  (variant {args.physics_variant}, base z = {ts.ROBOT_BASE_Z} m)")
 
     config = ts.load_config(args.config)
+    # 기하·질량만 계산하는 스크립트: 자기 충돌 자세로 순간이동할 때 PhysX 가 링크를 밀어내지 않도록 이 실행에서만 끈다
+    config["articulation"]["self_collision"] = False
+    log("  (이 계산에서는 self_collision 을 끔: 자세 순간이동 때 접촉으로 링크가 밀리지 않게)")
     stage, robot, info = ts.build_test_scene(args.usd, args.physics_variant, base="fixed", config=config,
                                                light=not args.headless)
     app_utils.play()
@@ -115,7 +146,11 @@ def main():
     # 자세 목록: 홈, 관절 0, 무작위 N_SAMPLES 개
     rng = np.random.default_rng(SEED)
     lim = np.array([2 * math.pi, 2 * math.pi, math.pi, 2 * math.pi, 2 * math.pi, 2 * math.pi])
-    poses = [np.array(HOME), np.array(ZERO)] + [rng.uniform(-lim, lim) for _ in range(N_SAMPLES)]
+    hull_only_mask = None
+    if not args.collision_free:
+        poses = [np.array(HOME), np.array(ZERO)] + [rng.uniform(-lim, lim) for _ in range(N_SAMPLES)]
+    else:
+        poses, hull_only_mask = collision_free_poses(stage, robot, idx, rng, lim, log)
 
     # 드론 무게: 그리퍼 base 링크에 +1.5 kg 을 더하고 합친 무게중심을 옮긴다 (메모리에서만).
     # 중력 토크는 무게중심 위치에 선형 → 무게중심을 TCP, TCP+δx, TCP+δy 세 곳에 두고 재면
@@ -154,9 +189,12 @@ def main():
     B = np.stack([(G_x - G_tcp) / OFFSET_PROBE, (G_y - G_tcp) / OFFSET_PROBE], axis=-1)  # (포즈, 관절, 2) Nm/m
     Bn = np.linalg.norm(B, axis=-1)
 
-    def worst(r, base):
+    use = np.ones(len(poses), bool) if hull_only_mask is None else ~hull_only_mask  # 기본: 가능한 자세만
+
+    def worst(r, base, mask=None):
         """base: 무게중심이 TCP 에 있을 때의 토크 (포즈, 관절). r 만큼 최악 방향으로 옮겼을 때 |τ| 와 그 방향."""
-        tau = np.abs(base) + r * Bn
+        mask = use if mask is None else mask
+        tau = np.where(mask[:, None], np.abs(base) + r * Bn, -np.inf)
         k = np.argmax(tau, axis=0)
         cases = []
         for j in range(6):
@@ -166,7 +204,7 @@ def main():
             cases.append({"pose": poses[k[j]], "offset": d, "tau": float(tau[k[j], j])})
         return tau.max(axis=0), cases
 
-    I_arm = np.maximum(I_all.max(axis=0), I_pay.max(axis=0))  # 드론을 단 경우까지 포함한 최대 관성 → 어느 경우에도 ζ ≥ 1
+    I_arm = np.maximum(I_all[use].max(axis=0), I_pay[use].max(axis=0))  # 드론을 단 경우까지 포함한 최대 관성 → 어느 경우에도 ζ ≥ 1
     tau_r = {r: worst(r, G_tcp) for r in OFFSETS}                  # 로봇 + 드론 (gravity_ff 없음)
     pay_r = {r: worst(r, G_tcp - G_none) for r in OFFSETS}         # 드론 무게만 (gravity_ff 켜면 남는 부하)
     g_max = tau_r[OFFSET_DESIGN][0]
@@ -220,7 +258,10 @@ def main():
             case_lines.append(
                 f"  - {{joint: {n}, offset_cm: {r * 100:.0f}, pose: {[round(float(x), 4) for x in c['pose']]}, "
                 f"offset: {[round(float(x), 4) for x in c['offset']]}, tau: {c['tau']:.2f}}}")
-    case_path = os.path.join(ts.CONFIG_DIR, "gravity_worst_cases.yaml")
+    stamp = f"{datetime.datetime.now():%Y%m%d_%H%M%S}"
+    case_path = (os.path.join(ts.REPORT_DIR, f"gravity_worst_cases_collision_free_{stamp}.yaml") if args.collision_free
+                 else os.path.join(ts.CONFIG_DIR, "gravity_worst_cases.yaml"))
+    os.makedirs(os.path.dirname(case_path), exist_ok=True)
     with open(case_path, "w", encoding="utf-8") as f:
         f.write("\n".join(case_lines) + "\n")
     log("")
@@ -239,6 +280,22 @@ def main():
     log(f"  목표값 이동 속도(profile_velocity) = {GRIP_MAX_VEL:.4f} rad/s, 관절 속도 한계는 USD 값 유지 (6.5 rad/s)")
 
     log("")
+    if args.collision_free:
+        cur = ts.load_config(args.config)["arm"]
+        log("")
+        log("[K 비교] 현재 drive_gains.yaml (자기 충돌 자세 포함 무작위 자세로 계산) vs 가능한 자세만")
+        log(f"  {'joint':20s} {'K 현재':>10s} {'K 가능자세':>10s} {'변화':>7s}  {'τg 가능자세':>10s}")
+        for i, n in enumerate(ts.ARM_JOINTS):
+            k0 = float(cur[n]["stiffness"])
+            log(f"  {n:20s} {k0:10.1f} {K[i]:10.1f} {100 * (K[i] - k0) / k0:+6.1f}%  {g_max[i]:10.2f}")
+        if hull_only_mask.any():
+            both = np.ones(len(poses), bool)
+            g_both = worst(OFFSET_DESIGN, G_tcp, both)[0]
+            I_both = np.maximum(I_all.max(axis=0), I_pay.max(axis=0))
+            w_b = np.maximum(np.maximum(w_settle, np.sqrt(g_both / (ERR_DESIGN * I_both))), W_LAG)
+            K_b = I_both * w_b ** 2
+            log(f"  참고: 충돌 형상 때문에만 겹치는 자세 {int(hull_only_mask.sum())} 개까지 넣으면 K = "
+                + ", ".join(f"{n.split('_joint')[0]} {K_b[i]:.1f}" for i, n in enumerate(ts.ARM_JOINTS)))
     log("# ---- drive_gains_ff.yaml (gravity_ff: true) 팔 ----")
     for i, n in enumerate(ts.ARM_JOINTS):
         log(f"  {n}: {{stiffness: {K_ff[i]:.1f}, damping: {D_ff[i]:.2f}}}")
@@ -249,7 +306,7 @@ def main():
         f"profile_velocity: {GRIP_MAX_VEL:.4f}, max_velocity: 6.5}}")
 
     os.makedirs(ts.REPORT_DIR, exist_ok=True)
-    path = os.path.join(ts.REPORT_DIR, f"gain_seed_{datetime.datetime.now():%Y%m%d_%H%M%S}.txt")
+    path = os.path.join(ts.REPORT_DIR, f"gain_seed_{'collision_free_' if args.collision_free else ''}{stamp}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print(f"report: {path}", flush=True)
