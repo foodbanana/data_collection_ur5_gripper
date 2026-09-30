@@ -52,8 +52,18 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
     USD 1000 / 100 → tensor 5.73e4 / 5730 (× 180/π). 한계·위치도 tensor API 는 rad
 - **물리 엔진**: `isaacsim.physics.newton` 이 켜져 있으면 시작 시 Newton 으로 자동 전환될 수 있다. 스크립트는 `SimulationManager.switch_physics_engine("physx")` 로 명시하고 확인할 것
 - **Physics variant**: 로봇 USD 진입 파일의 `Physics` variant(physx / physics / mujoco / none)에 기본 선택이 없다. reference 할 때 `physx` 를 명시할 것
+- **fixed base override**: USD 원본은 `ArticulationRootAPI` 가 `robot_mount` 에 있어 PhysX 가 floating base 로 만든다 (root_joint 가 외부 구속).
+  1~7단계 씬은 `ArticulationRootAPI` 를 로봇 최상위 prim 으로 옮겨 fixed base 로 만든다 (`test_scene.build_test_scene(base="fixed")`, 메모리 stage 에만).
+  `PhysxArticulationAPI` 설정도 새 root 에 적는다. ROS Publish Joint State 의 targetPrim 도 최상위 prim
 - **DOF**: 10개 (mimic 3개 포함). 순서는 팔 6개 → `rh_r1_joint, rh_l1, rh_r2, rh_l2` (USD 선언 순서와 다름, 이름으로 찾을 것)
 - **mimic 조인트(`rh_r2`, `rh_l1`, `rh_l2`)도 DOF 로 잡히지만 목표값·gain 을 주지 않는다. 그리퍼 명령은 `rh_r1_joint` 에만 준다**
+- **rh_r1_joint 에 관절 속도 제한을 걸지 않는다.** mimic 과 함께 점성 저항처럼 동작해 열리지 못한다. 속도는 목표값 이동으로 맞춘다
+  (`robot_drive.GripperProfile`, `profile_velocity`). 관절 속도 한계는 USD 값(6.5 rad/s) 그대로
+- **articulation 수면 끔 (`sleep_threshold: 0`)**: 팔이 멈춘 채 가벼운 손가락만 움직이면 운동에너지가 작아 PhysX 가 articulation 을 재워 그리퍼가 중간에 멈춘다.
+  설정 파일 `articulation.sleep_threshold` → 새 root 의 `PhysxArticulationAPI` 에 적고 재생 후 확인
+- **시험용 하중(드론 무게 등)을 로봇 링크에 FixedJoint 로 붙일 때는 `physics:excludeFromArticulation = true`**.
+  없으면 PhysX 가 그 강체를 articulation 의 새 링크로 흡수해 로봇 중력 보상 계산에 하중 무게가 들어간다
+- 팔 drive 는 높은 stiffness(중력 보상 feedforward 없음)로 확정 (`isaacsim/config/drive_gains.yaml`). ω ≥ 70 rad/s (텔레옵 추종 지연 < 40 ms)
 - 테스트 씬에서 로봇은 바닥에서 띄워 배치한다 (관절 0 자세에서 팔이 바닥에 닿음). 높이는 씬 스크립트의 값이고 로봇 USD 에는 넣지 않는다
 - **구조 회귀 검사**: 로봇 USD 재import 후 `~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless` → 8/8 PASS 확인 (리포트는 `isaacsim/reports/`, git 제외)
 - **그리퍼**: 명령은 `rh_r1_joint` 하나에만. mimic(`rh_r2`, `rh_l1`, `rh_l2`)은 `NewtonMimicAPI` 로 들어왔고 PhysX 에서 동작 확인.

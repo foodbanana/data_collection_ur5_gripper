@@ -1,0 +1,18 @@
+# 자동 생성: compute_gain_seed.py (2026-09-30T15:15:41)
+# B 시험(tune_drives.py)용 관절별 최악 중력 경우. 드론 1.5 kg, 무게중심 = TCP + offset (rh_p12_rn_base 좌표계, 공구 축에 수직)
+# pose: 팔 6관절 [rad], offset: [x, y] m, tau: 로봇+드론 중력 토크 크기 [Nm]
+payload_kg: 1.5
+payload_pos: [0.0, 0.0, 0.11]
+cases:
+  - {joint: shoulder_pan_joint, offset_cm: 3, pose: [-5.0922, -6.2216, -1.1126, 6.1669, -2.9569, 4.1556], offset: [0.0232, -0.019], tau: 0.00}
+  - {joint: shoulder_lift_joint, offset_cm: 3, pose: [5.1208, 3.1749, -0.0275, 4.3201, -6.2352, 2.0855], offset: [0.0039, 0.0298], tau: 74.31}
+  - {joint: elbow_joint, offset_cm: 3, pose: [-0.4084, 5.9375, 0.4513, -1.1788, -5.1073, -3.8672], offset: [0.0261, 0.0148], tau: 28.94}
+  - {joint: wrist_1_joint, offset_cm: 3, pose: [5.9118, -5.3858, 1.7675, -0.3088, -4.6511, -1.6829], offset: [0.0052, -0.0296], tau: 5.71}
+  - {joint: wrist_2_joint, offset_cm: 3, pose: [-2.0509, 2.0934, 2.5168, -3.1213, 6.2006, -5.8076], offset: [0.0138, 0.0266], tau: 4.18}
+  - {joint: wrist_3_joint, offset_cm: 3, pose: [3.1801, 0.1636, -3.0062, -3.4852, -3.6696, 4.93], offset: [0.029, -0.0078], tau: 0.49}
+  - {joint: shoulder_pan_joint, offset_cm: 5, pose: [-5.0922, -6.2216, -1.1126, 6.1669, -2.9569, 4.1556], offset: [0.0386, -0.0317], tau: 0.00}
+  - {joint: shoulder_lift_joint, offset_cm: 5, pose: [5.1208, 3.1749, -0.0275, 4.3201, -6.2352, 2.0855], offset: [0.0064, 0.0496], tau: 74.60}
+  - {joint: elbow_joint, offset_cm: 5, pose: [-0.4084, 5.9375, 0.4513, -1.1788, -5.1073, -3.8672], offset: [0.0435, 0.0247], tau: 29.21}
+  - {joint: wrist_1_joint, offset_cm: 5, pose: [5.9118, -5.3858, 1.7675, -0.3088, -4.6511, -1.6829], offset: [0.0086, -0.0493], tau: 5.92}
+  - {joint: wrist_2_joint, offset_cm: 5, pose: [-4.1217, 4.3182, -0.3196, 0.7513, 3.3651, -0.3077], offset: [0.0152, -0.0476], tau: 4.23}
+  - {joint: wrist_3_joint, offset_cm: 5, pose: [3.1801, 0.1636, -3.0062, -3.4852, -3.6696, 4.93], offset: [0.0483, -0.013], tau: 0.79}

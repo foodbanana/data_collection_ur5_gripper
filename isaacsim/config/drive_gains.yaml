@@ -1,0 +1,59 @@
+# =============================================================
+# drive_gains.yaml — 로봇 drive·articulation 설정 (docs/PLAN.md 1-5)
+#
+# 단위: rad 기준 (stiffness Nm/rad, damping Nm·s/rad, max_force Nm, max_velocity rad/s)
+#   tensor API(set_dof_gains, set_dof_max_efforts, set_dof_max_velocities)로만 적용한다.
+#   USD drive 속성은 degree 기준이라 다르다: USD 값 × 180/π = tensor 값.
+# 로봇 USD 원본은 수정하지 않는다. 이 파일의 값은 씬 스크립트가 실행 중에 적용한다.
+# =============================================================
+
+# 중력 보상 feedforward: 매 physics 스텝마다 로봇 자체 중력 토크(get_dof_gravity_compensation_forces)를 팔 관절 effort 로 더한다.
+# 드론 같은 잡은 물체의 무게는 보상하지 않는다. 이 파일은 끔 (높은 stiffness 로 중력을 버팀). 켠 설정은 drive_gains_ff.yaml
+gravity_ff: false
+
+# 씬 override (--base fixed 일 때): ArticulationRootAPI 를 robot_mount → 로봇 최상위 prim 으로 옮겨 fixed base 로 만든다.
+# 아래 articulation 설정은 새 root(최상위 prim)의 PhysxArticulationAPI 에 적는다.
+articulation:
+  solver_position_iterations: 32   # PhysX 기본값과 같음. 1-6 파지에서 재검토
+  solver_velocity_iterations: 4    # 기본 1 → 접촉(파지) 안정성을 위해 4. 1-6 에서 재검토
+  enabled_self_collisions: false   # URDF import 때 Allow Self-Collision 끔과 같게
+  sleep_threshold: 0.0             # 수면 끔. 팔이 멈춘 채 가벼운 손가락만 움직이면 운동에너지가 작아 articulation 이 잠들어
+                                   # 그리퍼가 중간에 멈춘다 (2026-09-30 D 시험에서 확인)
+
+home_pose: [0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0]   # 팔 6관절 [rad]. 드론 파지 시작 자세는 2단계에서 정함
+
+# 팔: 시작값 = compute_gain_seed.py 결과 (2026-09-30, 튜닝 전). K = I·ω², D = 2·I·ω (ζ = 1)
+#   I = 무작위 300 자세 중 최대 질량행렬 대각값 (드론 무게 포함), ω = max(정착 0.3 s 기준 19.4 rad/s,
+#   드론 1.5 kg 무게중심이 공구 축에서 5 cm 벗어난 최악 방향의 중력 토크에서 처짐 0.05° 기준, C 추종 지연 기준 100 rad/s).
+#   1회차 시험(2026-09-30) 후: shoulder_pan 을 ω 19.4 → 70 (C 지연 113 ms 불합격)
+#   2회차 시험 후: shoulder_pan ω 70 → 100 (C 지연 42 ms 불합격, 예상 약 35 ms). 나머지 관절은 ω ≥ 122 라 그대로. 튜닝 결과로 갱신
+# max_force: UR5 관절 토크 한계 (URDF 값 그대로), max_velocity: UR5 관절 180°/s
+# armature [kg·m²]: UR 회전자 관성 비공개, 튜닝 파라미터, 9단계 실물 응답으로 보정 (기본 0)
+arm:
+  shoulder_pan_joint:  {stiffness: 56502.0, damping: 1130.04, max_force: 150.0, max_velocity: 3.1416, armature: 0.0}
+  shoulder_lift_joint: {stiffness: 85488.0, damping: 1399.75, max_force: 150.0, max_velocity: 3.1416, armature: 0.0}
+  elbow_joint:         {stiffness: 33469.3, damping: 439.7, max_force: 150.0, max_velocity: 3.1416, armature: 0.0}
+  wrist_1_joint:       {stiffness: 6782.0, damping: 56.07, max_force: 28.0, max_velocity: 3.1416, armature: 0.0}
+  wrist_2_joint:       {stiffness: 4849.2, damping: 39.94, max_force: 28.0, max_velocity: 3.1416, armature: 0.0}
+  wrist_3_joint:       {stiffness: 903.6, damping: 4.27, max_force: 28.0, max_velocity: 3.1416, armature: 0.0}
+
+gripper:
+  rh_r1_joint:
+    # 시작값: K = 파지 토크 / 남은 최소 오차 0.05 rad (닿으면 힘 한계로 누르는 상태), D = 2√(K·I) (I = mimic 4 DOF 묶음 3.78e-4 kg·m²)
+    stiffness: 45.6
+    damping: 0.2626
+    # 임시: 400 mA ≈ 20 N (사양 선형 환산, 실물에서 0.8 kg 드론 파지 성공) × 2 손가락 × 0.057 m (r1 축 → r2 축, URDF)
+    # 사양 170 N 이 손가락당인지 합계인지 미확인 → 20 N 해석에 따라 2배 차이 가능. 1-6 당김 시험으로 보정
+    max_force: 2.28
+    # 목표값 이동 속도 [rad/s] = 1.1351 rad / 2.2 s. 실물 측정 열림→닫힘 약 2.24 s, 닫힘→열림 약 2.20 s (임시, 재측정 예정)
+    # 시간 정의: 명령 순간부터 위치 변화가 멈출 때(최종값의 2% 이내)까지
+    # 실물 노드 설정: Profile Velocity 1000, Profile Acceleration 300 (원시값, 단위 미확인 → RH-P12-RN(A) e-Manual 컨트롤 테이블로 확인)
+    # 실물은 이 속도로 움직이다 물체에 닿으면 전류 한계(400 mA) 힘으로 누른다 → sim 은 stiffness 를 낮추지 않고
+    # drive 목표값을 이 속도로 goal 까지 옮긴다 (robot_drive.GripperProfile). 가속 구간 없음 (등속)
+    profile_velocity: 0.516
+    # 관절 속도 한계는 USD 원래 값 (372.42°/s = 6.5 rad/s). 0.516 으로 걸면 mimic 과 함께 점성 저항처럼 동작해 열리지 못함 (2026-09-30)
+    max_velocity: 6.5
+    armature: 0.0   # 튜닝 파라미터, 기본 0
+
+# mimic 조인트: DOF 로 잡히지만 목표값·gain 을 주지 않는다 (적용 함수가 gain 0 을 검사)
+mimic: [rh_r2, rh_l1, rh_l2]

@@ -3,7 +3,7 @@
 # check_articulation.py  (docs/PLAN.md 1-4)
 #
 # 로봇 USD 구조 회귀 검사. 로봇 USD 를 재import 할 때마다 실행한다.
-#   테스트 씬 = physics scene + ground plane + 로봇 USD reference (root_joint 유지, 추가 FixedJoint 없음)
+#   테스트 씬 = test_scene.build_test_scene() (1-5 와 같은 씬, --base fixed 기본: ArticulationRootAPI 를 최상위 prim 으로 옮김)
 #   로봇 USD 원본은 수정하지 않는다. 검사용 drive 값은 메모리 위 stage 에만 적는다 (저장하지 않음).
 #
 # 실행:
@@ -21,10 +21,11 @@ import math
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SIM_ROOT = os.path.dirname(HERE)  # ~/data_collection_ur5_gripper/isaacsim
-DEFAULT_USD = os.path.join(SIM_ROOT, "assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda")
-DEFAULT_REPORT_DIR = os.path.join(SIM_ROOT, "reports")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_scene as ts  # noqa: E402
+
+DEFAULT_USD = ts.DEFAULT_USD
+DEFAULT_REPORT_DIR = ts.REPORT_DIR
 
 parser = argparse.ArgumentParser(description="로봇 USD 구조 검증 (PLAN 1-4)")
 parser.add_argument("--headless", action="store_true")
@@ -32,6 +33,9 @@ parser.add_argument("--usd", default=DEFAULT_USD, help="로봇 USD 진입 파일
 parser.add_argument("--physics-variant", default="physx",
                     help="로봇 USD 의 'Physics' variant 선택 (physx | physics | mujoco | none). 기본 physx")
 parser.add_argument("--report-dir", default=DEFAULT_REPORT_DIR)
+parser.add_argument("--base", default="fixed", choices=ts.BASE_MODES,
+                    help="fixed: ArticulationRootAPI 를 최상위 prim 으로 옮김 (1~7단계). floating: USD 원본 그대로")
+parser.add_argument("--config", default=ts.DEFAULT_CONFIG, help="articulation 설정을 읽을 yaml")
 args, _ = parser.parse_known_args()
 
 if not os.path.isfile(args.usd):
@@ -42,21 +46,17 @@ from isaacsim import SimulationApp  # noqa: E402
 simulation_app = SimulationApp({"headless": args.headless})
 
 import isaacsim.core.experimental.utils.app as app_utils  # noqa: E402
-import isaacsim.core.experimental.utils.stage as stage_utils  # noqa: E402
 import numpy as np  # noqa: E402
-from isaacsim.core.experimental.objects import GroundPlane  # noqa: E402
-from isaacsim.core.experimental.prims import Articulation, XformPrim  # noqa: E402
 from isaacsim.core.simulation_manager import SimulationManager  # noqa: E402
 from pxr import Usd, UsdGeom, UsdPhysics  # noqa: E402
 
 # ── 기대값 ──
-ROBOT_PATH = "/World/ur5_rh_p12_d435i"
-ROBOT_BASE_Z = 0.762  # m, 테이블 상판 높이. 0 이면 관절 0 자세에서 팔이 ground plane 에 걸친다 (1-5 에서도 같은 씬)
-ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-              "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]  # 실물 UR 드라이버와 같은 이름·순서
-GRIPPER_DRIVE = "rh_r1_joint"
-GRIPPER_MIMIC = ["rh_r2", "rh_l1", "rh_l2"]
-GRIPPER_JOINTS = [GRIPPER_DRIVE] + GRIPPER_MIMIC
+ROBOT_PATH = ts.ROBOT_PATH
+ROBOT_BASE_Z = ts.ROBOT_BASE_Z
+ARM_JOINTS = ts.ARM_JOINTS  # 실물 UR 드라이버와 같은 이름·순서
+GRIPPER_DRIVE = ts.GRIPPER_DRIVE
+GRIPPER_MIMIC = ts.GRIPPER_MIMIC
+GRIPPER_JOINTS = ts.GRIPPER_JOINTS
 GRIPPER_UPPER = 1.1351  # rad
 LIMIT_TOL = 1e-3  # rad
 FRAMES = ["rh_p12_rn_tcp", "wrist_camera_color_optical_frame"]
@@ -67,7 +67,6 @@ EXPECTED_REL = {
 }
 REL_TOL = 1e-3  # m
 
-PHYSICS_DT = 1.0 / 120.0
 SETTLE_SEC = 3.0            # 7번
 GRIP_SEC = 2.0              # 8번
 GRIP_TARGET_DEG = 30.0
@@ -134,26 +133,13 @@ def main():
     R.log(f"robot USD        : {args.usd}")
     R.log(f"Physics variant  : {args.physics_variant}")
 
-    # ── 테스트 씬 ──
-    stage_utils.create_new_stage()
-    stage_utils.set_stage_up_axis("Z")
-    stage_utils.set_stage_units(meters_per_unit=1.0, kilograms_per_unit=1.0)
-    stage = stage_utils.get_current_stage(backend="usd")
-    stage_utils.define_prim("/World", "Xform")
-
-    if not SimulationManager.switch_physics_engine("physx"):
-        raise RuntimeError("PhysX 로 전환하지 못했습니다")
-    engine = SimulationManager.get_active_physics_engine()
-    R.log(f"physics engine   : {engine}")
-    if engine != "physx":
-        raise RuntimeError(f"physics engine 이 physx 가 아닙니다: {engine}")
-    SimulationManager.setup_simulation(dt=PHYSICS_DT)
-    GroundPlane("/World/GroundPlane")
-    stage_utils.add_reference_to_stage(
-        usd_path=args.usd, path=ROBOT_PATH, variants=[("Physics", args.physics_variant)])
-    # 배치 규칙(1-4): 위치는 최상위 prim Transform 으로만 지정 (root_joint 가 이 위치에 고정)
-    XformPrim(ROBOT_PATH, reset_xform_op_properties=True).set_world_poses(positions=[0.0, 0.0, ROBOT_BASE_Z])
-    R.log(f"robot base       : {ROBOT_PATH} at z = {ROBOT_BASE_Z} m")
+    # ── 테스트 씬 (1-5 와 공용) ──
+    config = ts.load_config(args.config)
+    stage, robot, info = ts.build_test_scene(args.usd, args.physics_variant, base=args.base, config=config,
+                                         light=not args.headless)
+    R.log(f"physics engine   : {SimulationManager.get_active_physics_engine()}")
+    R.log(f"robot base       : {ROBOT_PATH} at z = {ROBOT_BASE_Z} m, base = {args.base}")
+    R.log(f"config           : {args.config}")
     simulation_app.update()
 
     joints = joint_prims(stage)
@@ -193,8 +179,8 @@ def main():
     R.result(3, "drive·mimic 설정", ok3, "; ".join(why3))
 
     # ── 4. root_joint ──
-    R.section(4, "root_joint")
-    mount_path = f"{ROBOT_PATH}/Geometry/robot_mount"
+    R.section(4, "root_joint·articulation root")
+    mount_path = ts.MOUNT_PATH
     rj = joints.get("root_joint")
     ok4, why4 = True, []
     if rj is None:
@@ -219,13 +205,14 @@ def main():
     if len(fixed_to_mount) != 1:
         ok4 = False
         why4.append("robot_mount 고정 조인트가 1개가 아님 (중복 고정)")
-    roots = [str(p.GetPath()) for p in Usd.PrimRange(stage.GetPrimAtPath(ROBOT_PATH))
-             if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
-    R.log(f"  ArticulationRootAPI: {roots}")
-    if len(roots) != 1:
+    # USD 원본의 root 위치(robot_mount)는 build_test_scene 이 확인한다. 기대 root: fixed → 최상위 prim, floating → robot_mount
+    expect_root = ROBOT_PATH if args.base == "fixed" else mount_path
+    R.log(f"  ArticulationRootAPI (USD 원본): {info['asset_roots']}")
+    R.log(f"  기대 root ({args.base}): {expect_root}")
+    if info["root"] != expect_root:
         ok4 = False
-        why4.append(f"ArticulationRootAPI {len(roots)}개")
-    R.result(4, "root_joint", ok4, "; ".join(why4))
+        why4.append(f"root {info['root']} != 기대 {expect_root}")
+    # fixed_base·articulation 설정 확인은 재생 후 (아래)
 
     # ── 5. 프레임 (재생 전, 모든 관절 0 자세의 authored 좌표) ──
     R.section(5, "프레임 존재와 world 좌표 (관절 0 자세)")
@@ -265,10 +252,18 @@ def main():
     d.CreateTargetPositionAttr().Set(0.0)
 
     # ── 재생 ──
-    robot = Articulation(ROBOT_PATH)
     app_utils.play()
     simulation_app.update()
     simulation_app.update()
+
+    # 4번 마무리: PhysX 가 만든 articulation 이 fixed base 인지, 설정 파일의 articulation 설정이 새 root 에 적용됐는지
+    problems, lines = ts.verify_articulation(stage, robot, info, config)
+    for line in lines:
+        R.log(f"  [4 재생 후] {line}")
+    if problems:
+        ok4 = False
+        why4.extend(problems)
+    R.result(4, "root_joint·articulation root", ok4, "; ".join(why4))
 
     dof_names = list(robot.dof_names)
 

@@ -136,6 +136,13 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - **root_joint 는 유지**한다. 로봇 위치는 최상위 prim 의 Transform 으로 지정한다
 - `robot_mount` 에 FixedJoint 를 **추가하지 않는다** (같은 링크를 두 번 고정하게 됨)
 - 8단계에서는 씬에서 root_joint 의 body0 을 움직이는 베이스 강체로 바꾸는 방식을 검토
+- **fixed base override (씬, `--base fixed`, 1~7단계)**: USD 원본의 `ArticulationRootAPI` 는 링크 `robot_mount` 에 있고
+  `root_joint` 는 `/Physics` 아래에 있어서, PhysX 가 root_joint 를 articulation 밖 구속으로 보고 **floating base** 로 만든다
+  (질량행렬 16×16 = DOF 10 + 베이스 6, 중력 토크 API 도 베이스 성분이 섞여 쓸 수 없음. 2026-09-30 확인)
+  - 씬에서 `ArticulationRootAPI` 를 `robot_mount` → 로봇 최상위 prim 으로 옮긴다 (메모리 stage 에만, USD 원본 그대로) → `fixed_base = True`, 질량행렬 10×10
+  - articulation 설정(`PhysxArticulationAPI`: solver 반복 횟수, self-collision)은 새 root(최상위 prim)에 적용.
+    값은 `isaacsim/config/drive_gains.yaml` 의 `articulation`, 재생 후 읽어서 확인
+  - 구현: `isaacsim/scripts/test_scene.py` 의 `build_test_scene(base="fixed")`. `--base floating` 은 USD 원본 그대로 (8단계에서 다시 결정)
 - **구조 검증 스크립트** `isaacsim/scripts/check_articulation.py` (`~/isaacsim/python.sh`, `--headless` 지원)
   - 테스트 씬: physics scene + ground plane + 로봇 USD reference (위 배치 규칙대로, 최상위 prim z = 0.762 m = 테이블 상판 높이.
     0 이면 관절 0 자세에서 TCP 가 z = −5 mm 라 팔이 바닥에 걸림). 1-5 drive 튜닝도 같은 씬을 쓴다
@@ -144,26 +151,84 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     1. DOF 이름·순서·개수 (mimic 조인트의 DOF 포함 여부는 가정하지 않고 보고). 팔 6개 이름이 실물 드라이버와 동일
     2. 관절 한계 (rad): elbow ±π, 나머지 팔 ±2π, 그리퍼 4개 0~1.1351
     3. drive·mimic 설정 출력 (mimic 대상, 계수, 오프셋)
-    4. root_joint 의 body0 = 최상위 prim, body1 = robot_mount
+    4. root_joint 의 body0 = 최상위 prim, body1 = robot_mount. articulation root 가 기대 위치(fixed: 최상위 prim)에 하나,
+       PhysX `fixed_base == True`, 설정 파일의 articulation 설정이 새 root 에 적용됨
     5. `rh_p12_rn_tcp`, `wrist_camera_color_optical_frame` 존재와 world 좌표
     6. 링크별 질량·합계, 질량 0 이하나 관성 비정상 경고
     7. 3초 시뮬레이션 후 NaN·폭주 없음 (팔은 stiffness 0 이라 처져도 정상)
     8. `rh_r1_joint` 에만 임시 drive(stiffness 1000, damping 100, target 30°) → 2초 후 네 그리퍼 조인트 각도 차 1° 이내
 
 ### 1-5. drive 튜닝
-- import 직후 값: 팔 stiffness/damping 0 (명령을 줘도 추종하지 않고 중력에 처짐), maxForce 팔 150/150/150/28/28/28, 그리퍼 1000
-- 팔 6관절 stiffness/damping 튜닝 (USD 값은 degree 기준 단위임에 주의)
+- import 직후 값: 팔 stiffness/damping 0 (명령을 줘도 추종하지 않고 중력에 처짐), maxForce 팔 150/150/150/28/28/28, 그리퍼 1000.
+  속도 한계: fixed base 에서 tensor API 로 읽으면 팔 π rad/s (180°/s), 그리퍼 6.5 rad/s (372°/s) → URDF 값이 적용돼 있음
+- **방침 (1회차 시험 후 확정, 2026-09-30)**
+  - 중력은 켠다. 팔은 **높은 stiffness, 중력 보상 feedforward 없음** 으로 실물 UR 처럼 무게를 버티며 추종 (8단계 흔들리는 베이스에서 관성력도 실물처럼 나오게)
+    - feedforward(`gravity_ff: true`, `drive_gains_ff.yaml`, ω = 30)는 비교 기록으로 남김: 드론 무게는 보상하지 못해 손목 처짐 2~9°, 추종 지연 약 80 ms 로 불합격
+    - 공식 UR5 에셋 값 비교: `drive_gains_official.yaml` (공식 `ur5.usd` 의 drive 값을 rad 기준으로 변환)
+  - 설정값은 `isaacsim/config/drive_gains.yaml` 에 **rad 단위**(Nm/rad, Nm·s/rad, rad/s)로 두고 tensor API(`set_dof_gains`, `set_dof_max_velocities`,
+    `set_dof_max_efforts`, `set_dof_armatures`)로만 적용. USD 원본은 수정하지 않음
+  - 적용 모듈 `isaacsim/scripts/robot_drive.py` 를 2·3단계 씬 스크립트도 그대로 쓴다. 관절 이름이 없거나 값이 비었거나 mimic 에 gain 이 있으면 에러, 적용 후 읽어서 확인
+  - 테스트 씬은 1-4 와 같음 (최상위 prim z = 0.762 m, fixed base, `sleep_threshold: 0`)
+  - armature 는 관절별 항목, 기본 0 (UR 회전자 관성 비공개, 튜닝 파라미터, 9단계 실물 응답으로 보정)
+- **gain 시작값** (`isaacsim/scripts/compute_gain_seed.py`): K = I·ω², D = 2·ζ·I·ω (ζ = 1, 임계감쇠)
+  - I = 무작위 300 자세(드론 무게 포함 경우까지) 중 최대 질량행렬 대각값 → 어느 자세에서도 ζ ≥ 1
+  - ω = max(정착시간 기준 19.4, **추종 지연 기준 100**, 중력 처짐 기준). 추종 지연 실측 ≈ 2.47/ω + 10.7 ms (2회차). 중력은 드론 1.5 kg 무게중심이 공구 축에서 **5 cm 벗어난 최악 방향**
+    (중력 토크가 무게중심 위치에 선형이라 세 위치에서 재서 모든 방향의 최악값을 정확히 구함)
+  - 관절별 최악 경우는 `isaacsim/config/gravity_worst_cases.yaml` 로 저장 → B 시험이 사용
+- 팔 6관절 stiffness/damping 튜닝
   - 방법: 관절마다 목표 각도를 갑자기 바꿔보고(스텝 입력), 얼마나 빨리 도달하는지, 지나치지 않는지(overshoot), 중력에 처지지 않는지를 재서 값을 정한다
   - 목표: 실물 UR5 처럼 명령을 빠르고 정확하게, 흔들림 없이 따라가는 것
-- `rh_r1_joint`: stiffness/damping + max force 를 실물 전류 한계(400 mA)에 맞춰 낮춤 (현재 1000 은 실물보다 훨씬 셈)
-- **mimic 조인트 3개(`rh_r2`, `rh_l1`, `rh_l2`)에는 drive stiffness 를 주지 않는다** (mimic 과 충돌). import 시 붙은 drive(maxForce 1000)는 stiffness 0 유지
+  - 팔 최대 속도 π rad/s (UR5 관절 180°/s)
+  - 큰 스텝(0.2·1.0 rad)에서 shoulder_lift overshoot 는 토크 포화(150 Nm − 중력)로 감속이 모자라서 생김. 50 Hz 텔레옵 명령 사이 변화는 최대 0.063 rad 이므로
+    판정은 0.05 rad 스텝으로 하고 큰 스텝은 참고로 남긴다 (0.05 rad 통과 시 ζ 는 그대로)
+- `rh_r1_joint` (그리퍼)
+  - 실물: 이진 명령 + 전류 기반 위치 제어(mode 5). Profile Velocity 로 일정 속도로 움직이다가 물체에 닿으면 전류 한계(400 mA) 힘으로 누름
+  - sim: **stiffness 는 낮추지 않고, drive 목표값을 0.516 rad/s(= 1.1351 rad / 2.2 s)로 goal 까지 옮긴다 (목표값 이동)**.
+    목표값이 물체 너머까지 계속 가므로 닿으면 위치 오차가 커져 maxForce 로 누른다 (실물 Profile Velocity 와 같은 원리)
+    - 공용 함수 `robot_drive.step_toward` / `robot_drive.GripperProfile`. 3단계 sim 그리퍼 브리지도 같은 것을 쓴다
+    - **goal 이 바뀌면(열기↔닫기) 목표값을 현재 실제 손가락 위치에서 새로 시작한다** (실물 Dynamixel 과 같음).
+      이전 목표값에서 이어 가면, 물체를 잡고 있다가 열 때 목표값이 물체 위치까지 되돌아오는 동안 손가락이 멈춰 있다 (0.6 rad 에서 잡았을 때 약 1.04 s)
+    - **관절 속도 제한(0.516)은 쓰지 않는다**: 1회차 시험에서 mimic 과 함께 점성 저항(약 3 Nm·s/rad)처럼 동작해 maxForce 2.28 Nm 로 열리지 못함.
+      속도 한계는 USD 원래 값(6.5 rad/s)
+    - **가속 구간은 지금은 넣지 않는다 (등속)**. 실물 재측정(Profile Acceleration 300)과 차이가 크면 사다리꼴 속도 프로파일을 검토
+  - maxForce 는 400 mA 환산값으로 따로 정함. 임시 파지력 20 N (사양 선형 환산, 실물에서 0.8 kg 드론 파지 성공) → 1-6 당김 시험으로 보정
+  - stiffness 기준: 목표에 떨림 없이 도달하고, 물체에 닿았을 때 `stiffness × 남은 오차 ≥ maxForce` (실물처럼 힘 한계로 누르는 상태)
+  - 실물 노드 설정 (원시값, **단위 미확인** → RH-P12-RN(A) e-Manual 컨트롤 테이블로 확인): Profile Velocity 1000, Profile Acceleration 300, Goal Current 400 mA
+- **mimic 조인트 3개(`rh_r2`, `rh_l1`, `rh_l2`)에는 목표값·gain 을 주지 않는다** (DOF 로 잡히지만 mimic 이 따라가게 둠)
 - 설정은 USD 원본이 아니라 스크립트/씬 레이어에서 적용
+- **시험 (`isaacsim/scripts/tune_drives.py`, 리포트는 `isaacsim/reports/`)**
+  - A. 스텝 응답: 홈 자세에서 관절별 **+0.05 rad (판정)**, +0.2·+1.0 rad (참고). 상승시간, overshoot, 2% 정착시간, 정상상태 오차, 최대 속도, 다른 관절 흔들림
+  - B. 중력 유지: `gravity_worst_cases.yaml` 의 관절별 최악 자세 + 드론 1.5 kg (무게중심 공구 축에서 3·5 cm, 최악 방향) → 정상상태 오차.
+    드론은 충돌 없는 별도 강체를 그리퍼 base 에 FixedJoint(`excludeFromArticulation`)로 붙임. 바닥 없는 씬 (팔이 바닥에 닿지 않게)
+  - C. 텔레옵식 추종: 50 Hz zero-order hold 명령으로 부드러운 궤적 → 추종 오차(RMS·최대)와 지연
+  - D. 그리퍼 동작 시간: 목표 **열림·닫힘 각각 약 2.2 s (임시, 재측정 예정)**. + 잡은 상태에서 열기: 명령부터 움직이기 시작할 때까지 지연 < 0.1 s
+    (collider 가 아직 없어 `rh_r1_joint` 상한을 0.6 rad 로 임시로 낮춰 물체 대신 막음, 메모리에서만)
+    **"완전 열림/닫힘 시간" 정의 = 명령 순간부터 위치 변화가 멈출 때(최종값의 2% 이내)까지.** sim D 시험과 실물 재측정 모두 이 정의를 쓴다
+  - 설정 비교: A~C 는 기본·ff·공식 세 설정, D 는 기본 설정. GUI 로 보기: `--headless` 없이 `--realtime`
+- **합격 기준 (A~C)**: overshoot < 2%, 0.05 rad 스텝 정착시간 < 0.5 s, 드론 무게 포함 정상상태 오차 < 0.1°, C 지연 < 40 ms, 관절 속도 ≤ π rad/s, 떨림·NaN 없음
+- **1회차 시험 결과 (2026-09-30, 기본 vs ff)**: 기본 설정이 B(12/12)·C(5/6, shoulder_pan 지연 113 ms) 우세, ff 는 B 0/12·C 0/6.
+  그리퍼는 관절 속도 제한 방식에서 열림 실패. 시험 중 articulation 수면(그리퍼 멈춤)과 시험 하중이 articulation 에 흡수되는 문제를 찾아 고침
+- **2회차 (기본 vs ff vs 공식, 그리퍼 목표값 이동)**: 기본 A 6/6, B 12/12, C 5/6 (shoulder_pan ω 70 → 지연 42 ms), D 통과
+  - **공식 UR5 값(`drive_gains_official.yaml`)은 채택하지 않음**: B 12/12·C 6/6(지연 18 ms)은 통과하지만 damping 이 작아(shoulder_lift ζ ≈ 0.2)
+    0.05 rad 스텝 overshoot 가 최대 58% (shoulder_pan 9.9%, elbow 6.1%) → A 3/6
+  - **ff 방식(`drive_gains_ff.yaml`)은 탈락**: 드론 하중을 보상하지 못해 B 0/12 (손목 처짐 2~9°), ω = 30 이라 C 지연 약 80 ms
+  - **그리퍼 속도 읽기 값은 판정에서 제외**: D 에서 `rh_r1_joint` 속도가 0.25·0.44 rad/s 로 읽히지만 실제 평균은 약 0.53 rad/s
+    (2.15 s 에 1.135 rad). mimic 조인트 속도 읽기 문제로 추정. 판정은 위치·시간으로만 한다
+- **3회차 (기본, shoulder_pan ω 100, 그리퍼 현재 위치에서 재시작)**: A 6/6 (0.05 rad, overshoot 최대 1.2%), C 6/6 (지연 19~34 ms),
+  D 닫힘 2.15 s·열림 2.15 s, 잡은 상태에서 열기 지연 0.017 s → **전부 통과**. B 는 2회차 결과(12/12)와 같은 설정이라 다시 돌리지 않음
+  (shoulder_pan 은 B 대상 토크가 0 이라 영향 없음)
+- **GUI 육안 확인 (2026-09-30, `--realtime`, A·B·C·D 각각)**: 0.2 rad 스텝에서 shoulder_lift 가 살짝 넘어갔다 돌아오는 것(알려진 참고 항목)만 보이고
+  떨림·이상 움직임 없음 → **1-5 drive 설정 확정 (`drive_gains.yaml`)**
 
 ### 1-6. 손가락 collider·마찰·파지 테스트
 - 손가락(r2, l2) collider: convex hull 이 부정확하면 convex decomposition
 - 고마찰 physics material 적용
 - 파지 테스트: 작은 박스 + **드론 무게급(≈ 1.5 kg) 박스/봉**. 1.5 kg 을 지름 25 mm 봉 하나로 잡으면 무게중심이 봉에서 벗어날 때
   봉을 축으로 돌아갈 수 있음. 특히 그리퍼 max force 를 실물 수준으로 낮춘 뒤 확인
+- **당김 시험 (실물과 같은 기준)**: 잡은 물체를 당겨서 **미끄러지기 시작하는 힘**을 잰다
+  - 실물: 러기지 스케일로 잡은 물체를 당겨 미끄러지는 순간의 값 (측정 예정)
+  - sim: 잡은 물체에 당기는 힘을 천천히 늘려(램프) 물체가 손가락에 대해 미끄러지기 시작하는 힘을 기록. 당기는 방향·물체·잡는 위치는 실물 측정과 맞춘다
+  - 미끄럼 힘은 파지력 × 마찰계수라서 측정 하나로는 둘을 분리할 수 없음 → 마찰계수는 재질 기준으로 먼저 정하고 `rh_r1_joint` maxForce 로 맞춘다
 
 ### 1-7. 손목 카메라
 - `wrist_camera_color_optical_frame` 아래 Camera prim, X 축 180° 회전 (optical: +z 전방/+y 아래 ↔ USD camera: -z 전방/+y 위)
@@ -190,6 +255,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 **작업**
 - 씬 구성을 GUI Action Graph 대신 **Python standalone 스크립트**로 작성 (씬 + ROS 2 OmniGraph 생성), `~/isaacsim/python.sh` 로 실행
 - 테이블 + 로봇 배치(최상위 prim Transform, root_joint 유지), 조명, third view 카메라
+  - **조명은 씬 스크립트가 반드시 만든다** (Dome Light 등). 없으면 GUI 뷰포트가 비어 보이고 카메라 영상(손목·third view)도 검게 나온다.
+    1-5 테스트 씬은 GUI 일 때만 Dome Light 를 넣지만(`test_scene.build_test_scene(light=...)`), 2단계 씬은 카메라를 녹화하므로 headless 에서도 항상 넣는다
 - 베이스 모드 인자 자리 확보: `--base fixed` 만 구현 (나중에 `--base kinematic` 추가)
 - 파라미터화된 간이 드론: 450급(1.2~1.5 kg), 본체 박스 + 암 4개 + 프롭 디스크 + **지름 약 25 mm 손잡이 봉**
   (그리퍼 최대 열림 ≈ 107 mm → 본체가 아니라 손잡이/암을 잡는다)
@@ -216,9 +283,10 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - **먼저 real-time factor 측정**: 카메라 2대 렌더링(640x480) + 물리를 켠 상태에서 RTF 와 카메라 발행 주기 측정.
   25 Hz 이상 + 텔레옵 조작감이 실제 병목일 가능성이 크므로 3단계 초반에 확인
 - `/clock`, `/joint_states` 발행, `/joint_command` 구독 (스크립트에서 생성)
-  - 새 로봇 prim 기준 경로: Publish Joint State `targetPrim` = articulation root prim, Articulation Controller `robotPath` = 로봇 최상위 prim
+  - 새 로봇 prim 기준 경로: Publish Joint State `targetPrim` = articulation root prim (**씬 override 후에는 로봇 최상위 prim**, USD 원본의 robot_mount 아님), Articulation Controller `robotPath` = 로봇 최상위 prim
 - 그리퍼 명령 토픽은 팔과 분리 (예: `/gripper_joint_command`), 대상은 `rh_r1_joint` 하나
 - **sim 그리퍼 브리지 노드** (실물 `rh_gripper_node` 의 sim 버전)
+  - 속도는 **`robot_drive.GripperProfile`(목표값 이동, 1-5)을 그대로 쓴다**. 관절 속도 제한은 쓰지 않음
   - 구독: `/gripper/command` (raw 0~1150, 열기/닫기)
   - 발행(30 Hz, 같은 tick·같은 stamp, sim time): `/gripper/joint_states`(present, raw), `/gripper/target`(실행된 goal, raw 0 또는 1150)
   - **단위 변환은 브리지에서**: present raw = `rh_r1_joint`(rad) × 1150 / 1.1351, 명령 rad = raw × 1.1351 / 1150
@@ -229,6 +297,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 베이스 IMU: 베이스(현재는 고정) 링크에 IMU prim 추가 → `/base/imu` (`sensor_msgs/Imu`, sim time) 발행.
   고정 베이스에서는 상수값이므로, IMU prim 이 번거로우면 stage1 에서 상수로 채우는 것으로 대체 가능 (둘 중 하나로 통일하고 meta 에 기록)
 - 에피소드 리셋 서비스: 로봇 홈 자세, 드론 재배치(랜덤 시드 기록)
+  - **홈 자세 복귀는 목표를 한 번에 바꾸지 않고 부드러운 궤적으로 이동** (큰 스텝은 오버슈트와 손목 흔들림 유발, 1-5 A 시험)
 
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
@@ -315,7 +384,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 ## 8단계: 흔들리는 베이스 (1~7단계 완료 후)
 
 - 6DOF 베이스를 kinematic 바디로 모델링 (사인파 합성 또는 실제 IMU 로그 기반 궤적)
-- 로봇 고정: 씬에서 **root_joint 의 body0 을 움직이는 베이스 강체로 바꾸는 방식**을 검토 (1-4 참고. 최상위 prim 은 강체가 아니므로 Transform 을 움직여도 물리적으로 따라오지 않음)
+- 로봇 고정: 씬에서 **root_joint 의 body0 을 움직이는 베이스 강체로 바꾸는 방식**을 검토. 이때 fixed base override 를 쓸지
+  (`--base floating` 으로 USD 원본 구조를 쓸지)도 다시 결정 (1-4 참고. 최상위 prim 은 강체가 아니므로 Transform 을 움직여도 물리적으로 따라오지 않음)
   → 1~4단계 구조 유지, 씬 스크립트에 `--base kinematic` 추가
 - **베이스 상태 기록 (bag → intermediate 는 상위집합, 데이터셋에서 선택)**
   - bag: 베이스 IMU(`sensor_msgs/Imu`, 수백 Hz). sim 은 Isaac IMU 센서로 같은 토픽 + ground-truth 베이스 pose/twist 추가
