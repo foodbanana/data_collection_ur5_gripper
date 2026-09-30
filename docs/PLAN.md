@@ -111,7 +111,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - `mount_thickness`(STL 5 mm), `adapter_thickness`(브래킷 단독, 0.010: **실측 확인 (약 10 mm)**, 재빌드 불필요), `cam_tilt`
 - `gripper_yaw` = π/2: **실물 확인 완료** (손가락이 카메라 긴 변과 나란히 벌어짐, 카메라 시야를 가리지 않음)
 - `cam_xyz`, `cam_rpy`: 실물은 카메라 윗면이 **바깥쪽(공구 축 반대)** → 기본값을 `0 -0.0125 0.01015` / `-1.5708 -1.5708 0` 으로 변경 (2026-09-30)
-  - **로봇 USD 는 이전 방향(윗면이 공구 축 쪽) URDF 로 import 된 것 → 재import 필요**
+  - 로봇 USD 재import 완료 (2026-09-30, 커밋 3e25e81)
 - 카메라 장착 위치: D435 메시 후면 M3 구멍(Ø2.5, 간격 45 mm, 본체 높이 중앙)이 마운트 구멍과 일치 → **확인 완료** (방향 변경 후 FK 로 (±22.5, 57.5, 5.0) mm 재확인)
 
 ### 1-2. URDF 빌드
@@ -132,14 +132,28 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - **root_joint**: importer 가 `PhysicsFixedJoint "root_joint"` 를 만듦. body0 = 로봇 최상위 prim(`/ur5_rh_p12_d435i`, 강체 아님), body1 = `robot_mount`
   - 로봇은 최상위 prim 위치에 고정된다 (world 원점이 아님)
 
-### 1-4. 로봇 배치
+### 1-4. 로봇 배치와 구조 검증
 - **root_joint 는 유지**한다. 로봇 위치는 최상위 prim 의 Transform 으로 지정한다
 - `robot_mount` 에 FixedJoint 를 **추가하지 않는다** (같은 링크를 두 번 고정하게 됨)
 - 8단계에서는 씬에서 root_joint 의 body0 을 움직이는 베이스 강체로 바꾸는 방식을 검토
+- **구조 검증 스크립트** `isaacsim/scripts/check_articulation.py` (`~/isaacsim/python.sh`, `--headless` 지원)
+  - 테스트 씬: physics scene + ground plane + 로봇 USD reference (위 배치 규칙대로)
+  - 로봇 USD 를 재import 할 때마다 실행하는 회귀 검사. 로봇 USD 원본은 수정하지 않음 (검사용 값은 실행 중 메모리에서만)
+  - 검사 항목 (각각 PASS/FAIL, 리포트는 `isaacsim/reports/check_articulation_<날짜시간>.txt`)
+    1. DOF 이름·순서·개수 (mimic 조인트의 DOF 포함 여부는 가정하지 않고 보고). 팔 6개 이름이 실물 드라이버와 동일
+    2. 관절 한계 (rad): elbow ±π, 나머지 팔 ±2π, 그리퍼 4개 0~1.1351
+    3. drive·mimic 설정 출력 (mimic 대상, 계수, 오프셋)
+    4. root_joint 의 body0 = 최상위 prim, body1 = robot_mount
+    5. `rh_p12_rn_tcp`, `wrist_camera_color_optical_frame` 존재와 world 좌표
+    6. 링크별 질량·합계, 질량 0 이하나 관성 비정상 경고
+    7. 3초 시뮬레이션 후 NaN·폭주 없음 (팔은 stiffness 0 이라 처져도 정상)
+    8. `rh_r1_joint` 에만 임시 drive(stiffness 1000, damping 100, target 30°) → 2초 후 네 그리퍼 조인트 각도 차 1° 이내
 
 ### 1-5. drive 튜닝
 - import 직후 값: 팔 stiffness/damping 0 (명령을 줘도 추종하지 않고 중력에 처짐), maxForce 팔 150/150/150/28/28/28, 그리퍼 1000
 - 팔 6관절 stiffness/damping 튜닝 (USD 값은 degree 기준 단위임에 주의)
+  - 방법: 관절마다 목표 각도를 갑자기 바꿔보고(스텝 입력), 얼마나 빨리 도달하는지, 지나치지 않는지(overshoot), 중력에 처지지 않는지를 재서 값을 정한다
+  - 목표: 실물 UR5 처럼 명령을 빠르고 정확하게, 흔들림 없이 따라가는 것
 - `rh_r1_joint`: stiffness/damping + max force 를 실물 전류 한계(400 mA)에 맞춰 낮춤 (현재 1000 은 실물보다 훨씬 셈)
 - **mimic 조인트 3개(`rh_r2`, `rh_l1`, `rh_l2`)에는 drive stiffness 를 주지 않는다** (mimic 과 충돌). import 시 붙은 drive(maxForce 1000)는 stiffness 0 유지
 - 설정은 USD 원본이 아니라 스크립트/씬 레이어에서 적용
@@ -160,6 +174,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 로봇 USD 원본(`ur5_rh_p12_d435i.usda`)은 import 결과 그대로 둔다. 튜닝값은 스크립트/씬 레이어로
 
 **완료 기준**
+- [ ] 구조 검증 스크립트(1-4) 8개 항목 PASS
 - [ ] `/joint_command` 로 팔이 목표 자세에 안정적으로 도달 (떨림·폭주 없음)
 - [x] 그리퍼 0 → 1.1351 rad 열림/닫힘 동작, 좌우 손가락 대칭 (GUI drive 로 확인. 스크립트 설정으로 재확인 필요)
 - [ ] 테이블 위 작은 박스와 ≈ 1.5 kg 물체를 잡아 들어 올려도 미끄러지거나 튀거나 돌아가지 않음
@@ -317,13 +332,13 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   - **베이스 구동 방식 주의**: 매 프레임 xform 을 덮어써 순간이동시키면 물리 엔진이 아는 속도·가속도가 0 이거나 튀어서 IMU 값이 틀어짐 → kinematic target 또는 관절 drive 로 구동
 - 실물: 베이스에 실제 IMU 장착. 6DOF 베이스가 모션 플랫폼이면 플랫폼 컨트롤러의 자세·속도 피드백을 IMU 대신 쓰는 것도 검토 (정확도·지연 비교)
 - 정책이 베이스 움직임을 관측할지 결정 → state 확장 시 재학습/추가 파인튜닝
+- third view 카메라를 world 에 둘지 플랫폼 위에 둘지 결정
+- RL 경로: 같은 USD 를 Isaac Lab 으로 (Isaac Sim 6.1.0 과의 버전 호환성 확인 필요)
 
 **완료 기준 (베이스 IMU)**
 - [ ] 방법 1 IMU 값과 방법 2 계산값이 노이즈 범위 안에서 일치 (= 베이스 구동 방식이 올바름)
 - [ ] 정지 상태에서 선가속도 ≈ (0, 0, +9.81) (IMU 축 기준), 각속도 ≈ 0
 - [ ] IMU 토픽 header.stamp 가 sim time, 발행 주기 ≥ 100 Hz
-- third view 카메라를 world 에 둘지 플랫폼 위에 둘지 결정
-- RL 경로: 같은 USD 를 Isaac Lab 으로 (Isaac Sim 6.1.0 과의 버전 호환성 확인 필요)
 
 ---
 
