@@ -8,6 +8,10 @@
 #                드론은 별도 강체로 붙인다 (gravity_ff 가 보상하지 않도록). 바닥 없음 (팔이 바닥에 닿지 않게)
 #   C. 텔레옵식 추종: 50 Hz zero-order hold 명령으로 부드러운 궤적 → 추종 오차와 지연
 #   D. 그리퍼 열림·닫힘 시간 (정의: 명령 순간부터 위치 변화가 멈출 때(최종값의 2% 이내)까지). 목표값 이동 방식
+#   E. 홈 자세에서 가만히 3 초: 명령 위치에서 벗어남·떨림(peak-to-peak), 최대 관절 속도, NaN, physics 스텝당 계산 시간
+#   F. 빈손으로 그리퍼 끝까지 닫기: 닫힌 뒤 2 초 동안 손가락 떨림 (self-collision 을 켜면 손가락끼리 닿은 상태)
+#
+# 설정 덮어쓰기: 'drive_gains.yaml@articulation.self_collision=true' 처럼 쓰면 그 값만 바꿔 비교 (test_scene.load_config)
 #
 # 설정: A~C 는 --configs (기본: 기본·ff·공식 세 개), D 는 --d-configs (기본: drive_gains.yaml)
 # GUI 로 보기: --headless 를 빼고 --realtime 을 주면 sim 시간을 실제 시간에 맞춰 천천히 돌린다
@@ -38,11 +42,24 @@ parser.add_argument("--configs", nargs="+", help="A~C 에 쓸 설정 파일들",
 parser.add_argument("--d-configs", nargs="+", default=[ts.DEFAULT_CONFIG], help="D(그리퍼)에 쓸 설정 파일들")
 parser.add_argument("--realtime", action="store_true", help="sim 시간을 실제 시간에 맞춤 (GUI 로 눈으로 볼 때)")
 parser.add_argument("--cases", default=os.path.join(ts.CONFIG_DIR, "gravity_worst_cases.yaml"))
-parser.add_argument("--tests", default="ABCD")
+parser.add_argument("--tests", default="ABCD", help="A~F 중 고르기 (E·F 는 D 와 같은 설정 목록 --d-configs 를 씀)")
 args, _ = parser.parse_known_args()
 # 같은 파일을 상대·절대 경로로 주면 두 번 돌지 않도록 절대경로로 통일
-args.configs = [os.path.abspath(p) for p in args.configs]
-args.d_configs = [os.path.abspath(p) for p in args.d_configs]
+def _abs(p):
+    path, *ov = p.split("@")
+    return "@".join([os.path.abspath(path)] + ov)
+
+
+args.configs = [_abs(p) for p in args.configs]
+args.d_configs = [_abs(p) for p in args.d_configs]
+
+
+def disp(p):
+    """리포트 표시 이름: 파일 이름 + 덮어쓴 값 (self_collision 은 짧게)."""
+    path, *ov = p.split("@")
+    tags = ["selfcol ON" if o == "articulation.self_collision=true" else
+            ("selfcol off" if o == "articulation.self_collision=false" else o) for o in ov]
+    return os.path.basename(path) + (f" [{', '.join(tags)}]" if tags else "")
 
 from isaacsim import SimulationApp  # noqa: E402
 
@@ -145,6 +162,7 @@ def open_scene(cfg, ground=True, payload_pos=None, payload_kg=None):
     c.drive.apply()
     c.drive.start()
     c.rec = Recorder(c.robot)
+    c.wall, c.steps = 0.0, 0
     return c
 
 
@@ -159,7 +177,10 @@ def run_for(c, sec):
     t_end = c.rec.t + sec
     wall0, sim0 = time.monotonic(), c.rec.t
     while c.rec.t < t_end - 1e-9:
+        n0, w0 = c.rec.t, time.perf_counter()
         simulation_app.update()
+        c.wall += time.perf_counter() - w0
+        c.steps += int(round((c.rec.t - n0) / ts.PHYSICS_DT))
         c.rec.check()
         c.drive.check()
         if args.realtime:
@@ -321,6 +342,39 @@ def test_d(c, home, gi):
     return out
 
 
+# ── E ──
+def test_e(c, home, ai, gi):
+    reset(c, home, 0.0, settle=1.0)
+    w0, s0 = c.wall, c.steps
+    t0 = c.rec.start()
+    run_for(c, 3.0)
+    t, q, qd = c.rec.stop()
+    t = t - t0
+    last = t >= 1.0
+    cmd = np.array(home)
+    dev = np.degrees(np.abs(q[:, ai] - cmd).max(axis=0))
+    p2p = np.degrees(q[last][:, ai].max(axis=0) - q[last][:, ai].min(axis=0))
+    return dict(dev=float(dev.max()), dev_joint=ts.ARM_JOINTS[int(dev.argmax())], p2p=float(p2p.max()),
+                p2p_joint=ts.ARM_JOINTS[int(p2p.argmax())], vmax=float(np.abs(qd[:, ai]).max()),
+                grip_dev=math.degrees(float(np.abs(q[:, gi]).max())),
+                nan=not (np.isfinite(q).all() and np.isfinite(qd).all()),
+                ms_per_step=1000 * (c.wall - w0) / max(1, c.steps - s0))
+
+
+# ── F ──
+def test_f(c, home, gi, idx):
+    reset(c, home, 0.0, settle=0.5)
+    c.drive.set_gripper_goal(GRIP_CLOSED)
+    run_for(c, GRIP_CLOSED / c.drive.gripper.velocity + 1.0)
+    t0 = c.rec.start()
+    run_for(c, 2.0)
+    t, q, _ = c.rec.stop()
+    fi = [idx[n] for n in ts.GRIPPER_JOINTS]
+    p2p = np.degrees(q[:, fi].max(axis=0) - q[:, fi].min(axis=0))
+    return dict(final_deg=math.degrees(float(q[-1, gi])), p2p=float(p2p.max()),
+                nan=not np.isfinite(q).all())
+
+
 def fmt(x, nd=3):
     return "nan" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.{nd}f}"
 
@@ -335,11 +389,12 @@ def main():
     log(f"tune_drives  {datetime.datetime.now().isoformat(timespec='seconds')}  physics dt = {ts.PHYSICS_DT:.5f} s")
     cases = yaml.safe_load(open(args.cases, encoding="utf-8")) if "B" in args.tests else None
     results = {}
-    all_paths = list(dict.fromkeys(list(args.configs) + (list(args.d_configs) if "D" in args.tests else [])))
+    d_like = any(k in args.tests for k in "DEF")
+    all_paths = list(dict.fromkeys(list(args.configs) + (list(args.d_configs) if d_like else [])))
     for path in all_paths:
         cfg = ts.load_config(path)
-        in_abc, in_d = path in args.configs, ("D" in args.tests and path in args.d_configs)
-        name = os.path.basename(path)
+        in_abc, in_d = path in args.configs, (d_like and path in args.d_configs)
+        name = disp(path)
         log("")
         log(f"===== {name} (gravity_ff = {cfg['gravity_ff']}) =====")
         R = results[name] = {}
@@ -357,15 +412,20 @@ def main():
                     R["A"] = test_a(c, home, ai)
                 if in_abc and "C" in args.tests:
                     R["C"] = test_c(c, home, ai)
-                if in_d:
+                if in_d and "E" in args.tests:
+                    R["E"] = test_e(c, home, ai, gi)
+                if in_d and "D" in args.tests:
                     R["D"] = test_d(c, home, gi)
+                if in_d and "F" in args.tests:
+                    R["F"] = test_f(c, home, gi, c.drive.idx)
+                R["wall_ms_per_step"] = 1000 * c.wall / max(1, c.steps)
             finally:
                 close_scene(c)
         if in_abc and "B" in args.tests:
             R["B"] = test_b(cfg, cases)
 
-    names = [os.path.basename(p) for p in args.configs]
-    d_names = [os.path.basename(p) for p in args.d_configs]
+    names = [disp(p) for p in args.configs]
+    d_names = [disp(p) for p in args.d_configs]
     col = lambda s: f"{s:>34s}"  # noqa: E731
 
     if "A" in args.tests:
@@ -432,6 +492,28 @@ def main():
             r = results[n]["D"]["hold_open"]
             log(f"    {n}: 막힌 위치 {r['q_hold']:.3f} rad, 그때 목표값 {r['setpoint_hold']:.3f} rad "
                 f"→ 이전 방식(목표값에서 이어 감)이면 지연 약 {r['old_delay']:.2f} s")
+
+    if "E" in args.tests:
+        log("")
+        log("[E] 홈 자세 가만히 3 초: 명령 위치에서 최대 벗어남 ° / 떨림 peak-to-peak ° (마지막 2 초) / 최대 속도 rad/s / 그리퍼 벗어남 ° / 스텝당 계산 ms")
+        log(f"    [떨림 기준 < 0.01°, NaN 없음]")
+        for n in d_names:
+            r = results[n]["E"]
+            ok = (not r["nan"]) and r["p2p"] < 0.01
+            log(f"  {n:40s} {r['dev']:.4f} ({r['dev_joint']}) / {r['p2p']:.5f} ({r['p2p_joint']}) / {r['vmax']:.4f} / "
+                f"{r['grip_dev']:.3f} / {r['ms_per_step']:.2f} ms {'P' if ok else 'F'}")
+    if "F" in args.tests:
+        log("")
+        log("[F] 빈손으로 그리퍼 끝까지 닫기 → 닫힌 뒤 2 초: 최종 rh_r1 각도 ° / 손가락 4 관절 떨림 peak-to-peak °  [떨림 기준 < 0.01°]")
+        for n in d_names:
+            r = results[n]["F"]
+            ok = (not r["nan"]) and r["p2p"] < 0.01
+            log(f"  {n:40s} {r['final_deg']:.3f}° / {r['p2p']:.5f}° {'P' if ok else 'F'}")
+    log("")
+    log("[계산 시간] 설정별 전체 시험의 physics 스텝당 평균 wall time (headless, 렌더링 포함 app.update 기준)")
+    for n in list(results):
+        if "wall_ms_per_step" in results[n]:
+            log(f"  {n:40s} {results[n]['wall_ms_per_step']:.2f} ms/step")
 
     os.makedirs(ts.REPORT_DIR, exist_ok=True)
     path = os.path.join(ts.REPORT_DIR, f"tune_drives_{datetime.datetime.now():%Y%m%d_%H%M%S}.txt")

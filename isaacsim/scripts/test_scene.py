@@ -34,10 +34,21 @@ MOUNT_PATH = f"{ROBOT_PATH}/Geometry/robot_mount"
 
 
 def load_config(path=DEFAULT_CONFIG):
+    """설정 파일을 읽는다. 비교 시험용으로 'file.yaml@articulation.self_collision=true' 처럼
+    '@점.경로=값' 을 붙이면 그 값만 바꿔 읽는다 (파일은 그대로)."""
     import yaml
 
+    path, *overrides = str(path).split("@")
     with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+    for ov in overrides:
+        key, _, val = ov.partition("=")
+        node, parts = cfg, key.split(".")
+        for k in parts[:-1]:
+            node = node[k]
+        if parts[-1] not in node:
+            raise KeyError(f"설정 덮어쓰기 대상이 없음: {key}")
+        node[parts[-1]] = yaml.safe_load(val)
     for key in ("gravity_ff", "articulation", "home_pose", "arm", "gripper", "mimic"):
         if key not in cfg:
             raise KeyError(f"{path}: '{key}' 항목이 없습니다")
@@ -57,8 +68,28 @@ def _apply_articulation_settings(prim, art_cfg):
     api = PhysxSchema.PhysxArticulationAPI.Apply(prim)
     api.CreateSolverPositionIterationCountAttr().Set(int(art_cfg["solver_position_iterations"]))
     api.CreateSolverVelocityIterationCountAttr().Set(int(art_cfg["solver_velocity_iterations"]))
-    api.CreateEnabledSelfCollisionsAttr().Set(bool(art_cfg["enabled_self_collisions"]))
+    api.CreateEnabledSelfCollisionsAttr().Set(bool(art_cfg["self_collision"]))
     api.CreateSleepThresholdAttr().Set(float(art_cfg["sleep_threshold"]))
+
+
+def _apply_filter_pairs(stage, pairs):
+    """충돌 제외 쌍을 씬 레이어에 적는다 (UsdPhysics.FilteredPairsAPI, 메모리 stage 에만)."""
+    from pxr import UsdPhysics
+
+    for a, b in pairs:
+        pa, pb = stage.GetPrimAtPath(find_link_path(stage, a)), find_link_path(stage, b)
+        UsdPhysics.FilteredPairsAPI.Apply(pa).CreateFilteredPairsRel().AddTarget(pb)
+
+
+def filtered_pairs(stage):
+    from pxr import Usd, UsdPhysics
+
+    out = set()
+    for p in Usd.PrimRange(stage.GetPrimAtPath(ROBOT_PATH)):
+        if p.HasAPI(UsdPhysics.FilteredPairsAPI):
+            for t in UsdPhysics.FilteredPairsAPI(p).GetFilteredPairsRel().GetTargets():
+                out.add(frozenset((p.GetName(), str(t).split("/")[-1])))
+    return out
 
 
 def _make_fixed_base(stage):
@@ -127,6 +158,7 @@ def build_test_scene(usd_path, physics_variant="physx", base_z=ROBOT_BASE_Z, bas
         raise RuntimeError(f"로봇 USD 의 ArticulationRootAPI 위치가 예상({MOUNT_PATH})과 다름: {info['asset_roots']}")
     root_prim = _make_fixed_base(stage) if base == "fixed" else stage.GetPrimAtPath(MOUNT_PATH)
     _apply_articulation_settings(root_prim, config["articulation"])
+    _apply_filter_pairs(stage, config["articulation"]["collision_filter_pairs"])
     info["root"] = str(root_prim.GetPath())
 
     return stage, Articulation(ROBOT_PATH), info
@@ -151,9 +183,14 @@ def verify_articulation(stage, robot, info, config):
     got = {
         "solver_position_iterations": api.GetSolverPositionIterationCountAttr().Get(),
         "solver_velocity_iterations": api.GetSolverVelocityIterationCountAttr().Get(),
-        "enabled_self_collisions": api.GetEnabledSelfCollisionsAttr().Get(),
+        "self_collision": api.GetEnabledSelfCollisionsAttr().Get(),
         "sleep_threshold": api.GetSleepThresholdAttr().Get(),
     }
+    want_pairs = {frozenset(p) for p in config["articulation"]["collision_filter_pairs"]}
+    got_pairs = filtered_pairs(stage)
+    lines.append(f"collision_filter_pairs: {sorted(tuple(sorted(p)) for p in got_pairs)} (설정 {len(want_pairs)} 쌍)")
+    if got_pairs != want_pairs:
+        problems.append(f"충돌 제외 쌍이 설정과 다름: {got_pairs} != {want_pairs}")
     for k, v in got.items():
         want = config["articulation"][k]
         lines.append(f"{k}: {v} (설정 {want})")

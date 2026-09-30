@@ -17,7 +17,12 @@ gravity_ff: true
 articulation:
   solver_position_iterations: 32   # PhysX 기본값과 같음. 1-6 파지에서 재검토
   solver_velocity_iterations: 4    # 기본 1 → 접촉(파지) 안정성을 위해 4. 1-6 에서 재검토
-  enabled_self_collisions: false   # URDF import 때 Allow Self-Collision 끔과 같게
+  # self-collision: 로봇 링크끼리 충돌 (새 root 의 PhysxArticulationAPI.enabledSelfCollisions). URDF import 때는 끔
+  #   관절로 직접 연결된 링크 쌍은 USD 에서 이미 충돌이 꺼져 있음 (joint collisionEnabled = false)
+  self_collision: false
+  # 충돌 제외 쌍 [링크, 링크]: 씬 레이어에서 UsdPhysics.FilteredPairsAPI 로 적용. self_collision 이 켜졌을 때 의미 있음
+  #   2026-09-30 점검(check_self_collision.py): 관절 연결이 아닌 쌍 중 항상 붙어 있는 쌍 없음 → 비어 있음
+  collision_filter_pairs: []
   sleep_threshold: 0.0             # 수면 끔. 팔이 멈춘 채 가벼운 손가락만 움직이면 운동에너지가 작아 articulation 이 잠들어
                                    # 그리퍼가 중간에 멈춘다 (2026-09-30 D 시험에서 확인)
 

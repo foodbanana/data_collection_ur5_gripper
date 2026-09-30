@@ -230,6 +230,22 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   - sim: 잡은 물체에 당기는 힘을 천천히 늘려(램프) 물체가 손가락에 대해 미끄러지기 시작하는 힘을 기록. 당기는 방향·물체·잡는 위치는 실물 측정과 맞춘다
   - 미끄럼 힘은 파지력 × 마찰계수라서 측정 하나로는 둘을 분리할 수 없음 → 마찰계수는 재질 기준으로 먼저 정하고 `rh_r1_joint` maxForce 로 맞춘다
 
+- **self-collision: 켬 (2026-09-30 결정)** — `drive_gains.yaml` 의 `articulation.self_collision: true`, `collision_filter_pairs: []`
+  (씬 레이어에서 적용, 로봇 USD 원본은 그대로. ff·official 비교 설정은 끈 채로 둠)
+  - 사전 점검 (`isaacsim/scripts/check_self_collision.py`, 7 자세 × 그리퍼 열림·닫힘, 충돌 형상 간 거리, 가까움 기준 2 mm):
+    - 관절로 직접 연결된 쌍은 USD 에서 이미 충돌이 꺼져 있음 (joint collisionEnabled = false). 그 외에 항상 붙어 있는 쌍 없음 → **충돌 제외 쌍 0 개**
+    - 그리퍼를 끝까지 닫으면 좌우 손가락 4 쌍(l1-r1, l1-r2, l2-r1, l2-r2)이 1.6~2.0 mm 겹침 → 켜면 실제로 닿음 (의도한 동작)
+    - 공구가 팔 쪽을 향하는 자세(홈에서 wrist_1 = 0)에서 forearm - 카메라 1.1 mm 겹침 → 실물에서도 닿을 수 있는 자세
+    - B 시험 최악 자세(무작위 추출) 일부가 자기 충돌 자세: wrist_3@3·5cm, wrist_2@5cm 는 수십 mm 파고듦, wrist_1@3·5cm·wrist_2@3cm 는 base-upper_arm 약 2.7 mm
+  - 켠 상태 / 끈 상태 비교 (`tune_drives.py`, 설정 덮어쓰기 `drive_gains.yaml@articulation.self_collision=true`):
+    - D·E·F·A·C 모두 켠 상태에서 통과, 결과는 끈 상태와 같거나 더 현실적
+    - F (빈손으로 끝까지 닫기): 켠 상태에서 손가락이 **64.233° 에서 서로 닿아 멈춤, 떨림 없음** (끈 상태는 관절 한계 65.04° 까지 겹쳐 들어감)
+    - `check_articulation.py`: 켠 상태 8/8 PASS
+    - 계산 시간: 끈 상태 대비 **약 +1%**
+    - B 는 비교하지 않음: 자기 충돌 자세가 섞여 있어, 가능한 자세만으로 최악 경우를 다시 찾은 뒤 따로 결정
+  - 끄는 기준 (하나라도 해당하면 false 로 되돌리고 원인·겹친 쌍을 여기에 기록): 가만히 있을 때 관절 0.01° 이상 흔들림이나 링크 튐 /
+    끈 상태에서 통과하던 A~D 항목 실패 / 실물에서는 닿지 않을 자세에서 막힘 / 계산 시간 크게 증가
+
 ### 1-7. 손목 카메라
 - `wrist_camera_color_optical_frame` 아래 Camera prim, X 축 180° 회전 (optical: +z 전방/+y 아래 ↔ USD camera: -z 전방/+y 위)
 - `horizontalAperture=20.955`, `verticalAperture=15.716`, `focalLength ≈ fx*20.955/640 ≈ 20.14` (fx≈615 px, D435 color 640x480 전형값. 실물 `camera_info` 로 확인)

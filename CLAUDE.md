@@ -63,6 +63,8 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
   설정 파일 `articulation.sleep_threshold` → 새 root 의 `PhysxArticulationAPI` 에 적고 재생 후 확인
 - **시험용 하중(드론 무게 등)을 로봇 링크에 FixedJoint 로 붙일 때는 `physics:excludeFromArticulation = true`**.
   없으면 PhysX 가 그 강체를 articulation 의 새 링크로 흡수해 로봇 중력 보상 계산에 하중 무게가 들어간다
+- **self-collision 켬** (`articulation.self_collision: true`, 충돌 제외 쌍 없음). 관절로 직접 연결된 링크 쌍은 USD 에서 이미 충돌이 꺼져 있다.
+  빈손으로 끝까지 닫으면 손가락이 64.233° 에서 서로 닿아 멈춘다 (관절 한계 65.04° 까지 가지 않음). 근거는 PLAN 1-6
 - 팔 drive 는 높은 stiffness(중력 보상 feedforward 없음)로 확정 (`isaacsim/config/drive_gains.yaml`). ω ≥ 70 rad/s (텔레옵 추종 지연 < 40 ms)
 - 테스트 씬에서 로봇은 바닥에서 띄워 배치한다 (관절 0 자세에서 팔이 바닥에 닿음). 높이는 씬 스크립트의 값이고 로봇 USD 에는 넣지 않는다
 - **구조 회귀 검사**: 로봇 USD 재import 후 `~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless` → 8/8 PASS 확인 (리포트는 `isaacsim/reports/`, git 제외)
