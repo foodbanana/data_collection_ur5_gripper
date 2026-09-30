@@ -4,6 +4,7 @@ UR5(CB3, UR5e 아님) + ROBOTIS RH-P12-RN(A) 1DOF 그리퍼 + 손목 D435i 로 �
 LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 레포. 실물 파이프라인과 Isaac Sim 6.1.0 파이프라인이 녹화·변환을 공유한다.
 
 전체 계획과 단계별 완료 기준: `docs/PLAN.md`
+1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 
 ## 경로 규칙
 

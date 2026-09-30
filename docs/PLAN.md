@@ -159,6 +159,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     8. `rh_r1_joint` 에만 임시 drive(stiffness 1000, damping 100, target 30°) → 2초 후 네 그리퍼 조인트 각도 차 1° 이내
 
 ### 1-5. drive 튜닝
+- **정리 문서: `docs/drive_tuning.md`** (설계 근거, 최종값, 시험 결과, 알려진 위험, 남은 일, 실행 명령). 아래는 진행 기록
 - import 직후 값: 팔 stiffness/damping 0 (명령을 줘도 추종하지 않고 중력에 처짐), maxForce 팔 150/150/150/28/28/28, 그리퍼 1000.
   속도 한계: fixed base 에서 tensor API 로 읽으면 팔 π rad/s (180°/s), 그리퍼 6.5 rad/s (372°/s) → URDF 값이 적용돼 있음
 - **방침 (1회차 시험 후 확정, 2026-09-30)**
