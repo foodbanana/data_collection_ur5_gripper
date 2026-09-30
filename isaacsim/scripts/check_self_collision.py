@@ -36,6 +36,10 @@ parser.add_argument("--cases", default=os.path.join(ts.CONFIG_DIR, "gravity_wors
 parser.add_argument("--skip-distances", action="store_true", help="[1]~[4] 거리 계산을 건너뜀 (오래 걸림)")
 parser.add_argument("--physx-poses", action="store_true", help="[5] 무작위 자세 PhysX 접촉 비교 (decomposition 끔/켬)")
 parser.add_argument("--n-valid", type=int, default=302, help="[5] 가능한 자세를 이만큼 모을 때까지 뽑음 (compute_gain_seed 와 같게)")
+parser.add_argument("--reuse-classes", default=None,
+                    help="[5] 저장해 둔 자세 분류(pose_classes_*.npz)를 다시 씀 (기하 분류 약 3 분 생략). 'latest' 면 가장 최근 파일")
+parser.add_argument("--cd-variant", action="append", default=[],
+                    help="[5] decomposition 설정 변형 추가 비교, 예: 'max_convex_hulls=64,voxel_resolution=2000000' (여러 번 가능)")
 args, _ = parser.parse_known_args()
 
 from isaacsim import SimulationApp  # noqa: E402
@@ -169,7 +173,7 @@ def pair_distance(A, B):
 
 def physx_penetrations(cfg, poses, pen_mm=0.5):
     """cfg 로 씬을 만들고 각 자세로 순간이동한 뒤 첫 physics 스텝의 PhysX 접촉 보고에서 파고듦(separation < −pen_mm)이 있는
-    링크 쌍을 모은다. 반환: 자세별 set((a, b))."""
+    링크 쌍을 모은다. 반환: 자세별 {(a, b): 최소 separation [m]}, 적용된 decomposition prim, 스텝당 계산 시간 [ms]."""
     from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
     from omni.physx import get_physx_simulation_interface
     from pxr import PhysicsSchemaTools, PhysxSchema
@@ -190,17 +194,21 @@ def physx_penetrations(cfg, poses, pen_mm=0.5):
     def post(dt, ctx):
         if box["armed"]:
             headers, data = sim.get_contact_report()[:2]
-            pairs = set()
+            pairs = {}
             for h in headers:
                 seps = [data[h.contact_data_offset + k].separation for k in range(h.num_contact_data)]
                 if seps and min(seps) < -pen_mm / 1000:
                     a = str(PhysicsSchemaTools.intToSdfPath(h.actor0)).split("/")[-1]
                     b = str(PhysicsSchemaTools.intToSdfPath(h.actor1)).split("/")[-1]
-                    pairs.add(tuple(sorted((a, b))))
+                    k = tuple(sorted((a, b)))
+                    pairs[k] = min(pairs.get(k, 0.0), min(seps))
             box["pairs"], box["armed"] = pairs, False
 
     cb = SimulationManager.register_callback(post, event=SimulationEvent.PHYSICS_POST_STEP)
     out = []
+    import time as _t
+
+    wall, steps = 0.0, 0
     try:
         for q6 in poses:
             q = np.zeros(robot.num_dofs, dtype=np.float32)
@@ -211,27 +219,19 @@ def physx_penetrations(cfg, poses, pen_mm=0.5):
             robot.set_dof_position_targets(q)
             box["armed"], box["pairs"] = True, None
             while box["armed"]:
+                w0 = _t.perf_counter()
                 simulation_app.update()
+                wall += _t.perf_counter() - w0
+                steps += 1
             out.append(box["pairs"])
     finally:
         SimulationManager.deregister_callback(cb)
         app_utils.stop()
         simulation_app.update()
-    return out, info.get("convex_decomposition", [])
+    return out, info.get("convex_decomposition", []), 1000 * wall / max(1, steps)
 
 
-def physx_pose_section(log):
-    """[5] 무작위 자세 분류 + PhysX 접촉 비교 (decomposition 끔/켬)."""
-    import collision_geom as cg
-
-    base = ts.load_config(args.config)
-    geo_cfg = ts.load_config(args.config)
-    geo_cfg["articulation"]["self_collision"] = False  # 기하 분류 때는 접촉으로 링크가 밀리지 않게
-    stage, robot, info = ts.build_test_scene(args.usd, base="fixed", config=geo_cfg, ground=False)
-    app_utils.play()
-    simulation_app.update()
-    idx = ts.dof_index_map(robot)
-
+def _set_pose_fn(robot, idx):
     def set_pose(q6):
         q = np.zeros(robot.num_dofs, dtype=np.float32)
         for n, v in zip(ts.ARM_JOINTS, q6):
@@ -241,51 +241,104 @@ def physx_pose_section(log):
             robot.set_dof_velocities(np.zeros_like(q))
             simulation_app.update()
         robot.set_dof_positions(q)
+    return set_pose
 
-    rng = np.random.default_rng(0)  # compute_gain_seed.py 와 같은 시드·순서
-    lim = np.array([2 * math.pi, 2 * math.pi, math.pi, 2 * math.pi, 2 * math.pi, 2 * math.pi])
-    r = cg.classify_random_poses(stage, set_pose, rng, lim, args.n_valid, first=(HOME, np.zeros(6)))
-    app_utils.stop()
+
+def _geo_scene():
+    geo_cfg = ts.load_config(args.config)
+    geo_cfg["articulation"]["self_collision"] = False  # 기하 계산 때는 접촉으로 링크가 밀리지 않게
+    stage, robot, info = ts.build_test_scene(args.usd, base="fixed", config=geo_cfg, ground=False)
+    app_utils.play()
     simulation_app.update()
-    log("")
-    log(f"[5] 무작위 자세 {r['draws']} 개 기하 분류: 가능 {len(r['valid'])}, convex hull 때문에만 겹침 {len(r['hull_only'])}, "
-        f"실제 겹침 {len(r['real'])}, 판정 불가 {len(r['unknown'])}")
+    return stage, robot, ts.dof_index_map(robot)
 
-    groups = {"hull_only": r["hull_only"], "real": r["real"], "valid": r["valid"]}
-    allq = [q for g in groups.values() for q, _ in g]
+
+def physx_pose_section(log):
+    """[5] 무작위 자세 분류 + PhysX 접촉 비교 (decomposition 끔/켬/변형) + 놓친 실제 겹침의 원래 메시 깊이."""
+    import glob
+    import time
+
+    import collision_geom as cg
+
+    if args.reuse_classes:
+        path = (sorted(glob.glob(os.path.join(ts.REPORT_DIR, "pose_classes_*.npz")))[-1]
+                if args.reuse_classes == "latest" else args.reuse_classes)
+        z = np.load(path)
+        groups = {g: [q for q in z[g]] for g in ("hull_only", "real", "valid")}
+        log(f"[5] 자세 분류 다시 씀: {path} (가능 {len(groups['valid'])}, convex hull 때문에만 {len(groups['hull_only'])}, "
+            f"실제 겹침 {len(groups['real'])})")
+    else:
+        stage, robot, idx = _geo_scene()
+        rng = np.random.default_rng(0)  # compute_gain_seed.py 와 같은 시드·순서
+        lim = np.array([2 * math.pi, 2 * math.pi, math.pi, 2 * math.pi, 2 * math.pi, 2 * math.pi])
+        r = cg.classify_random_poses(stage, _set_pose_fn(robot, idx), rng, lim, args.n_valid, first=(HOME, np.zeros(6)))
+        app_utils.stop()
+        simulation_app.update()
+        groups = {g: [q for q, _ in r[g]] for g in ("hull_only", "real", "valid")}
+        path = os.path.join(ts.REPORT_DIR, f"pose_classes_{datetime.datetime.now():%Y%m%d_%H%M%S}.npz")
+        os.makedirs(ts.REPORT_DIR, exist_ok=True)
+        np.savez(path, **{g: np.array(v) for g, v in groups.items()}, unknown=np.array([q for q, _ in r["unknown"]]))
+        log("")
+        log(f"[5] 무작위 자세 {r['draws']} 개 기하 분류: 가능 {len(r['valid'])}, convex hull 때문에만 겹침 {len(r['hull_only'])}, "
+            f"실제 겹침 {len(r['real'])}, 판정 불가 {len(r['unknown'])}  (저장: {path})")
+
+    variants = [("decomposition 끔", {"enabled": False}), ("decomposition 켬", {"enabled": True})]
+    for v in args.cd_variant:
+        kv = {k: yaml.safe_load(x) for k, x in (item.split("=") for item in v.split(","))}
+        variants.append((f"켬 {v}", {"enabled": True, **kv}))
+    allq = [q for g in groups.values() for q in g]
     res = {}
-    for label, en in (("decomposition 끔", False), ("decomposition 켬", True)):
+    for label, over in variants:
         cfg = ts.load_config(args.config)
         cfg["articulation"]["self_collision"] = True
-        cfg["collision_shapes"]["convex_decomposition"]["enabled"] = en
-        t0 = __import__("time").perf_counter()
-        pens, applied = physx_penetrations(cfg, allq)
-        res[label] = (pens, applied, __import__("time").perf_counter() - t0)
+        for k, x in over.items():
+            if k not in cfg["collision_shapes"]["convex_decomposition"]:
+                raise KeyError(f"convex_decomposition 에 없는 항목: {k}")
+            cfg["collision_shapes"]["convex_decomposition"][k] = x
+        t0 = time.perf_counter()
+        pens, applied, ms = physx_penetrations(cfg, allq)
+        res[label] = dict(pens=pens, applied=applied, sec=time.perf_counter() - t0, ms=ms,
+                          cd=dict(cfg["collision_shapes"]["convex_decomposition"]))
 
     log(f"  PhysX 접촉 보고로 파고듦(separation < −0.5 mm, 순간이동 직후 첫 스텝)이 있는 자세 수")
-    log(f"  {'분류':28s} {'자세 수':>6s} " + " ".join(f"{k:>18s}" for k in res))
+    log(f"  {'분류':12s} {'자세 수':>6s} " + " ".join(f"{k:>24s}" for k in res))
+    split = {}
     k0 = 0
-    per_group = {}
     for g, items in groups.items():
         n = len(items)
-        cells = []
-        for label, (pens, _, _) in res.items():
-            hit = [bool(p) for p in pens[k0:k0 + n]]
-            cells.append(f"{sum(hit):>18d}")
-            per_group[(g, label)] = pens[k0:k0 + n]
-        log(f"  {g:28s} {n:6d} " + " ".join(cells))
+        split[g] = (k0, k0 + n)
+        log(f"  {g:12s} {n:6d} " + " ".join(f"{sum(bool(p) for p in res[l]['pens'][k0:k0 + n]):>24d}" for l in res))
         k0 += n
-    for label, (pens, applied, dt) in res.items():
-        log(f"  {label}: 적용 prim {applied if applied else '-'}, 소요 {dt:.1f} s")
-    left = {}
-    for (q, _), pairs in zip(groups["hull_only"], per_group[("hull_only", "decomposition 켬")]):
-        for pr in pairs:
-            left[pr] = left.get(pr, 0) + 1
-    log("  decomposition 켠 뒤에도 남은 'convex hull 때문에만' 자세의 PhysX 파고듦 쌍 (횟수): "
-        + (", ".join(f"{a}-{b} {c}" for (a, b), c in sorted(left.items(), key=lambda x: -x[1])) or "없음"))
-    lost = sum(1 for p_off, p_on in zip(per_group[("real", "decomposition 끔")], per_group[("real", "decomposition 켬")])
-               if p_off and not p_on)
-    log(f"  실제 겹침 자세 중 decomposition 을 켜서 PhysX 가 더 이상 겹침을 보고하지 않는 자세: {lost} (0 이 바람직)")
+    a, b = split["real"]
+    off = res["decomposition 끔"]["pens"]
+    log(f"  {'놓침(실제)':12s} {'':6s} " + " ".join(
+        f"{sum(1 for i in range(a, b) if off[i] and not res[l]['pens'][i]):>24d}" for l in res))
+    log(f"  {'스텝당 ms':12s} {'':6s} " + " ".join(f"{res[l]['ms']:>24.2f}" for l in res))
+    for label, rr in res.items():
+        log(f"  {label}: 설정 {rr['cd']}, 적용 prim {len(rr['applied'])} 개, 소요 {rr['sec']:.1f} s")
+
+    # 놓친 실제 겹침: 끔에서는 보고되던 쌍이 켬(각 변형)에서 사라진 자세 → 원래 메시 기준 깊이
+    stage, robot, idx = _geo_scene()
+    shapes, link_paths = cg.collect(stage)
+    names = sorted(shapes)
+    from isaacsim.core.experimental.prims import RigidPrim
+
+    view = RigidPrim([link_paths[n] for n in names])
+    set_pose = _set_pose_fn(robot, idx)
+    for label in [l for l in res if l != "decomposition 끔"]:
+        on = res[label]["pens"]
+        lost = [(i, pr) for i in range(a, b) if off[i] and not on[i] for pr in off[i]]
+        log("")
+        log(f"  [{label}] 놓친 실제 겹침 자세 {len(set(i for i, _ in lost))} 개: 링크 쌍 / PhysX(끔) separation / 원래 메시 깊이")
+        for i, (pa, pb) in lost:
+            set_pose(allq[i])
+            T = cg.link_transforms(view, names)
+            ds = [cg.raw_depth(sa, T[pa], sb, T[pb]) for sa in shapes[pa] for sb in shapes[pb]]
+            d = None if any(x is None for x in ds) else max(ds)
+            log(f"    자세 {i - a:3d} {np.round(allq[i], 2).tolist()}  {pa}-{pb}  {off[i][(pa, pb)] * 1000:+.2f} mm  "
+                f"{'판정 불가' if d is None else f'{d * 1000:.2f} mm'}")
+    app_utils.stop()
+    simulation_app.update()
 
 
 def main():

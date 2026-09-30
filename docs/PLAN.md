@@ -217,6 +217,16 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - **3회차 (기본, shoulder_pan ω 100, 그리퍼 현재 위치에서 재시작)**: A 6/6 (0.05 rad, overshoot 최대 1.2%), C 6/6 (지연 19~34 ms),
   D 닫힘 2.15 s·열림 2.15 s, 잡은 상태에서 열기 지연 0.017 s → **전부 통과**. B 는 2회차 결과(12/12)와 같은 설정이라 다시 돌리지 않음
   (shoulder_pan 은 B 대상 토크가 0 이라 영향 없음)
+- **알려진 위험: 높은 K** (stiffness 가 커서 생기는 문제와 대응)
+  1. **충돌 시 팔이 밀리지 않고 최대 토크로 밀어붙임**: 드론·테이블·자기 몸에 닿아도 위치 오차 × K 가 곧바로 maxForce(150/28 Nm)까지 올라감.
+     실물 UR 은 힘·토크가 한계를 넘으면 보호 정지(protective stop)하지만 sim 에는 없음
+     → **2·3단계에서 보호 정지 흉내 구현**: 관절 토크(drive 힘)·접촉력이 기준을 넘으면 팔 목표를 현재 위치에 고정해 멈추고,
+       에피소드에 표시(메타데이터 `protective_stop`, 발생 시각·관절·값). 이런 에피소드는 학습 데이터에서 거르거나 따로 표시
+     → **UR5(CB3) 보호 정지의 실제 기준값(힘·토크 한계, 안전 설정 기본값)은 UR 문서(User Manual / Safety 설정)에서 확인 필요**. 확인 전까지는 임시값
+  2. **큰 명령에 오버슈트** (A 시험 0.2 rad 스텝에서 shoulder_lift 13.6%): 명령 제한기로 막음 — 이미 계획됨
+     (3단계 리셋 서비스의 부드러운 홈 복귀, 텔레옵 명령의 한 스텝 변화량 제한)
+  3. **physics 주기·엔진이 바뀌면 불안정 가능** (ω·dt 가 1~3.5 인 관절이 있음, 1/120 s·PhysX 기준으로 맞춘 값):
+     physics 주기(`PHYSICS_DT`), 엔진(PhysX ↔ Newton), solver 반복 횟수를 바꿀 때마다 **1-5 시험(A~F)과 check_articulation 을 다시 돌린다**
 - **GUI 육안 확인 (2026-09-30, `--realtime`, A·B·C·D 각각)**: 0.2 rad 스텝에서 shoulder_lift 가 살짝 넘어갔다 돌아오는 것(알려진 참고 항목)만 보이고
   떨림·이상 움직임 없음 → **1-5 drive 설정 확정 (`drive_gains.yaml`)**
 
@@ -252,7 +262,14 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   - 이유: forearm 의 convex hull 이 오목한 부분을 메워, 원래 메시로는 겹치지 않는 자세 62 개가 겹친다고 판정됨 (주로 forearm–wrist_2)
   - 확인 (`check_self_collision.py --skip-distances --physx-poses`, 순간이동 직후 PhysX 접촉 보고로 파고듦 > 0.5 mm 인 자세 수):
     - convex hull 때문에만 겹침 62 개: decomposition 끔 58 → 켬 **2** (남은 2 개는 upper_arm 쪽 쌍, forearm 과 무관)
-    - 실제 겹침 274 개: 끔 270 → 켬 263 (**8 개는 켜면 PhysX 가 겹침을 보고하지 않음** — decomposition 조각이 원래 메시보다 조금 작아 얕은 겹침을 놓치는 것으로 추정)
+    - 실제 겹침 274 개: 끔 270 → 켬 263 (**8 개는 켜면 PhysX 가 겹침을 보고하지 않음**)
+    - **놓친 8 개 확인 (원래 메시 기준 깊이, `--physx-poses` 재실행 2026-09-30)**: 모두 forearm 과의 쌍,
+      원래 메시 깊이 **최대 1.31 mm** (forearm–wrist_2 0.38·1.31·0.59 mm, 나머지 forearm–카메라·마운트·브래킷·그리퍼 쌍은 0.00 mm = 거의 맞닿음).
+      convex hull 로는 1.8~29.8 mm 겹쳐 보였지만 실제로는 스치는 수준 → **판단 기준(모두 3 mm 이하) 충족, decomposition 켬 확정.
+      해상도(볼록 조각 수·voxel) 올리기는 하지 않음**
+    - 재실행 때 분류: 829 번 뽑아 가능 302 / convex hull 때문에만 63 / 실제 275 / 판정 불가 189 (앞선 실행과 경계 몇 개만 다름).
+      PhysX 파고듦: hull 때문에만 60 → 2, 실제 270 → 263, 가능 0 → 0. 순간이동 시험 스텝당 14.54 → 15.22 ms (+4.7%)
+      분류 결과는 `isaacsim/reports/pose_classes_*.npz` 로 저장, 다시 돌릴 때 `--reuse-classes latest`
     - 가능한 자세 302 개: 끔 1 → 켬 0
   - E·F: 켜기 전과 같음 (가만히 떨림 0.00001°, 빈손 닫기 64.233°·떨림 0.00003°). 계산 시간 약 +3~5% (E 6.79 → 7.00 ms/step, 전체 7.00 → 7.35 ms/step, 1 회 측정)
 - **메모 — base–upper_arm 판정 불가 자세 (약 187 개)**: `base_link_inertia` 원래 메시가 닫혀 있지 않아(watertight 아님) convex hull 겹침이
@@ -327,6 +344,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 카메라 color 발행: `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw` (640x480, frame_id 포함)
 - 베이스 IMU: 베이스(현재는 고정) 링크에 IMU prim 추가 → `/base/imu` (`sensor_msgs/Imu`, sim time) 발행.
   고정 베이스에서는 상수값이므로, IMU prim 이 번거로우면 stage1 에서 상수로 채우는 것으로 대체 가능 (둘 중 하나로 통일하고 meta 에 기록)
+- **보호 정지 흉내** (1-5 "알려진 위험: 높은 K" 1번): 관절 토크·접촉력 기준 초과 시 팔 목표를 현재 위치에 고정, 에피소드에 `protective_stop` 표시.
+  기준값은 UR5 문서 확인 후 확정
 - 에피소드 리셋 서비스: 로봇 홈 자세, 드론 재배치(랜덤 시드 기록)
   - **홈 자세 복귀는 목표를 한 번에 바꾸지 않고 부드러운 궤적으로 이동** (큰 스텝은 오버슈트와 손목 흔들림 유발, 1-5 A 시험)
 

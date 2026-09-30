@@ -204,3 +204,24 @@ def classify_random_poses(stage, set_pose, rng, lim, n_valid, first=(), max_draw
                else "real" if any(v is True for v in verdicts) else "unknown")
         out[key].append((q, coll))
     return out
+
+
+def raw_depth(sa, Ta, sb, Tb, spacing=0.001):
+    """원래 형상 기준 파고든 깊이 [m] (0 = 안 겹침, None = 원래 메시가 닫혀 있지 않아 판정 불가).
+    한쪽 표면 표본점이 다른 쪽 형상 안으로 들어간 최대 깊이 (양방향 중 큰 값). 프리미티브는 그 형상 자체."""
+    best = 0.0
+    for s1, T1, s2, T2 in ((sa, Ta, sb, Tb), (sb, Tb, sa, Ta)):
+        if s2.is_mesh and not s2.raw.is_watertight:
+            return None
+        n = int(min(50000, max(500, s1.raw.area / spacing ** 2)))
+        p, _ = trimesh.sample.sample_surface_even(s1.raw, n)
+        R1, t1 = T1
+        R2, t2 = T2
+        local = ((p @ R1.T + t1) - t2) @ R2
+        if s2.is_mesh:
+            d = float(np.max(trimesh.proximity.signed_distance(s2.raw, local)))  # 안쪽이 양수
+        else:
+            v = local @ s2.eq[:, :3].T + s2.eq[:, 3]
+            d = float(np.max(-v.max(axis=1)))
+        best = max(best, d)
+    return best
