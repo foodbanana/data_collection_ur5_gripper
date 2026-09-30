@@ -41,8 +41,8 @@ collision_shapes:
 # 접촉·물리 재질: drive_gains.yaml 과 같음 (설명은 그 파일)
 contact:
   finger_links: [rh_p12_rn_r1, rh_p12_rn_r2, rh_p12_rn_l1, rh_p12_rn_l2]
-  finger_material: {static_friction: 0.5, dynamic_friction: 0.4, restitution: 0.0, friction_combine: min, restitution_combine: min}
-  object_material: {static_friction: 0.5, dynamic_friction: 0.4, restitution: 0.0, friction_combine: min, restitution_combine: min}
+  finger_material: {static_friction: 0.6, dynamic_friction: 0.5, restitution: 0.0, friction_combine: min, restitution_combine: min}
+  object_material: {static_friction: 0.6, dynamic_friction: 0.5, restitution: 0.0, friction_combine: min, restitution_combine: min}
   finger_contact_offset: null
   finger_rest_offset: null
 

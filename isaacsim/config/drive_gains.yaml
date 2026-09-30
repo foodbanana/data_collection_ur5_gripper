@@ -47,11 +47,11 @@ contact:
   #   두 재질에 같은 쌍 값을 넣고 합치는 방식 min → 쌍 값이 그대로 나옴. PhysX 는 방식이 다르면 우선순위 높은 쪽
   #   (average < min < multiply < max)을 쓰므로 기본 재질(average)과 닿아도 min → 손가락 마찰이 설정값보다 커지지 않음
   #   실물 당김 시험(PLAN 1-6) 후 보정
-  # 2026-09-30 0.4/0.3 → 0.5/0.4 (임시): PhysX 유효 마찰이 설정 정지 마찰의 약 0.6~0.7 배로 나옴 (grasp_tests --frictions 9 조합).
+  # 2026-09-30 0.4/0.3 → 0.5/0.4 → 0.6/0.5 (임시, 사용자 판단: 조금 더 현실적): PhysX 유효 마찰이 설정 정지 마찰의 약 0.6~0.7 배로 나옴 (grasp_tests --frictions 9 조합).
   #   이 값은 재질값이 아니라 "sim 유효 마찰 보정값" (maxForce 는 400 mA 환산 고정, 실물 당김 시험으로 이 값을 정함)
-  #   0.5/0.4: 유효 0.337, 미끄럼 힘 16.7 N (0.8 kg 박스, maxForce 2.28), 들어 올리는 동안 2.0 mm 미끄러짐
-  finger_material: {static_friction: 0.5, dynamic_friction: 0.4, restitution: 0.0, friction_combine: min, restitution_combine: min}
-  object_material: {static_friction: 0.5, dynamic_friction: 0.4, restitution: 0.0, friction_combine: min, restitution_combine: min}
+  #   0.6/0.5: 유효 0.386, 미끄럼 힘 19.1 N (0.8 kg 박스, maxForce 2.28), 들어 올리는 동안 1.75 mm 미끄러짐
+  finger_material: {static_friction: 0.6, dynamic_friction: 0.5, restitution: 0.0, friction_combine: min, restitution_combine: min}
+  object_material: {static_friction: 0.6, dynamic_friction: 0.5, restitution: 0.0, friction_combine: min, restitution_combine: min}
   # 손가락 충돌 형상의 contact offset / rest offset [m]. null = USD 값 그대로 (원래 USD 에는 없음 → PhysX 자동값). 1-6 점검 K2 에서 기록
   finger_contact_offset: null
   finger_rest_offset: null
