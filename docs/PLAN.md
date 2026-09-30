@@ -108,7 +108,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 **목표**: UR5 + 마운트 + RH-P12-RN(A) + D435i 가 단일 articulation 으로 동작하는 로봇 USD
 
 ### 1-1. 실측값 반영
-- `mount_thickness`(STL 5 mm), `adapter_thickness`(브래킷, 실측 ≈ 10 mm), `gripper_yaw`, `cam_xyz`, `cam_rpy`, `cam_tilt`
+- `mount_thickness`(STL 5 mm), `adapter_thickness`(브래킷 단독, 0.010: **실측 확인 (약 10 mm)**, 재빌드 불필요), `gripper_yaw`, `cam_xyz`, `cam_rpy`, `cam_tilt`
 - 카메라 장착 위치: D435 메시 후면 M3 구멍(Ø2.5, 간격 45 mm, 본체 높이 중앙)이 마운트 구멍과 0.05 mm 이내 일치 → **확인 완료**
 
 ### 1-2. URDF 빌드
