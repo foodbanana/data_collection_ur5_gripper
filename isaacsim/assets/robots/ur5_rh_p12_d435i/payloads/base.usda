@@ -608,9 +608,9 @@ def Xform "ur5_rh_p12_d435i" (
 
                                                             def Xform "wrist_camera_bottom_screw_frame"
                                                             {
-                                                                quatf xformOp:orient = (0.49999815, 0.5, -0.5, 0.50000185)
+                                                                quatf xformOp:orient = (-0.49999815, 0.5, 0.5, 0.50000185)
                                                                 float3 xformOp:scale = (1, 1, 1)
-                                                                double3 xformOp:translate = (0, 0.0125, 0.01015)
+                                                                double3 xformOp:translate = (0, -0.0125, 0.01015)
                                                                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
                                                                 def Xform "wrist_camera_link"

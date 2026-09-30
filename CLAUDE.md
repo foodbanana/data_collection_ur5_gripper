@@ -12,7 +12,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 | Isaac Sim 설치 | `~/isaacsim` | 실행만. **여기에 파일을 만들지 않는다**. 스크립트는 `~/isaacsim/python.sh <script>` 로 실행 |
 | 우리 sim 코드 | `~/data_collection_ur5_gripper/isaacsim/` | sim 전용 코드는 전부 여기 |
 | 로봇 description | `isaacsim/ur5_rh_p12_description/` | xacro → `scripts/build_urdf.sh` → `out/` (git 제외) |
-| 로봇 USD | `isaacsim/assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda` | **원본 수정 금지**. 설정(drive, 물리 재질 등)은 스크립트나 씬 레이어에서 덮어쓴다 |
+| 로봇 USD | `isaacsim/assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda` | **원본 수정 금지**. 로봇 USD 는 URDF 재빌드 → 재import 로만 갱신한다. 손으로 편집하지 않는다. 설정값(drive, 물리 재질 등)은 스크립트나 씬 레이어에서 적용한다 |
 | 작업 브랜치 | `isaacsim_v6.1.0` | 실물 파이프라인(레포 최상위 스크립트)을 깨지 않는다 |
 
 ## 원칙
