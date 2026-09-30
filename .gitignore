@@ -13,6 +13,7 @@ __pycache__/
 # 임시/출력물
 *.xlsx
 *.png
+!isaacsim/assets/**/*.png
 *.mp4
 *.mcap
 isaacsim/ur5_rh_p12_description/out/
