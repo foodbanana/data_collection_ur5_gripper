@@ -17,4 +17,5 @@ __pycache__/
 *.mp4
 *.mcap
 isaacsim/ur5_rh_p12_description/out/
+isaacsim/reports/
 .claude/settings.local.json*

@@ -48,6 +48,14 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 ## Isaac Sim 6.1.0 에서 확인된 사실
 
 - **단위**: USD angular drive target·joint state 속성은 **degree**. ROS 토픽과 데이터셋은 rad. USD 속성을 직접 다룰 때 변환할 것
+  - drive gain 도 같다: USD `stiffness`/`damping` 은 degree 기준(Nm/deg), tensor API(`Articulation.get/set_dof_gains`)는 rad 기준(Nm/rad).
+    USD 1000 / 100 → tensor 5.73e4 / 5730 (× 180/π). 한계·위치도 tensor API 는 rad
+- **물리 엔진**: `isaacsim.physics.newton` 이 켜져 있으면 시작 시 Newton 으로 자동 전환될 수 있다. 스크립트는 `SimulationManager.switch_physics_engine("physx")` 로 명시하고 확인할 것
+- **Physics variant**: 로봇 USD 진입 파일의 `Physics` variant(physx / physics / mujoco / none)에 기본 선택이 없다. reference 할 때 `physx` 를 명시할 것
+- **DOF**: 10개 (mimic 3개 포함). 순서는 팔 6개 → `rh_r1_joint, rh_l1, rh_r2, rh_l2` (USD 선언 순서와 다름, 이름으로 찾을 것)
+- **mimic 조인트(`rh_r2`, `rh_l1`, `rh_l2`)도 DOF 로 잡히지만 목표값·gain 을 주지 않는다. 그리퍼 명령은 `rh_r1_joint` 에만 준다**
+- 테스트 씬에서 로봇은 바닥에서 띄워 배치한다 (관절 0 자세에서 팔이 바닥에 닿음). 높이는 씬 스크립트의 값이고 로봇 USD 에는 넣지 않는다
+- **구조 회귀 검사**: 로봇 USD 재import 후 `~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless` → 8/8 PASS 확인 (리포트는 `isaacsim/reports/`, git 제외)
 - **그리퍼**: 명령은 `rh_r1_joint` 하나에만. mimic(`rh_r2`, `rh_l1`, `rh_l2`)은 `NewtonMimicAPI` 로 들어왔고 PhysX 에서 동작 확인.
   mimic 조인트 3개에는 drive stiffness 를 주지 않는다. 한계 1.1351 rad(65.04°), 손가락 접촉 ≈ 64.2°. raw 0~1150 ↔ 0~1.1351 rad 선형
 - **root_joint**: body0 = 로봇 최상위 prim(강체 아님), body1 = `robot_mount`. 유지한다. 로봇 위치는 최상위 prim Transform 으로 지정하고,
