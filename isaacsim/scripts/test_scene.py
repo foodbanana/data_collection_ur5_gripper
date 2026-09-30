@@ -49,7 +49,7 @@ def load_config(path=DEFAULT_CONFIG):
         if parts[-1] not in node:
             raise KeyError(f"설정 덮어쓰기 대상이 없음: {key}")
         node[parts[-1]] = yaml.safe_load(val)
-    for key in ("gravity_ff", "articulation", "collision_shapes", "home_pose", "arm", "gripper", "mimic"):
+    for key in ("gravity_ff", "articulation", "collision_shapes", "contact", "home_pose", "arm", "gripper", "mimic"):
         if key not in cfg:
             raise KeyError(f"{path}: '{key}' 항목이 없습니다")
     return cfg
@@ -97,29 +97,36 @@ def _link_collision_meshes(stage, body):
     return out
 
 
+def _deinstance_link_meshes(stage, link):
+    """링크 자신의 충돌 메시 prim 들. instance 로 들어온 메시는 그 instance 를 풀어야(instanceable=false) 속성을 쓸 수 있다
+    → 해당 링크 부분만 푼다 (메모리 stage 에만)."""
+    body = stage.GetPrimAtPath(find_link_path(stage, link))
+    paths = _link_collision_meshes(stage, body)
+    if not paths:
+        raise RuntimeError(f"{link} 에 충돌 메시가 없음")
+    for path in paths:
+        a = stage.GetPrimAtPath(path)
+        while a and a.GetPath() != body.GetPath():
+            if a.IsInstance():
+                a.SetInstanceable(False)
+            a = a.GetParent()
+    prims = [stage.GetPrimAtPath(p) for p in paths]
+    for p in prims:
+        if p.IsInstanceProxy():
+            raise RuntimeError(f"instance 를 풀지 못함: {p.GetPath()}")
+    return prims
+
+
 def _apply_convex_decomposition(stage, cd):
-    """지정 링크의 충돌 메시를 convexDecomposition 으로 (메모리 stage 에만). instance 로 들어온 메시는
-    그 instance 를 풀어야(instanceable=false) 속성을 쓸 수 있다 → 해당 링크 부분만 푼다. 적용한 prim 경로 목록을 돌려줌."""
+    """지정 링크의 충돌 메시를 convexDecomposition 으로 (메모리 stage 에만). 적용한 prim 경로 목록을 돌려줌."""
     from pxr import PhysxSchema, UsdPhysics
 
     if not cd["enabled"]:
         return []
     applied = []
     for link in cd["links"]:
-        body = stage.GetPrimAtPath(find_link_path(stage, link))
-        paths = _link_collision_meshes(stage, body)
-        if not paths:
-            raise RuntimeError(f"{link} 에 충돌 메시가 없음")
-        for path in paths:
-            a = stage.GetPrimAtPath(path)
-            while a and a.GetPath() != body.GetPath():
-                if a.IsInstance():
-                    a.SetInstanceable(False)
-                a = a.GetParent()
-        for path in paths:
-            prim = stage.GetPrimAtPath(path)
-            if prim.IsInstanceProxy():
-                raise RuntimeError(f"instance 를 풀지 못함: {path}")
+        for prim in _deinstance_link_meshes(stage, link):
+            path = str(prim.GetPath())
             UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr().Set("convexDecomposition")
             api = PhysxSchema.PhysxConvexDecompositionCollisionAPI.Apply(prim)
             api.CreateMaxConvexHullsAttr().Set(int(cd["max_convex_hulls"]))
@@ -129,6 +136,81 @@ def _apply_convex_decomposition(stage, cd):
             api.CreateShrinkWrapAttr().Set(bool(cd["shrink_wrap"]))
             applied.append(path)
     return applied
+
+
+def mimic_targets(stage):
+    """그리퍼 관절 → mimic 기준 관절 이름 (NewtonMimicAPI 가 없으면 None)."""
+    out = {}
+    for j in GRIPPER_MIMIC:
+        p = stage.GetPrimAtPath(find_link_path(stage, j))
+        t = p.GetRelationship("newton:mimicJoint").GetTargets() if p.HasAPI("NewtonMimicAPI") else []
+        out[j] = t[0].name if t else None
+    return out
+
+
+MATERIAL_ROOT = "/World/PhysicsMaterials"
+FINGER_MATERIAL_PATH = f"{MATERIAL_ROOT}/finger"
+OBJECT_MATERIAL_PATH = f"{MATERIAL_ROOT}/object"   # 시험 물체·드론이 bind_object_material 로 쓴다
+COMBINE_MODES = ("average", "min", "multiply", "max")
+
+
+def define_physics_material(stage, path, m):
+    """physics 재질 (UsdPhysics.MaterialAPI + PhysxMaterialAPI 합치는 방식). m: 설정의 *_material dict."""
+    from pxr import PhysxSchema, UsdPhysics, UsdShade
+
+    for k in ("friction_combine", "restitution_combine"):
+        if m[k] not in COMBINE_MODES:
+            raise ValueError(f"{k} 는 {COMBINE_MODES} 중 하나: {m[k]}")
+    mat = UsdShade.Material.Define(stage, path)
+    api = UsdPhysics.MaterialAPI.Apply(mat.GetPrim())
+    api.CreateStaticFrictionAttr().Set(float(m["static_friction"]))
+    api.CreateDynamicFrictionAttr().Set(float(m["dynamic_friction"]))
+    api.CreateRestitutionAttr().Set(float(m["restitution"]))
+    px = PhysxSchema.PhysxMaterialAPI.Apply(mat.GetPrim())
+    px.CreateFrictionCombineModeAttr().Set(m["friction_combine"])
+    px.CreateRestitutionCombineModeAttr().Set(m["restitution_combine"])
+    return mat
+
+
+def bind_physics_material(prim, mat):
+    """physics 용 material binding (자식 prim 의 binding 보다 강하게)."""
+    from pxr import UsdShade
+
+    UsdShade.MaterialBindingAPI.Apply(prim).Bind(mat, bindingStrength=UsdShade.Tokens.strongerThanDescendants,
+                                                  materialPurpose="physics")
+
+
+def bind_object_material(stage, prim):
+    from pxr import UsdShade
+
+    bind_physics_material(prim, UsdShade.Material(stage.GetPrimAtPath(OBJECT_MATERIAL_PATH)))
+
+
+def _apply_contact(stage, contact):
+    """손가락 재질·접촉 거리, 시험 물체 재질 정의 (메모리 stage 에만)."""
+    fm = define_physics_material(stage, FINGER_MATERIAL_PATH, contact["finger_material"])
+    define_physics_material(stage, OBJECT_MATERIAL_PATH, contact["object_material"])
+    co, ro = contact["finger_contact_offset"], contact["finger_rest_offset"]
+    for link in contact["finger_links"]:
+        bind_physics_material(stage.GetPrimAtPath(find_link_path(stage, link)), fm)
+        if co is None and ro is None:
+            continue
+        from pxr import PhysxSchema
+
+        for prim in _deinstance_link_meshes(stage, link):
+            api = PhysxSchema.PhysxCollisionAPI.Apply(prim)
+            if co is not None:
+                api.CreateContactOffsetAttr().Set(float(co))
+            if ro is not None:
+                api.CreateRestOffsetAttr().Set(float(ro))
+
+
+def bound_physics_material(prim):
+    """prim 에 실제로 적용되는 physics 재질 경로 (조상 binding 포함, 없으면 '')."""
+    from pxr import UsdShade
+
+    mat, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial(materialPurpose="physics")
+    return str(mat.GetPath()) if mat else ""
 
 
 def filtered_pairs(stage):
@@ -210,6 +292,7 @@ def build_test_scene(usd_path, physics_variant="physx", base_z=ROBOT_BASE_Z, bas
     _apply_articulation_settings(root_prim, config["articulation"])
     _apply_filter_pairs(stage, config["articulation"]["collision_filter_pairs"])
     info["convex_decomposition"] = _apply_convex_decomposition(stage, config["collision_shapes"]["convex_decomposition"])
+    _apply_contact(stage, config["contact"])
     info["root"] = str(root_prim.GetPath())
 
     return stage, Articulation(ROBOT_PATH), info
@@ -247,6 +330,17 @@ def verify_articulation(stage, robot, info, config):
     lines.append(f"convex_decomposition: enabled={cd['enabled']} " + ", ".join(f"{l}={a}" for l, a in cd_got))
     if cd["enabled"] and (not cd_got or any(a != "convexDecomposition" for _, a in cd_got)):
         problems.append(f"convex decomposition 이 적용되지 않음: {cd_got}")
+    fm_got = []
+    for link in config["contact"]["finger_links"]:
+        for path in _link_collision_meshes(stage, stage.GetPrimAtPath(find_link_path(stage, link))):
+            fm_got.append((link, bound_physics_material(stage.GetPrimAtPath(path))))
+    lines.append("finger physics material: " + ", ".join(f"{l}={m or '(없음)'}" for l, m in fm_got))
+    if not fm_got or any(m != FINGER_MATERIAL_PATH for _, m in fm_got):
+        problems.append(f"손가락 충돌 형상에 재질 {FINGER_MATERIAL_PATH} 이 적용되지 않음: {fm_got}")
+    got_mimic = mimic_targets(stage)
+    lines.append("gripper mimic: " + ", ".join(f"{j}→{t}" for j, t in got_mimic.items()))
+    if got_mimic != {j: GRIPPER_DRIVE for j in GRIPPER_MIMIC}:
+        problems.append(f"mimic 이 모두 {GRIPPER_DRIVE} 를 따르지 않음: {got_mimic}")
     want_pairs = {frozenset(p) for p in config["articulation"]["collision_filter_pairs"]}
     got_pairs = filtered_pairs(stage)
     lines.append(f"collision_filter_pairs: {sorted(tuple(sorted(p)) for p in got_pairs)} (설정 {len(want_pairs)} 쌍)")

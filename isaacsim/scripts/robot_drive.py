@@ -136,7 +136,7 @@ class RobotDrive:
         if self._cb is not None:
             return
         self.gripper.jump(float(self.robot.get_dof_positions().numpy()[0][self.grip_i]))
-        self.robot.set_dof_position_targets(self.gripper.setpoint, dof_indices=self.grip_i)
+        self._set_gripper_targets(self.gripper.setpoint)
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
 
         self._cb = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
@@ -152,7 +152,7 @@ class RobotDrive:
         # physics 콜백 안의 예외는 묻힐 수 있으므로 저장해 두고 check() 에서 다시 올린다
         try:
             if self.gripper.setpoint != self.gripper.goal:
-                self.robot.set_dof_position_targets(self.gripper.update(dt), dof_indices=self.grip_i)
+                self._set_gripper_targets(self.gripper.update(dt))
             if not self.gravity_ff:
                 return
             # 로봇 링크 질량만으로 계산된 중력 토크 → 잡은 물체(별도 강체)의 무게는 포함되지 않음
@@ -180,9 +180,12 @@ class RobotDrive:
             raise RuntimeError("start() 전에는 그리퍼 목표값 이동이 동작하지 않음")
         self.gripper.set_goal(rad, float(self.robot.get_dof_positions().numpy()[0][self.grip_i]))
 
+    def _set_gripper_targets(self, rad):
+        self.robot.set_dof_position_targets(float(rad), dof_indices=self.grip_i)
+
     def _set_gripper_now(self, rad):
         self.gripper.jump(rad)
-        self.robot.set_dof_position_targets(float(rad), dof_indices=self.grip_i)
+        self._set_gripper_targets(float(rad))
 
     def reset_pose(self, q6, gripper=0.0):
         """순간이동으로 자세를 맞추고 목표도 같게 (시험 준비용)."""

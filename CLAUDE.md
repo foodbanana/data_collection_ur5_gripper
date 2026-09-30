@@ -60,6 +60,8 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 - **mimic 조인트(`rh_r2`, `rh_l1`, `rh_l2`)도 DOF 로 잡히지만 목표값·gain 을 주지 않는다. 그리퍼 명령은 `rh_r1_joint` 에만 준다**
 - **rh_r1_joint 에 관절 속도 제한을 걸지 않는다.** mimic 과 함께 점성 저항처럼 동작해 열리지 못한다. 속도는 목표값 이동으로 맞춘다
   (`robot_drive.GripperProfile`, `profile_velocity`). 관절 속도 한계는 USD 값(6.5 rad/s) 그대로
+- **그리퍼 armature 0.01 (`rh_r1_joint` 에만, D 1.3758)**: armature 0 이면 손가락 묶음(관성 3.78e-4)이 너무 가벼워 물체를 조일 때
+  solver 가 수렴하지 못해 maxForce 의 약 26% 만 전달된다. 파지력은 `grasp_tests.py` K3 의 가상일 확인(전달률)으로 본다. 근거는 PLAN 1-6
 - **articulation 수면 끔 (`sleep_threshold: 0`)**: 팔이 멈춘 채 가벼운 손가락만 움직이면 운동에너지가 작아 PhysX 가 articulation 을 재워 그리퍼가 중간에 멈춘다.
   설정 파일 `articulation.sleep_threshold` → 새 root 의 `PhysxArticulationAPI` 에 적고 재생 후 확인
 - **시험용 하중(드론 무게 등)을 로봇 링크에 FixedJoint 로 붙일 때는 `physics:excludeFromArticulation = true`**.
