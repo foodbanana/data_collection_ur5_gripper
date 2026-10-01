@@ -77,6 +77,8 @@ from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics  # noqa: E402
 from scipy.spatial.transform import Rotation  # noqa: E402
 
 import collision_geom as cg  # noqa: E402
+from gripper_geom import (CLEAR, PAD_TOL, finger_T, grasp_geometry, grip_lever, inner_gap, pad_depths,  # noqa: E402,F401
+                          pad_patch, verts)
 from robot_drive import RobotDrive  # noqa: E402
 
 # ── 시험 조건 ──
@@ -97,8 +99,6 @@ TILT_JOINTS = ("wrist_1_joint", "wrist_2_joint")
 # G3_MASS: 실물 당김 시험 박스의 실제 무게로 맞춘다 (재기 전 임시 0.3 kg). 미끄럼 힘에 박스 무게가 더해지므로 실물과 같게
 G3_MASS, G3_RATE, G3_FMAX = 0.3, 5.0, 80.0   # kg, N/s, N (여기까지 안 미끄러지면 "> FMAX")
 SLIP_JUDGE = 1e-3                  # m
-CLEAR = 0.002                      # m, 박스 윗면과 손가락·그리퍼 몸체 사이 여유
-PAD_TOL = 0.0001                   # m, 파지면 = 안쪽 끝에서 이 거리 안의 면
 FINGERS = ("rh_p12_rn_r2", "rh_p12_rn_l2")
 SENSORS = FINGERS + ("rh_p12_rn_r1", "rh_p12_rn_l1", "rh_p12_rn_base")  # 접촉 보고를 켜는 링크 (r2·l2 가 파지면)
 # 평면 IK 기준점 (UR5 DH, wrist_1 관절 중심을 어깨 기준 평면 좌표로). 홈 자세는 (-0.39225, 0.425)
@@ -110,116 +110,6 @@ CRIT = {"slip_mm": 1.0, "wobble_mm": 0.1, "rot_deg": 2.0, "jitter_deg": 0.01}
 
 BOX_ROOT = "/World/GraspObjects"
 PARK = {"box_g1": (2.0, 0.0), "box_g2": (2.0, 0.5), "post": (-2.0, 0.0)}
-
-
-# ─────────────────────────── 기하 ───────────────────────────
-def Rx(a):
-    c, s = math.cos(a), math.sin(a)
-    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
-
-
-# 손가락 기구학 (URDF rh_p12_rn_a.urdf.xacro 값). 그리퍼 base 좌표계에서 링크 (R, t). r2·l2 는 base 와 평행하게 움직인다
-R1_ORIGIN, L1_ORIGIN = np.array([0, 0.008, 0.048]), np.array([0, -0.008, 0.048])
-R2_IN_R1, L2_IN_L1 = np.array([0, 0.0493634, 0.0285]), np.array([0, -0.0493634, 0.0285])
-
-
-def finger_T(q):
-    return {"rh_p12_rn_r1": (Rx(q), R1_ORIGIN),
-            "rh_p12_rn_r2": (np.eye(3), R1_ORIGIN + Rx(q) @ R2_IN_R1),
-            "rh_p12_rn_l1": (Rx(-q), L1_ORIGIN),
-            "rh_p12_rn_l2": (np.eye(3), L1_ORIGIN + Rx(-q) @ L2_IN_L1)}
-
-
-def verts(shapes, link, T=None, which="raw"):
-    v = np.vstack([getattr(s, which).vertices for s in shapes[link]])
-    if T is None:
-        return v
-    R, t = T
-    return v @ R.T + t
-
-
-def pad_patch(mesh, d, tol=PAD_TOL):
-    """mesh(링크 좌표계)에서 방향 d 로 가장 바깥 면(끝에서 tol 이내, 면 법선이 d 와 10° 이내). 넓이·범위·기울기."""
-    s = float((mesh.vertices @ d).max())
-    near = mesh.vertices @ d >= s - tol
-    f = np.all(near[mesh.faces], axis=1) & (mesh.face_normals @ d >= math.cos(math.radians(10)))
-    if not f.any():
-        raise RuntimeError("파지면을 찾지 못함 (안쪽 끝에 평평한 면이 없음)")
-    area = float(mesh.area_faces[f].sum())
-    pts = mesh.vertices[np.unique(mesh.faces[f])]
-    n = (mesh.face_normals[f] * mesh.area_faces[f, None]).sum(axis=0)
-    ang = math.degrees(math.acos(np.clip(n @ d / max(np.linalg.norm(n), 1e-12), -1, 1))) if area > 0 else float("nan")
-    return dict(support=s, area=area, x=(float(pts[:, 0].min()), float(pts[:, 0].max())),
-                z=(float(pts[:, 2].min()), float(pts[:, 2].max())), tilt_deg=ang)
-
-
-def pad_depths(shape, d, band=0.002, step=0.0005):
-    """파지면 쪽 넓은 범위(convex hull 에서 안쪽 끝 band 이내 면의 x·z 범위)에 격자를 두고 d 반대 방향 광선으로
-    안쪽 끝 평면에서 원래 메시·convex hull 표면까지 깊이 [m] 를 잰다. 반환 (x, z 격자, 원래 깊이, hull 깊이)."""
-    s = float((shape.hull.vertices @ d).max())
-    near = shape.hull.vertices @ d >= s - band
-    f = np.all(near[shape.hull.faces], axis=1)
-    pts = shape.hull.vertices[np.unique(shape.hull.faces[f])]
-    xs = np.arange(pts[:, 0].min() + step / 2, pts[:, 0].max(), step)
-    zs = np.arange(pts[:, 2].min() + step / 2, pts[:, 2].max(), step)
-    X, Z = np.meshgrid(xs, zs)
-    o = np.zeros((X.size, 3))
-    o[:, 0], o[:, 2] = X.ravel(), Z.ravel()
-    o += d * (s + 0.001) - d * (d @ o.T)[:, None]   # 안쪽 끝 평면보다 1 mm 바깥에서 출발
-    dirs = np.tile(-d, (len(o), 1))
-    out = []
-    for mesh in (shape.raw, shape.hull):
-        loc, idx, _ = mesh.ray.intersects_location(o, dirs, multiple_hits=False)
-        depth = np.full(len(o), np.nan)
-        depth[idx] = np.linalg.norm(loc - o[idx], axis=1) - 0.001
-        out.append(depth.reshape(X.shape))
-    return X, Z, out[0], out[1]
-
-
-def inner_gap(shapes, q):
-    """손가락 각도 q 에서 오른쪽 손가락 안쪽 끝 y, 왼쪽 손가락 안쪽 끝 y (그리퍼 base 좌표계)."""
-    T = finger_T(q)
-    return (float(verts(shapes, "rh_p12_rn_r2", T["rh_p12_rn_r2"])[:, 1].min()),
-            float(verts(shapes, "rh_p12_rn_l2", T["rh_p12_rn_l2"])[:, 1].max()))
-
-
-def grasp_geometry(shapes, dims):
-    """박스(dims)를 잡을 때: 닿는 각도 q_c, 파지면 높이, 박스 윗면 깊이 z_top (그리퍼 base 좌표계, +z = 손가락 끝 방향)."""
-    lx, ly, h = dims
-    gap = lambda q: inner_gap(shapes, q)[0] - inner_gap(shapes, q)[1]  # noqa: E731
-    g_open, g_closed = gap(0.0), gap(GRIP_CLOSED)
-    if not (g_closed < ly < g_open):
-        raise ValueError(f"박스 폭 {ly * 1000:.1f} mm 가 손가락 사이 범위({g_closed * 1000:.1f}~{g_open * 1000:.1f} mm) 밖")
-    lo, hi = 0.0, GRIP_CLOSED
-    for _ in range(50):  # gap 은 q 에 대해 감소
-        mid = 0.5 * (lo + hi)
-        lo, hi = (mid, hi) if gap(mid) > ly else (lo, mid)
-    qc = 0.5 * (lo + hi)
-    T = finger_T(qc)
-    # 파지면 높이: 오른쪽 손가락 원래 메시에서 안쪽 끝 면
-    raw_r2 = cg.trimesh.util.concatenate([s.raw for s in shapes["rh_p12_rn_r2"]])
-    raw_r2.apply_translation(T["rh_p12_rn_r2"][1])
-    pad = pad_patch(raw_r2, np.array([0, -1.0, 0]))
-    # 박스 윗면 위(|x| < lx/2, |y| < ly/2)로 들어오는 그리퍼 몸체·r1·l1 의 가장 깊은 점 (닫히는 동안 전부)
-    zb = -1.0
-    for q in np.linspace(0.0, qc, 25):
-        Tq = finger_T(q)
-        for link, Tl in (("rh_p12_rn_base", (np.eye(3), np.zeros(3))), ("rh_p12_rn_r1", Tq["rh_p12_rn_r1"]),
-                         ("rh_p12_rn_l1", Tq["rh_p12_rn_l1"])):
-            v = verts(shapes, link, Tl)
-            m = (np.abs(v[:, 0]) < lx / 2 + CLEAR) & (np.abs(v[:, 1]) < ly / 2 + CLEAR)
-            if m.any():
-                zb = max(zb, float(v[m, 2].max()))
-    z_top = zb + CLEAR
-    engaged = (pad["z"][1] - max(z_top, pad["z"][0])) / (pad["z"][1] - pad["z"][0])
-    if engaged < 0.5:
-        raise ValueError(f"박스 윗면({z_top * 1000:.1f} mm)이 파지면({pad['z'][0] * 1000:.1f}~{pad['z'][1] * 1000:.1f} mm)을 "
-                         f"절반도 덮지 못함 (손가락·몸체가 먼저 닿음)")
-    if z_top + h < pad["z"][1]:
-        raise ValueError(f"박스 높이 {h * 1000:.0f} mm 가 파지면 끝까지 닿지 않음")
-    ri, li = inner_gap(shapes, qc)
-    return dict(qc=qc, pad_z=pad["z"], z_top=z_top, engaged=engaged, grip_z=0.5 * (max(z_top, pad["z"][0]) + pad["z"][1]),
-                inner=(ri, li), g_open=g_open, g_closed=g_closed)
 
 
 # ─────────────────────────── 팔 IK ───────────────────────────
@@ -242,11 +132,6 @@ def arm_at(dz=0.0):
 def smooth(s):
     s = min(max(s, 0.0), 1.0)
     return s * s * (3 - 2 * s)
-
-
-def grip_lever(q, h=1e-4):
-    """rh_r1 을 1 rad 닫을 때 파지면이 안쪽으로 움직이는 거리 [m] (가상일: 수직력 합 × 이 값 = 전달된 관절 토크)."""
-    return float(finger_T(q - h)["rh_p12_rn_r2"][1][1] - finger_T(q + h)["rh_p12_rn_r2"][1][1]) / (2 * h)
 
 
 def pose_R(quat):

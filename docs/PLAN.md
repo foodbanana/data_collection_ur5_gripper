@@ -478,8 +478,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 2-1 드론 에셋 (Iris 덮어쓰기, 대안 간이 드론)과 `check_drone.py` 점검
 - 2-2 공중 유지 (Pegasus 방식: 로터 4 개 추력 + 기하 제어기, `static`/`hover`, `release()` = 모터 정지, 프로펠러 회전 `--prop-spin`)
 - 2-3 씬 스크립트 `drone_scene.py` (테이블·로봇·조명·손목/third view 카메라·드론, 인자 `--drone-config --drone-pos --mode --seed --base --headless --realtime`)
-- 2-4 스크립트 파지 데모(차분 IK, 아래에서 위로 접근) + 자동 판정 `approach → grasped → held → placed`, 실패 케이스(헛잡기·빗나감·떨어뜨림)도 판정 확인
-- 2-5 0.8 kg 들기·이동·내려놓기 미끄러짐 기록
+- 2-4 스크립트 파지 데모(차분 IK, 아래에서 위로 접근) + 자동 판정 `approach → grasped → held` (실물처럼 잡고 모터 정지 후 끝), 실패 케이스(헛잡기·빗나감·떨어뜨림)도 판정 확인
+- 2-5 0.8 kg 잡고 모터 정지 뒤 내려앉음·미끄러짐 기록 (2-4 결과에 포함)
 
 **2-1 결과 (2026-10-01)** — `check_drone.py` (`--drone-config`, GUI 보기 `--hold`) → Iris **4/4 PASS**, 간이 드론 4/4 PASS
 - 잡는 폭은 실제 충돌 형상을 손가락 폭 slab(잡는 곳 ±13 mm)으로 잘라서 잼 (`drone.grasp_width`). 기준 = 그리퍼 완전 열림 107 mm − 여유 2 × 10 mm = 87 mm 이하
@@ -560,6 +560,43 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 실행: GUI `drone_scene.py [--mode hover] [--prop-spin on] [--drone-pos x y z] [--init-pose …]` (손목·third view 카메라 창 같이), 점검 `--headless --check`.
   `--mode trajectory`, `--base kinematic` 은 미구현 에러
 
+**2-4 결과 (2026-10-01)** — 스크립트 파지 데모 `isaacsim/scripts/grasp_demo.py` (설정 `isaacsim/config/grasp_demo.yaml`) → `--case all` **6/6 PASS**
+- **실물 시나리오에 맞춰 성공 = held** (잡기 → 드론 모터 정지 → 버팀 → 끝, 실물은 여기서 사람이 떼어 감). 내려놓기는 하지 않음
+  - 가운데 홈 있는 착륙 받침대에 내려놓기를 시도했으나 **제거** (2026-10-01 사용자 결정): 실물로 만들 계획이 없고,
+    팔뚝(팔꿈치 최고 1.275 m)·기둥·손목이 받침대에 막혀 경로가 복잡해짐. 내려놓기·충돌 없는 경로는 **나중에 MoveIt 등 경로 계획**으로
+- 시퀀스: 홈 → 관절 보간으로 seed 자세 (그리퍼 +z, 드론 아래) → 차분 IK 로 잡는 자세 15 cm 아래 → 3 cm/s 수직 상승 → 그리퍼 닫기 → 모터 정지 → 2.5 s 유지
+  - 팔 관절 목표는 50 Hz zero-order hold, 한 주기 변화 ≤ 0.063 rad (텔레옵 흉내, 1-5 기준)
+  - **seed 자세 wrist_1 은 −4.8869 (= 1.3963 − 2π)**: 홈(−π/2)에서 +쪽으로 돌리면 그리퍼가 팔에 걸려 0.21 rad 에서 막힘
+- **잡는 높이 계산** (`gripper_geom.plan_grasp_from_below`, 1-6 손가락 기구학을 `gripper_geom.py` 로 옮겨 일반화):
+  드론 body 충돌 형상(표면 점 20 만 개)을 손가락 폭 slab(±13 mm)으로 잘라, 파지면 높이 띠의 폭으로 닿는 각도, 그리퍼 base·r1·l1 이
+  닫히는 동안 드론 아랫면(2 mm 칸 높이 지도)과의 여유 ≥ 2 mm 인 가장 높은 TCP 를 고름
+  → Iris 0.75: TCP 드론 좌표계 (0, −1.3, −4.5) mm, 폭 81.1 mm, 닿는 각도 예측 20.3° (실제 16.4°), 여유 2.1~2.3 mm
+  - **body 링크 자신의 좌표계로 계산** (재생 직후 드론이 이미 몇 mm 내려가 최상위 prim 기준이면 높이가 6 mm 어긋남)
+- **차분 IK** (`isaacsim/scripts/arm_ik.py`, 5단계 SpaceMouse·PICO 에서도 씀): PhysX Jacobian + damped least squares
+  - **PhysX Jacobian 선속도 행은 링크 무게중심 기준** (그리퍼 base 무게중심 z 31.9 mm): 원점 기준으로 쓰면 축이 수평인 관절에서 약 3 cm/rad 차이.
+    수치 미분과 비교해 보정 후 차이 0.0006 이하
+  - 관절 목표 = 이전 목표 + Δq (측정값 + Δq 면 drive 중력 처짐만큼 0.6 mm 못 감) + 와인드업 방지 (목표가 측정값보다 0.05 rad 이상 앞서지 않게)
+  - 5 cm·10° 이동이 14 주기 만에 수렴 (0.13 mm, 0.012°)
+- **자동 판정** (`isaacsim/scripts/grasp_judge.py`, 3단계 메타데이터·7단계 평가에서도 씀): `approach → grasped → held` / `failed` + 사유
+  - grasped: 닫기 중 그리퍼 멈춤(위치 변화로 판단, 관절 속도 읽기는 안 씀) + 62° 보다 덜 닫힘 + 양쪽 손가락 접촉력 > 1 N (PhysX contact report)
+  - held: 모터 정지 2.5 s 뒤 TCP 기준 내려앉음 ≤ 15 mm, 마지막 0.5 s 변화 ≤ 0.5 mm, 회전 ≤ 10°
+  - **아래에서 잡으면 모터 정지 뒤 드론이 약 5~6 mm 내려앉은 뒤 멈춤** (1~1.6 s): 무게가 실리며 손가락 뿌리(r1·l1)에 얹힘 → 형상으로 받쳐짐.
+    그래서 마찰을 0.05 로 낮춰도 떨어지지 않음
+- 판정기 검증 (기대 판정과 같으면 PASS): success → held (내려앉음 4~6 mm, 손가락 접촉 양쪽 27 N), empty (드론을 다른 곳에) → no_grasp_empty (64.06° 까지 닫힘),
+  miss (잡는 높이 −4 cm) → no_grasp_empty, drop (모터 정지 순간 그리퍼 힘 2.28 → 0.05 Nm) → slip (0.05 s 만에 11~17 mm)
+- **어긋나게 잡기** (텔레옵은 중앙을 정확히 못 잡음): 중앙을 잡으면 한쪽 손가락만 미는 시간이 0.017 s 라 드론이 약 1.4 mm 만 움직임
+  (드론 제어기가 강해서가 아님: 위치 게인 약 5.3 N/m, 1 N 으로 계속 밀면 약 19 cm 밀림. 양쪽 손가락 힘 약 27 N 이 서로 상쇄)
+  - offset_y (닫는 방향 10 mm): 먼저 닿은 손가락이 **드론을 약 9.3 mm 민 뒤** 잡힘 → held (내려앉음 4.7~5.5 mm, 기울기 4.6~5.1°)
+    (열린 손가락과 몸체 사이가 한쪽 13 mm 라 20 mm 면 올라가다 부딪힘)
+  - offset_x (몸체 길이 방향 5 mm) → held. **10·20 mm 는 잡는 높이까지 못 올라감**: Iris 몸체는 땅콩 모양이라 허리(x = 0)가 가장 좁고,
+    옆으로 가면 넓은 부분에 손가락 끝(l2, 4.2 N)이 걸림 → 텔레옵에서는 허리에 맞춰 잡아야 함
+  - 기울기·내려앉음이 실행마다 다름 (회전 2~5°) → held 기준을 회전 10°, 내려앉음 15 mm 로 (떨어뜨림 판정 30 mm 는 그대로)
+  - S2 수직 상승 목표는 시작 순간의 드론 위치로 고정 (드론을 따라가면 손가락이 드론을 밀 때 목표도 움직여 끝없이 쫓아감)
+- GUI: 메인 뷰포트 + 'Wrist camera'·'Third view camera' 창 (`drone_scene.open_camera_windows`)
+- 결과 파일: `isaacsim/reports/grasp_demo_<시각>/` (report.txt, result_<케이스>.json = 4단계 meta.json 에 쓸 형식, timeline_<케이스>.csv)
+- 실행: GUI `grasp_demo.py [--case success|offset_y|offset_x|empty|miss|drop] [--tcp-offset DX DY DZ] [--prop-spin on] [--hold]`, 점검 `--headless --case all` (6 케이스).
+  `--tcp-offset` [m, world] 은 케이스 설정의 어긋남 대신 (드론 yaw 0: y = 손가락 닫는 방향, x = 몸체 길이 방향). 예: y −5 mm → 드론 6.6 mm 밀린 뒤 held
+
 **작업**
 - 씬 구성을 GUI Action Graph 대신 **Python standalone 스크립트**로 작성 (씬 + ROS 2 OmniGraph 생성), `~/isaacsim/python.sh` 로 실행
 - 테이블 + 로봇 배치(최상위 prim Transform, root_joint 유지), 조명, third view 카메라
@@ -577,7 +614,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 **완료 기준**
 - [x] 스크립트 실행만으로 씬이 뜸 (2-3 `drone_scene.py`)
 - [x] 드론 위치·모드를 인자로 변경 가능 (`--drone-pos`, `--mode static|hover`, `--seed`)
-- [ ] 파지 성공/실패가 자동 판정됨
+- [x] 파지 성공/실패가 자동 판정됨 (2-4 `grasp_judge.py`, 판정기 검증 6/6)
 
 ---
 

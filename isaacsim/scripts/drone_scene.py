@@ -2,7 +2,8 @@
 # =============================================================
 # drone_scene.py  (docs/PLAN.md 2-3)
 #
-# 드론 파지 씬: 스크립트 한 번으로 만든다 (ROS 없음). build_scene() 은 2-4 파지 데모·3단계 ROS 브리지도 그대로 쓴다.
+# 드론 파지 씬: 스크립트 한 번으로 만든다 (ROS 없음). build_scene() 은 2-4 파지 데모·3단계 ROS 브리지도 그대로 쓴다
+#   (다른 스크립트는 SimulationApp 을 만든 뒤 import drone_scene → build_scene(...). 인자·app 생성은 이 파일의 main 에서만).
 #   바닥 + 테이블(박스 collider) + 로봇(로봇 설정 yaml, fixed base, 확정 drive, 홈 자세) + Dome Light(headless 에서도)
 #   + 손목 카메라(1-7) + third view 카메라(base 근처에서 올려다봄. 모양 = 로봇 USD 의 D435i 메시, 받침대 포함)
 #   + 비행하는 드론(drone_flight, Pegasus 방식)
@@ -33,45 +34,50 @@ import test_scene as ts  # noqa: E402
 DEFAULT_SCENE_CONFIG = os.path.join(ts.CONFIG_DIR, "scene_drone.yaml")
 BASE_CHOICES = ("fixed", "kinematic")
 
-parser = argparse.ArgumentParser(description="드론 파지 씬 (PLAN 2-3)")
-parser.add_argument("--headless", action="store_true")
-parser.add_argument("--robot-config", default=ts.DEFAULT_ROBOT_CONFIG, help="로봇 설정 yaml (기본 config/robot_ur5_rh_p12.yaml)")
-parser.add_argument("--scene-config", default=DEFAULT_SCENE_CONFIG, help="씬 배치 yaml (기본 config/scene_drone.yaml)")
-parser.add_argument("--drone-config", default=None, help="드론 설정 yaml (기본 config/drone_iris.yaml)")
-parser.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
-                    help="드론 위치 [m] world (기본 scene 설정 drone_pos)")
-parser.add_argument("--mode", default="static", choices=("static", "hover", "trajectory"), help="드론 비행 모드")
-parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed")
-parser.add_argument("--prop-spin", choices=("on", "off"), default="off", help="프로펠러를 보여 주기용으로 돌림")
-parser.add_argument("--base", default="fixed", choices=BASE_CHOICES, help="로봇 베이스 (kinematic 은 8단계, 미구현)")
-parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q",
-                    help="팔 6 관절 시작 각도 [rad] (shoulder_pan … wrist_3). 기본 drive 설정 home_pose. 그리퍼는 항상 열림")
-parser.add_argument("--check", action="store_true", help="점검: 로봇 자세 유지·드론 비행·카메라 영상 확인 후 종료")
-parser.add_argument("--realtime", action="store_true", help="--check 도 실제 시간 속도로 (GUI 는 항상 실제 시간)")
-parser.add_argument("--report-dir", default=ts.REPORT_DIR)
-args, _ = parser.parse_known_args()
-
-from isaacsim import SimulationApp  # noqa: E402
-
-simulation_app = SimulationApp({"headless": args.headless})
-
-import isaacsim.core.experimental.utils.app as app_utils  # noqa: E402
-import isaacsim.core.experimental.utils.stage as stage_utils  # noqa: E402
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
-from isaacsim.core.experimental.objects import DomeLight  # noqa: E402
-from pxr import Gf, UsdGeom, UsdPhysics  # noqa: E402
 
-import collision_geom as cg  # noqa: E402
 import drone as dr  # noqa: E402
 import drone_flight as fl  # noqa: E402
-from robot_drive import RobotDrive  # noqa: E402
 
 TABLE_PATH = "/World/Table"
 THIRD_VIEW_ROOT = "/World/ThirdView"
 THIRD_VIEW_NAME = "third_view_color_camera"
 CHECK_SEC = 10.0
 CRIT = {"arm_dev_deg": 0.1, "drone_err_mm": 10.0, "drone_tilt_deg": 2.0, "img_mean": (10.0, 245.0), "img_std": 5.0}
+
+
+def _update():
+    """SimulationApp.update() 와 같음 (이 모듈은 app 객체를 갖지 않음)."""
+    import omni.kit.app
+
+    omni.kit.app.get_app().update()
+
+
+def _running():
+    import omni.kit.app
+
+    return omni.kit.app.get_app().is_running()
+
+
+def make_parser():
+    parser = argparse.ArgumentParser(description="드론 파지 씬 (PLAN 2-3)")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--robot-config", default=ts.DEFAULT_ROBOT_CONFIG, help="로봇 설정 yaml (기본 config/robot_ur5_rh_p12.yaml)")
+    parser.add_argument("--scene-config", default=DEFAULT_SCENE_CONFIG, help="씬 배치 yaml (기본 config/scene_drone.yaml)")
+    parser.add_argument("--drone-config", default=None, help="드론 설정 yaml (기본 config/drone_iris.yaml)")
+    parser.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
+                        help="드론 위치 [m] world (기본 scene 설정 drone_pos)")
+    parser.add_argument("--mode", default="static", choices=("static", "hover", "trajectory"), help="드론 비행 모드")
+    parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed")
+    parser.add_argument("--prop-spin", choices=("on", "off"), default="off", help="프로펠러를 보여 주기용으로 돌림")
+    parser.add_argument("--base", default="fixed", choices=BASE_CHOICES, help="로봇 베이스 (kinematic 은 8단계, 미구현)")
+    parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q",
+                        help="팔 6 관절 시작 각도 [rad] (shoulder_pan … wrist_3). 기본 drive 설정 home_pose. 그리퍼는 항상 열림")
+    parser.add_argument("--check", action="store_true", help="점검: 로봇 자세 유지·드론 비행·카메라 영상 확인 후 종료")
+    parser.add_argument("--realtime", action="store_true", help="--check 도 실제 시간 속도로 (GUI 는 항상 실제 시간)")
+    parser.add_argument("--report-dir", default=ts.REPORT_DIR)
+    return parser
 
 
 def load_scene_config(path):
@@ -118,8 +124,9 @@ def optical_look_at(pos, target):
 def add_third_view_camera(stage, c, table_top):
     """D435i 모양(로봇 USD 의 손목 카메라 링크 하위 트리 reference) + 받침대 + 렌더링 카메라(color optical frame 에).
     렌즈(optical frame)가 c['position'] 에서 c['look_at'] 을 보도록 카메라 링크를 놓는다. 렌더링 Camera prim 경로를 돌려준다."""
-    import isaacsim.core.experimental.utils.stage as stage_utils
-    from pxr import Usd
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    import collision_geom as cg
 
     m = c["model"]
     link_path = f"{THIRD_VIEW_ROOT}/d435i"
@@ -159,6 +166,8 @@ def add_third_view_camera(stage, c, table_top):
 
 
 def add_table(stage, tc):
+    from pxr import Gf, UsdGeom, UsdPhysics
+
     sx, sy = (float(x) for x in tc["size"])
     h = float(tc["top_z"])
     g = UsdGeom.Cube.Define(stage, TABLE_PATH)
@@ -175,9 +184,14 @@ class Scene:
 
 
 def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_pos=None, mode="static", seed=0,
-                prop_spin=False, base="fixed", init_pose=None):
+                prop_spin=False, base="fixed", init_pose=None, extra_setup=None):
     """씬을 만들고 재생까지 한다. 로봇은 init_pose (기본 drive 설정 home_pose, 그리퍼 열림), 드론은 drone_pos 에서 비행 시작.
-    Scene 을 돌려준다."""
+    extra_setup(s): 재생 전에 호출할 함수 (예: 접촉 보고 켜기). Scene 을 돌려준다."""
+    import isaacsim.core.experimental.utils.app as app_utils
+    from isaacsim.core.experimental.objects import DomeLight
+
+    from robot_drive import RobotDrive
+
     if base not in BASE_CHOICES:
         raise ValueError(f"base 는 {BASE_CHOICES} 중 하나: {base}")
     if base == "kinematic":
@@ -201,10 +215,11 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     add_table(s.stage, tc)
     s.wrist_cam = ts.add_wrist_camera(s.stage, s.cam_cfg, tilt=0.0)
     s.third_cam, s.mount_h = add_third_view_camera(s.stage, s.tv_cfg, float(tc["top_z"]))
+    s.extra_setup = extra_setup(s) if extra_setup is not None else None   # 재생 전 (접촉 보고 등)
     s.drone_info = dr.add_drone(s.stage, s.drone_cfg, position=s.drone_pos, prop_spin=prop_spin)
 
     app_utils.play()
-    simulation_app.update()
+    _update()
     problems, _ = ts.verify_articulation(s.stage, s.robot, s.robot_info, s.drive_cfg)
     if problems:
         raise RuntimeError("로봇 articulation 설정 확인 실패: " + "; ".join(problems))
@@ -228,7 +243,7 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
 
 
 def step(s):
-    simulation_app.update()
+    _update()
     s.drive.check()
     s.flight.check()
 
@@ -260,15 +275,17 @@ def grab(sensor):
     for _ in range(200):
         if sensor.has_data():
             break
-        simulation_app.update()
+        _update()
     rgb, _ = sensor.get_data("rgb")
     if rgb is None:
         raise RuntimeError("카메라 데이터를 받지 못함")
     return rgb.numpy()[..., :3].astype(np.uint8)
 
 
-def check(s):
+def check(s, prop_spin, realtime, report_dir):
     from PIL import Image
+
+    import collision_geom as cg
 
     lines = []
 
@@ -278,7 +295,7 @@ def check(s):
 
     log(f"drone_scene --check  {datetime.datetime.now().isoformat(timespec='seconds')}")
     log(f"로봇 설정 {s.robot_cfg['path']}, 드론 설정 {s.drone_cfg['path']}, 드론 위치 {s.drone_pos.tolist()}, "
-        f"모드 {s.flight.ref.mode}, prop_spin {args.prop_spin}")
+        f"모드 {s.flight.ref.mode}, prop_spin {prop_spin}")
     log(f"팔 시작 자세 [rad] {np.round(s.init_pose, 4).tolist()}" + (" (home_pose)" if np.allclose(s.init_pose, s.home) else ""))
     log(f"third view 카메라: 렌즈 {s.tv_cfg['position']} → {s.tv_cfg['look_at']}, 받침대 높이 {s.mount_h * 1000:.0f} mm, "
         f"prim {s.third_cam}")
@@ -291,7 +308,7 @@ def check(s):
         tilt = math.degrees(math.acos(np.clip(cg.quat_to_R(qd)[2, 2], -1, 1)))
         rows.append((sc.flight.t, q, p, tilt))
 
-    run(s, CHECK_SEC, realtime=args.realtime, on_step=rec)
+    run(s, CHECK_SEC, realtime=realtime, on_step=rec)
     results = []
     half = [r for r in rows if r[0] >= CHECK_SEC / 2]
     dev = max(float(np.degrees(np.abs(r[1] - s.init_pose)).max()) for r in half)
@@ -303,7 +320,7 @@ def check(s):
     log(f"[2] 드론 비행 ({s.flight.ref.mode}): {CHECK_SEC:.0f} s 뒤 목표와 거리 {err:.2f} mm, 뒤 절반 기울기 최대 {tilt:.2f}°, "
         f"로터 ω {np.round(s.flight.omega, 1).tolist()} rad/s")
     results.append(("드론 비행", err <= CRIT["drone_err_mm"] and tilt <= CRIT["drone_tilt_deg"]))
-    out_dir = os.path.join(args.report_dir, f"drone_scene_{datetime.datetime.now():%Y%m%d_%H%M%S}")
+    out_dir = os.path.join(report_dir, f"drone_scene_{datetime.datetime.now():%Y%m%d_%H%M%S}")
     os.makedirs(out_dir, exist_ok=True)
     imgs, ok_img = {}, True
     for name, sensor in sensors.items():
@@ -327,32 +344,46 @@ def check(s):
     return n == len(results)
 
 
-def view(s):
-    from omni.kit.viewport.utility import create_viewport_window
+def open_camera_windows(s, old=None):
+    """GUI: 메인 뷰포트 시점을 맞추고 'Wrist camera'·'Third view camera' 뷰포트 창을 띄운다 (old 창들은 닫음). 창 목록을 돌려준다."""
     from isaacsim.core.rendering_manager import ViewportManager
+    from omni.kit.viewport.utility import create_viewport_window
     from pxr import Sdf
 
+    for win in old or []:
+        win.destroy()
     ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
+    wins = []
     for title, path, cfg in (("Wrist camera", s.wrist_cam, s.cam_cfg), ("Third view camera", s.third_cam, s.tv_cfg)):
         w, h = (int(x) for x in cfg["resolution"])
         win = create_viewport_window(title, width=w, height=h, camera_path=Sdf.Path(path))
         win.viewport_api.resolution = (w, h)
+        wins.append(win)
+    return wins
+
+
+def view(s):
+    open_camera_windows(s)
     print(f"[view] 드론 {s.flight.ref.mode} 비행, 로봇 시작 자세 {np.round(s.init_pose, 4).tolist()}. 'Wrist camera'·'Third view camera' 창. 창을 닫으면 종료", flush=True)
     wall0, sim0 = time.monotonic(), s.flight.t
-    while simulation_app.is_running():
+    while _running():
         step(s)
         ahead = (s.flight.t - sim0) - (time.monotonic() - wall0)
         if ahead > 0:
             time.sleep(ahead)
 
 
-if __name__ == "__main__":
+def main():
+    args, _ = make_parser().parse_known_args()
+    from isaacsim import SimulationApp
+
+    simulation_app = SimulationApp({"headless": args.headless})
     ok = False
     try:
         scene = build_scene(args.robot_config, args.scene_config, args.drone_config, args.drone_pos, args.mode, args.seed,
                             args.prop_spin == "on", args.base, args.init_pose)
         if args.check:
-            ok = check(scene)
+            ok = check(scene, args.prop_spin, args.realtime, args.report_dir)
         elif args.headless:
             raise SystemExit("--headless 는 --check 와 같이 쓴다 (GUI 없이 계속 돌리는 모드는 3단계 ROS 브리지에서)")
         else:
@@ -365,3 +396,7 @@ if __name__ == "__main__":
     finally:
         simulation_app.close(exit_code=0 if ok else 1)
     sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()
