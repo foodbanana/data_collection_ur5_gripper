@@ -532,6 +532,29 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     차이가 1 mm 미만이고 Pegasus 와 같은 동작이 실제에 가까우므로 **Pegasus 식 그대로 유지**
 - GUI 보기: `check_flight.py --view [--mode hover|static] [--prop-spin on] [--release-after 8]` (실제 시간 속도, 비행 → 모터 정지 → 낙하)
 
+**2-3 결과 (2026-10-01)** — 씬 `isaacsim/scripts/drone_scene.py` (`build_scene()`, 2-4·3단계도 그대로 씀) → `--check` **3/3 PASS**
+- **로봇 설정 파일화**: 로봇 이름(USD·prim·마운트·팔 관절·그리퍼 구동/mimic·TCP·하중 링크·drive/손목 카메라 설정 파일)을
+  `isaacsim/config/robot_ur5_rh_p12.yaml` 한 곳으로. `test_scene.py` 가 import 때 읽어 모듈 상수(ROBOT_PATH, ARM_JOINTS …)를 채우고,
+  다른 로봇은 `test_scene.use_robot(경로)` / `drone_scene.py --robot-config`. 기존 시험 스크립트는 그대로 동작
+  (check_articulation 8/8, tune_drives D 닫힘·열림 2.15 s·반응 0.033 s, 리팩터 전과 같음)
+  - 로봇을 바꿀 때 설정 파일로 안 되는 것: drive 게인 재튜닝(1-5), "구동 관절 1 + mimic" 이 아닌 그리퍼는 robot_drive 확장,
+    6 축이 아닌 팔은 데이터셋 스키마(0단계) 변경
+- 씬 (`isaacsim/config/scene_drone.yaml`): 바닥 + **테이블 2 × 1 m** (상판 0.762 m, 박스 collider, 로봇이 −x 끝에서 0.25 m 안쪽) +
+  로봇 (최상위 prim (0, 0, 0.762), fixed base, 확정 drive, 홈 자세) + Dome Light 1000 (headless 에서도) + 손목 카메라 + third view 카메라 + 드론
+  - 로봇은 +x 쪽으로 작업 (홈 자세 TCP (0.49, 0.11, 1.07) 아래 향함, wrist_1 (0.39, 0.11, 1.28))
+  - 드론 기본 위치 **(0.60, 0, 1.50)**: 처음 (0.45, 0, 1.40) 은 홈 자세 wrist_1 에서 약 10 cm 라 옮김 (32 cm). 닿는지는 2-4 IK 로 확인
+- third view 카메라 (`isaacsim/config/third_view_camera.yaml`): 렌즈 (0.05, −0.45, 0.90) 에서 파지 구역 (0.55, 0, 1.35) 을 올려다봄,
+  640x480. **intrinsics 는 임시값** (D456 가로 시야각 약 90° → fx = fy = 320, 주점 중앙). 실물 D456 이 생기면 camera_info 로 교체
+  - **카메라 모양이 씬에 보임**: 로봇 USD 의 손목 D435i 하위 트리(`wrist_camera_link`, realsense2_description 메시 + 충돌 박스)를
+    그대로 reference (원본은 읽기만), 렌더링 카메라는 그 color optical frame 에 붙임 → 렌즈 위치 = 설정 position.
+    테이블 상판 → 카메라 아랫면 받침대 (바닥판 Ø70 + 기둥 Ø16, 높이 123 mm, 정적 collider). 렌즈 높이 0.80 → 0.90 (받침대가 보이게)
+  - 카메라 intrinsics → USD 변환은 손목 카메라와 같은 함수 (`test_scene.define_pinhole_camera`)
+- `--check` (10 s): 로봇 홈 자세 편차 최대 0.033°, 드론 목표와 거리 2.7 mm (static) / 3.2 mm (hover, prop-spin on),
+  카메라 두 대 영상 정상 (밝기 평균 188 / 211, 표준편차 11 / 50). 영상 PNG 는 `isaacsim/reports/drone_scene_<시각>/`
+  - 홈 자세에서는 그리퍼가 아래를 향해 손목 카메라에 테이블만 보임 (정상)
+- 실행: GUI `drone_scene.py [--mode hover] [--prop-spin on] [--drone-pos x y z]` (손목·third view 카메라 창 같이), 점검 `--headless --check`.
+  `--mode trajectory`, `--base kinematic` 은 미구현 에러
+
 **작업**
 - 씬 구성을 GUI Action Graph 대신 **Python standalone 스크립트**로 작성 (씬 + ROS 2 OmniGraph 생성), `~/isaacsim/python.sh` 로 실행
 - 테이블 + 로봇 배치(최상위 prim Transform, root_joint 유지), 조명, third view 카메라
@@ -547,8 +570,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   드론 무게(0.8 kg)가 그리퍼에 걸리게 한다. 0.8 kg 을 몸체 옆면으로 들고 내려놓을 때 미끄러지지 않는지 2단계에서 확인 (1-6 은 0.5 kg 까지 확인)
 
 **완료 기준**
-- [ ] 스크립트 실행만으로 씬이 뜸
-- [ ] 드론 위치·모드를 인자로 변경 가능
+- [x] 스크립트 실행만으로 씬이 뜸 (2-3 `drone_scene.py`)
+- [x] 드론 위치·모드를 인자로 변경 가능 (`--drone-pos`, `--mode static|hover`, `--seed`)
 - [ ] 파지 성공/실패가 자동 판정됨
 
 ---

@@ -1,0 +1,31 @@
+# =============================================================
+# robot_ur5_rh_p12.yaml — 로봇 설정 (docs/PLAN.md 2-3)
+#
+# UR5(CB3) + 샌드위치 마운트 + ROBOTIS RH-P12-RN(A) + 손목 D435i. 씬·시험 스크립트가 로봇 이름을 이 파일에서만 읽는다
+#   (scripts/test_scene.py 가 import 할 때 기본으로 읽음, 다른 로봇은 test_scene.use_robot(경로) / drone_scene.py --robot-config)
+# 다른 로봇으로 바꿀 때: 이 파일을 복사해 USD·이름을 고치고, drive 게인은 1-5 처럼 새로 튜닝(drive_config),
+#   손목 카메라 설정(wrist_camera_config)도 새로. 그리퍼가 "구동 관절 1 개 + mimic" 구조가 아니면 robot_drive.py 를 늘려야 함
+# 경로는 isaacsim/ 기준 상대 경로
+# =============================================================
+
+name: ur5_rh_p12_d435i
+usd: assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda
+physics_variant: physx          # 로봇 USD 진입 파일의 Physics variant (기본 선택이 없어 명시)
+prim_name: ur5_rh_p12_d435i     # 씬에서 /World/<prim_name> 로 reference
+mount_path: Geometry/robot_mount  # 최상위 prim 기준. USD 원본의 ArticulationRootAPI 위치 (fixed base override 때 최상위로 옮김)
+
+# 팔 관절: 실물 드라이버와 같은 이름·순서 (데이터셋 state[0:6]·action[0:6] 순서)
+arm_joints: [shoulder_pan_joint, shoulder_lift_joint, elbow_joint, wrist_1_joint, wrist_2_joint, wrist_3_joint]
+
+gripper:
+  drive: rh_r1_joint            # 명령은 이 관절에만
+  mimic: [rh_r2, rh_l1, rh_l2]  # 목표값·gain 을 주지 않음
+  upper: 1.1351                 # rad, 완전 닫힘 (65.04°)
+  raw_max: 1150                 # 토픽 raw 값 ↔ 0 ~ upper 선형
+
+tcp_frame: rh_p12_rn_tcp
+payload_link: rh_p12_rn_base    # 시험 하중(드론 무게)을 붙이는 링크
+camera_tilt_pivot: wrist_camera_mount   # xacro cam_tilt 가 이 프레임의 x 축으로 돈다
+
+drive_config: config/drive_gains.yaml
+wrist_camera_config: config/wrist_camera.yaml

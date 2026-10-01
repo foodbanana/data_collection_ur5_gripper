@@ -1,8 +1,11 @@
 # =============================================================
-# test_scene.py — 1-4/1-5/1-6 공용 테스트 씬
+# test_scene.py — 1-4/1-5/1-6 공용 테스트 씬 + 로봇 설정
 #
 #   physics scene(PhysX) + ground plane + 로봇 USD reference, 최상위 prim z = ROBOT_BASE_Z
 #   로봇 USD 원본은 수정하지 않는다.
+#   로봇 이름(USD·prim·관절·링크·drive/카메라 설정 파일)은 로봇 설정 yaml 에서만 읽는다 (PLAN 2-3):
+#     import 할 때 DEFAULT_ROBOT_CONFIG 를 읽어 아래 모듈 상수(ROBOT_PATH, ARM_JOINTS …)를 채우고,
+#     다른 로봇은 씬을 만들기 전에 use_robot(경로) 로 바꾼다
 #
 # SimulationApp 을 만든 뒤에 import 할 것 (isaacsim 모듈은 app 시작 후에만 import 가능).
 # =============================================================
@@ -10,35 +13,72 @@
 import os
 
 import numpy as np
+import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SIM_ROOT = os.path.dirname(HERE)  # ~/data_collection_ur5_gripper/isaacsim
-DEFAULT_USD = os.path.join(SIM_ROOT, "assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda")
 REPORT_DIR = os.path.join(SIM_ROOT, "reports")
 CONFIG_DIR = os.path.join(SIM_ROOT, "config")
+DEFAULT_ROBOT_CONFIG = os.path.join(CONFIG_DIR, "robot_ur5_rh_p12.yaml")
 
-ROBOT_PATH = "/World/ur5_rh_p12_d435i"
 ROBOT_BASE_Z = 0.762  # m, 테이블 상판 높이. 0 이면 관절 0 자세에서 팔이 ground plane 에 걸친다
 PHYSICS_DT = 1.0 / 120.0
-
-ARM_JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-              "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
-GRIPPER_DRIVE = "rh_r1_joint"
-GRIPPER_MIMIC = ["rh_r2", "rh_l1", "rh_l2"]
-GRIPPER_JOINTS = [GRIPPER_DRIVE] + GRIPPER_MIMIC
-
-
-DEFAULT_CONFIG = os.path.join(CONFIG_DIR, "drive_gains.yaml")
 BASE_MODES = ("fixed", "floating")
-MOUNT_PATH = f"{ROBOT_PATH}/Geometry/robot_mount"
+ROBOT_KEYS = ("name", "usd", "physics_variant", "prim_name", "mount_path", "arm_joints", "gripper", "tcp_frame",
+              "payload_link", "camera_tilt_pivot", "drive_config", "wrist_camera_config")
+GRIPPER_KEYS = ("drive", "mimic", "upper", "raw_max")
 
 
-def load_config(path=DEFAULT_CONFIG):
+def _abs(path):
+    return path if os.path.isabs(path) else os.path.join(SIM_ROOT, path)
+
+
+def load_robot_config(path=None):
+    path = path or DEFAULT_ROBOT_CONFIG
+    with open(path, encoding="utf-8") as f:
+        rc = yaml.safe_load(f)
+    for k in ROBOT_KEYS:
+        if k not in rc:
+            raise KeyError(f"{path}: '{k}' 항목이 없습니다")
+    for k in GRIPPER_KEYS:
+        if k not in rc["gripper"]:
+            raise KeyError(f"{path}: 'gripper.{k}' 항목이 없습니다")
+    rc["path"] = path
+    return rc
+
+
+def use_robot(path=None):
+    """로봇 설정을 읽어 모듈 상수를 채운다 (씬을 만들기 전에). 로봇 설정 dict 를 돌려준다."""
+    global ROBOT, DEFAULT_USD, PHYSICS_VARIANT, ROBOT_PATH, MOUNT_PATH, ARM_JOINTS, GRIPPER_DRIVE, GRIPPER_MIMIC
+    global GRIPPER_JOINTS, GRIPPER_UPPER, GRIPPER_RAW_MAX, TCP_FRAME, PAYLOAD_LINK, CAMERA_TILT_PIVOT
+    global DEFAULT_CONFIG, WRIST_CAMERA_CONFIG
+    rc = load_robot_config(path)
+    ROBOT = rc
+    DEFAULT_USD = _abs(rc["usd"])
+    PHYSICS_VARIANT = rc["physics_variant"]
+    ROBOT_PATH = f"/World/{rc['prim_name']}"
+    MOUNT_PATH = f"{ROBOT_PATH}/{rc['mount_path']}"
+    ARM_JOINTS = list(rc["arm_joints"])
+    GRIPPER_DRIVE = rc["gripper"]["drive"]
+    GRIPPER_MIMIC = list(rc["gripper"]["mimic"])
+    GRIPPER_JOINTS = [GRIPPER_DRIVE] + GRIPPER_MIMIC
+    GRIPPER_UPPER = float(rc["gripper"]["upper"])
+    GRIPPER_RAW_MAX = float(rc["gripper"]["raw_max"])
+    TCP_FRAME = rc["tcp_frame"]
+    PAYLOAD_LINK = rc["payload_link"]
+    CAMERA_TILT_PIVOT = rc["camera_tilt_pivot"]       # xacro cam_tilt 가 이 프레임의 x 축으로 돈다
+    DEFAULT_CONFIG = _abs(rc["drive_config"])
+    WRIST_CAMERA_CONFIG = _abs(rc["wrist_camera_config"])
+    return rc
+
+
+use_robot()
+
+
+def load_config(path=None):
     """설정 파일을 읽는다. 비교 시험용으로 'file.yaml@articulation.self_collision=true' 처럼
     '@점.경로=값' 을 붙이면 그 값만 바꿔 읽는다 (파일은 그대로)."""
-    import yaml
-
-    path, *overrides = str(path).split("@")
+    path, *overrides = str(path or DEFAULT_CONFIG).split("@")
     with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     for ov in overrides:
@@ -213,15 +253,11 @@ def bound_physics_material(prim):
     return str(mat.GetPath()) if mat else ""
 
 
-WRIST_CAMERA_CONFIG = os.path.join(CONFIG_DIR, "wrist_camera.yaml")
 WRIST_CAMERA_NAME = "wrist_color_camera"
-CAMERA_TILT_PIVOT = "wrist_camera_mount"   # xacro cam_tilt 가 이 프레임의 x 축으로 돈다
 
 
-def load_camera_config(path=WRIST_CAMERA_CONFIG):
-    import yaml
-
-    with open(path, encoding="utf-8") as f:
+def load_camera_config(path=None):
+    with open(path or WRIST_CAMERA_CONFIG, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     for key in ("frame", "resolution", "intrinsics", "distortion", "horizontal_aperture", "clipping_range"):
         if key not in cfg:
@@ -252,10 +288,18 @@ def camera_local_matrix(stage, optical_path, tilt):
 
 def add_wrist_camera(stage, cam_cfg, tilt=0.0):
     """손목 color 카메라 Camera prim 을 optical frame 아래에 만든다 (메모리 stage 에만). prim 경로를 돌려준다."""
-    from pxr import Gf, UsdGeom
-
     optical = find_link_path(stage, cam_cfg["frame"])
     path = f"{optical}/{WRIST_CAMERA_NAME}"
+    cam = define_pinhole_camera(stage, path, cam_cfg)
+    _set_matrix(cam.GetPrim(), camera_local_matrix(stage, optical, tilt))
+    return path
+
+
+def define_pinhole_camera(stage, path, cam_cfg):
+    """OpenCV 핀홀 intrinsics(cam_cfg: resolution, intrinsics fx·cx·cy, horizontal_aperture, clipping_range)로 USD Camera.
+    fy 는 fx 와 같다고 봄 (정사각 픽셀). 자세는 호출하는 쪽에서."""
+    from pxr import Gf, UsdGeom
+
     cam = UsdGeom.Camera.Define(stage, path)
     w, h = (int(x) for x in cam_cfg["resolution"])
     k = cam_cfg["intrinsics"]
@@ -270,8 +314,7 @@ def add_wrist_camera(stage, cam_cfg, tilt=0.0):
     cam.CreateHorizontalApertureOffsetAttr().Set(-(float(k["cx"]) + 0.5 - w / 2) * pix)
     cam.CreateVerticalApertureOffsetAttr().Set((float(k["cy"]) + 0.5 - h / 2) * pix)
     cam.CreateClippingRangeAttr().Set(Gf.Vec2f(*[float(x) for x in cam_cfg["clipping_range"]]))
-    _set_matrix(cam.GetPrim(), camera_local_matrix(stage, optical, tilt))
-    return path
+    return cam
 
 
 def _set_matrix(prim, m):
@@ -438,7 +481,6 @@ def dof_index_map(robot):
 
 
 PAYLOAD_PATH = "/World/Payload"
-PAYLOAD_LINK = "rh_p12_rn_base"
 
 
 def find_link_path(stage, name):

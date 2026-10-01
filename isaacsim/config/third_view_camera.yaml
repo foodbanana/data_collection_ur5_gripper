@@ -1,0 +1,35 @@
+# =============================================================
+# third_view_camera.yaml — 외부(third view) 카메라 (docs/PLAN.md 0-2, 2-3)
+#
+# 실물: D456 (아직 없음, 2026-10-01). 토픽 /cam/third_view/color/image_raw → observation.images.third_view
+# 위치: 로봇 base 근처에서 위를 올려다보며 팔이 드론을 잡는 장면을 찍는다 (2026-10-01 사용자 결정). 렌더링 보고 조정
+# **intrinsics 는 임시값**: D456 color 가로 시야각 약 90° 를 640x480 에 맞춘 핀홀 (fx = 320 / tan 45°).
+#   실물이 생기면 camera_info 실측값으로 바꾼다 (손목 카메라 wrist_camera.yaml 과 같은 방식)
+# =============================================================
+
+serial: null                  # 실물 시리얼 (없음)
+resolution: [640, 480]        # [width, height]
+intrinsics: {fx: 320.0, fy: 320.0, cx: 320.0, cy: 240.0}   # 임시값
+distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+horizontal_aperture: 20.955   # [mm] 임의로 정한 센서 폭 (비율만 의미 있음)
+clipping_range: [0.02, 20.0]  # [m]
+
+# world 좌표 [m]. position = 렌즈(color optical frame) 위치. 거기서 look_at 을 바라보고, 화면 위쪽이 world +z 쪽
+#   0.80 → 0.90 (2026-10-01): 테이블 위 4 cm 라 받침대가 안 보임 → 렌즈가 상판 위 약 14 cm
+position: [0.05, -0.45, 0.90]
+look_at: [0.55, 0.0, 1.35]    # 파지 구역 (드론 기본 위치 (0.60, 0, 1.50) 아래, 그리퍼가 올라오는 곳)
+
+# 카메라 모양: 로봇 USD 의 손목 D435i (realsense2_description 메시) 하위 트리를 그대로 reference (원본은 읽기만).
+#   렌더링 카메라는 그 color optical frame 에 붙는다 (렌즈 위치 = position). 충돌 박스(90 × 25 × 25 mm)도 같이 들어옴 (정적 collider)
+model:
+  usd: assets/robots/ur5_rh_p12_d435i/payloads/base.usda
+  prim: /ur5_rh_p12_d435i/Geometry/robot_mount/base_link/base_link_inertia/shoulder_link/upper_arm_link/forearm_link/wrist_1_link/wrist_2_link/wrist_3_link/flange/tool0/wrist_mount/wrist_camera_mount/wrist_camera_bottom_screw_frame/wrist_camera_link
+  optical_frame: wrist_camera_color_optical_frame
+  bottom_center: [-0.008, -0.0175, -0.0125]   # 카메라 링크 좌표계에서 몸체 아랫면 가운데 [m] (받침대 기둥 위 끝)
+
+# 받침대 (테이블 상판 → 카메라 아랫면): 바닥판 + 기둥, 정적 collider
+mount:
+  post_radius: 0.008
+  plate_radius: 0.035
+  plate_height: 0.006
+  color: [0.15, 0.15, 0.15]
