@@ -1,0 +1,255 @@
+#usda 1.0
+(
+    customLayerData = {
+        string config = "config/drone_simple.yaml"
+        string generated_by = "isaacsim/scripts/build_simple_drone.py"
+    }
+    defaultPrim = "SimpleDrone"
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "SimpleDrone" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
+    customData = {
+        string source_config = "config/drone_simple.yaml"
+    }
+)
+{
+    float physxRigidBody:sleepThreshold = 0
+
+    def Cube "body" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 0.56
+        color3f[] primvars:displayColor = [(0.45, 0.45, 0.48)]
+        double size = 1
+        float xformOp:rotateZ = 0
+        float3 xformOp:scale = (0.18, 0.08, 0.07)
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+
+    def Cube "arm0" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 0.01
+        color3f[] primvars:displayColor = [(0.35, 0.35, 0.38)]
+        double size = 1
+        float xformOp:rotateZ = 69.443954
+        float3 xformOp:scale = (0.08544004, 0.018, 0.012)
+        double3 xformOp:translate = (0.08499999999999999, 0.08, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+
+    def Cylinder "motor0" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.014, -0.014, -0.011), (0.014, 0.014, 0.011)]
+        double height = 0.022
+        float physics:mass = 0.04
+        color3f[] primvars:displayColor = [(0.15, 0.15, 0.15)]
+        double radius = 0.014
+        double3 xformOp:translate = (0.1, 0.12, 0.031)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "rotor0" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.065, -0.065, -0.0015), (0.065, 0.065, 0.0015)]
+        double height = 0.003
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+        double radius = 0.065
+        double3 xformOp:translate = (0.1, 0.12, 0.0475)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "leg0" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.004, -0.004, -0.0295), (0.004, 0.004, 0.0295)]
+        double height = 0.059000000000000004
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.2, 0.2, 0.2)]
+        double radius = 0.004
+        double3 xformOp:translate = (0.1, 0.12, -0.015500000000000003)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cube "arm1" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 0.01
+        color3f[] primvars:displayColor = [(0.35, 0.35, 0.38)]
+        double size = 1
+        float xformOp:rotateZ = 110.556046
+        float3 xformOp:scale = (0.08544004, 0.018, 0.012)
+        double3 xformOp:translate = (-0.08499999999999999, 0.08, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+
+    def Cylinder "motor1" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.014, -0.014, -0.011), (0.014, 0.014, 0.011)]
+        double height = 0.022
+        float physics:mass = 0.04
+        color3f[] primvars:displayColor = [(0.15, 0.15, 0.15)]
+        double radius = 0.014
+        double3 xformOp:translate = (-0.1, 0.12, 0.031)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "rotor1" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.065, -0.065, -0.0015), (0.065, 0.065, 0.0015)]
+        double height = 0.003
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+        double radius = 0.065
+        double3 xformOp:translate = (-0.1, 0.12, 0.0475)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "leg1" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.004, -0.004, -0.0295), (0.004, 0.004, 0.0295)]
+        double height = 0.059000000000000004
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.2, 0.2, 0.2)]
+        double radius = 0.004
+        double3 xformOp:translate = (-0.1, 0.12, -0.015500000000000003)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cube "arm2" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 0.01
+        color3f[] primvars:displayColor = [(0.35, 0.35, 0.38)]
+        double size = 1
+        float xformOp:rotateZ = -110.556046
+        float3 xformOp:scale = (0.08544004, 0.018, 0.012)
+        double3 xformOp:translate = (-0.08499999999999999, -0.08, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+
+    def Cylinder "motor2" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.014, -0.014, -0.011), (0.014, 0.014, 0.011)]
+        double height = 0.022
+        float physics:mass = 0.04
+        color3f[] primvars:displayColor = [(0.15, 0.15, 0.15)]
+        double radius = 0.014
+        double3 xformOp:translate = (-0.1, -0.12, 0.031)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "rotor2" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.065, -0.065, -0.0015), (0.065, 0.065, 0.0015)]
+        double height = 0.003
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+        double radius = 0.065
+        double3 xformOp:translate = (-0.1, -0.12, 0.0475)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "leg2" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.004, -0.004, -0.0295), (0.004, 0.004, 0.0295)]
+        double height = 0.059000000000000004
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.2, 0.2, 0.2)]
+        double radius = 0.004
+        double3 xformOp:translate = (-0.1, -0.12, -0.015500000000000003)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cube "arm3" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        float physics:mass = 0.01
+        color3f[] primvars:displayColor = [(0.35, 0.35, 0.38)]
+        double size = 1
+        float xformOp:rotateZ = -69.443954
+        float3 xformOp:scale = (0.08544004, 0.018, 0.012)
+        double3 xformOp:translate = (0.08499999999999999, -0.08, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZ", "xformOp:scale"]
+    }
+
+    def Cylinder "motor3" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.014, -0.014, -0.011), (0.014, 0.014, 0.011)]
+        double height = 0.022
+        float physics:mass = 0.04
+        color3f[] primvars:displayColor = [(0.15, 0.15, 0.15)]
+        double radius = 0.014
+        double3 xformOp:translate = (0.1, -0.12, 0.031)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "rotor3" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.065, -0.065, -0.0015), (0.065, 0.065, 0.0015)]
+        double height = 0.003
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+        double radius = 0.065
+        double3 xformOp:translate = (0.1, -0.12, 0.0475)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Cylinder "leg3" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        uniform token axis = "Z"
+        float3[] extent = [(-0.004, -0.004, -0.0295), (0.004, 0.004, 0.0295)]
+        double height = 0.059000000000000004
+        float physics:mass = 0.005
+        color3f[] primvars:displayColor = [(0.2, 0.2, 0.2)]
+        double radius = 0.004
+        double3 xformOp:translate = (0.1, -0.12, -0.015500000000000003)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+

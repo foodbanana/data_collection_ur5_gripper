@@ -1,0 +1,43 @@
+# =============================================================
+# drone_iris.yaml — 2단계 데모 드론: 3DR Iris (PX4 기본 기체 외형) 0.75 배 (docs/PLAN.md 2단계)
+#
+# 원본 USD(isaacsim/assets/drones/iris/, README 참고)는 그대로 두고 씬 레이어에서 덮어쓴다 (drone.add_drone):
+#   축소, 링크 질량, 프로펠러 관절 고정(FixedJoint), 저장된 초기 속도 0, 물체 재질
+# 실물: 접이식 소형 쿼드콥터 0.8 kg, 그리퍼가 아래에서 위로 다가가 몸체 옆면을 폭 방향으로 잡는다
+#
+# 좌표: 드론 좌표계 = 드론 최상위 prim 의 위치·자세 (축소 반영된 m 단위), +x 앞, +y 왼쪽, +z 위
+# =============================================================
+
+usd: assets/drones/iris/iris.usd   # isaacsim/ 기준 상대 경로
+name: Iris
+body_link: body                    # 중심 강체 (최상위 prim 기준 상대 경로). 공중 유지 힘을 거는 링크, 잡는 곳
+
+# 0.75 배: 원본 허리 폭 105 mm → 약 79 mm (그리퍼 열림 107 − 여유 2 × 10 = 87 mm 이하). 전체 폭 약 36 cm
+scale: 0.75
+
+mass: 0.8                          # 총 질량 (실물)
+# 링크 질량 [kg] (최상위 prim 기준 상대 경로). 합계 = mass 여야 함. 원본 body 1.5 kg, 프로펠러 미지정
+link_masses:
+  body: 0.78
+  rotor0: 0.005
+  rotor1: 0.005
+  rotor2: 0.005
+  rotor3: 0.005
+
+# 프로펠러 회전 관절 → FixedJoint (원래 관절 비활성화). 회전은 시각 효과뿐이라 데모에서는 고정
+lock_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
+
+zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 rad/s 등)를 0 으로
+
+# 바닥에 놓였을 때 기울기 허용 [degree]: 앞쪽 아래 안테나(드론 좌표 x 73, y 49 mm)가 다리 끝보다 10 mm 더 내려와
+#   안테나 + 다리로 3.4° 기울어져 섬 (원본 형상, 2026-10-01 check_drone)
+rest_tilt_max_deg: 5.0
+
+articulation:
+  sleep_threshold: 0.0             # 공중에 떠 있는 동안 잠들지 않게
+
+# 잡는 곳: 몸체 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근 (2-4 파지 시퀀스가 씀)
+grasp:
+  approach: [0.0, 0.0, 1.0]
+  close_axis: [0.0, 1.0, 0.0]
+  center_xy: [0.0, 0.0]            # 허리 (원본 x = 0 단면이 가장 좁음)

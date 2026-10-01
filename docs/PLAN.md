@@ -448,21 +448,63 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **목표**: 스크립트 한 번으로 재현되는 드론 파지 씬
 
+**진행 순서 (2026-10-01 결정)** — 2단계는 **ROS 없이** 진행 (ROS 2 연동은 3단계 이후, Pegasus 방식 검토)
+1. 데모 드론 (3DR Iris 외형 0.75 배, 아래) — 씬·공중 유지·파지 판정 파이프라인을 먼저 만든다
+2. PX4 로 띄운 드론 (Pegasus Simulator 방식, PX4 SITL ↔ MAVLink 직접 연결. 6.0.1 포크 livealive7/PegasusSimulator 가 6.1.0 후보)
+3. 다른 드론 모델 (STL → USD 에셋)
+- 드론은 설정 yaml(`isaacsim/config/drone_*.yaml`) 하나로 교체되게 한다 (씬 스크립트 수정 없이)
+- 처음에는 Isaac Sim 공식 `Quadcopter` USD 를 쓰려 했으나 폐기: 몸체가 지름 200 mm 원판이라 옆면을 잡을 수 없음,
+  질량 단위 오류(density 1e6 배, 합계 251,537 kg)·drive 없는 수동 관절 ±30°·손잡이 없음. 에셋은 삭제 (출처: Isaac Sim 6.1 에셋 서버
+  `Isaac/Robots_Multiphysics/IsaacSim/Quadcopter/quadcopter.usda`)
+
+**실물 시나리오 (2026-10-01 확인)**: 비행 중인 드론을 잡는다 → 드론 모터 정지 → 로봇 팔이 드론을 내려놓는다.
+- 실물 드론: 접이식 소형 쿼드콥터 (좁고 긴 몸체, 프로펠러 4개), **0.8 kg**, 치수 미측정
+- **그리퍼가 아래에서 위로 다가가 몸체 옆면을 폭 방향으로 잡는다** → 무게중심이 두 손가락 가운데, 평평한 옆면이라 박스 파지(1-6)와 같은 조건
+- 잡기 전에는 드론이 스스로 떠 있고, 잡은 뒤에는 드론 무게 전체가 그리퍼에 걸린다
+
+**데모 드론 = 3DR Iris 외형 0.75 배 (2026-10-01 결정)** — 설정 `isaacsim/config/drone_iris.yaml` (기본값), 에셋 `isaacsim/assets/drones/iris/`
+- 3DR Iris = 예전 PX4 Gazebo SITL 기본 기체 ("PX4 처럼 보이는" 외형, 2번 PX4 단계에서도 같은 외형). Pegasus Simulator 6.0.1 포크의 `iris.usd` 복사 (BSD-3, 출처는 README)
+- 원본 허리 폭 약 105 mm 는 그리퍼 완전 열림 107 mm 로 잡을 수 없음 → **0.75 배** (허리 81 mm, 전체 폭 약 36 cm)
+- 씬 레이어 덮어쓰기 (`drone.add_drone`, 원본 USD 그대로): 축소, 질량 0.8 kg (body 0.78 + 프로펠러 0.005 × 4, 원본 body 1.5 kg),
+  프로펠러 회전 관절 4 개 → FixedJoint, 저장된 초기 속도(rotor0 9.4 rad/s 등) 0, 물체 재질
+- 잡는 곳: 몸체 허리(드론 x = 0) 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근
+- 대안: 기본 도형 간이 드론 `isaacsim/config/drone_simple.yaml` → `isaacsim/scripts/build_simple_drone.py` → `assets/drones/simple_drone/`
+  (박스 몸체 180 × 80 × 70 mm + 팔·모터·로터·다리 각 4, 평평한 옆면, 치수 전부 yaml). 같은 `drone.py`·`check_drone.py` 로 쓴다
+- third view 카메라: **로봇 base 근처에서 위를 올려다보며** 팔이 드론을 잡는 장면을 찍는다 (위치·방향은 `isaacsim/config/third_view_camera.yaml`).
+  렌더링 보고 가림이 심하면 base 옆·뒤로 조정
+- `trajectory` 모드는 나중에. 인자 자리만 두고 선택하면 미구현 에러로 중단
+
+**2단계 1번 작업 순서 (데모 드론)**
+- 2-1 드론 에셋 (Iris 덮어쓰기, 대안 간이 드론)과 `check_drone.py` 점검
+- 2-2 공중 유지 (몸체에 중력 보상 + PD 힘·토크, `static`/`hover`, `release()` = 모터 정지)
+- 2-3 씬 스크립트 `drone_scene.py` (테이블·로봇·조명·손목/third view 카메라·드론, 인자 `--drone-config --drone-pos --mode --seed --base --headless --realtime`)
+- 2-4 스크립트 파지 데모(차분 IK, 아래에서 위로 접근) + 자동 판정 `approach → grasped → held → placed`, 실패 케이스(헛잡기·빗나감·떨어뜨림)도 판정 확인
+- 2-5 0.8 kg 들기·이동·내려놓기 미끄러짐 기록
+
+**2-1 결과 (2026-10-01)** — `check_drone.py` (`--drone-config`, GUI 보기 `--hold`) → Iris **4/4 PASS**, 간이 드론 4/4 PASS
+- 잡는 폭은 실제 충돌 형상을 손가락 폭 slab(잡는 곳 ±13 mm)으로 잘라서 잼 (`drone.grasp_width`). 기준 = 그리퍼 완전 열림 107 mm − 여유 2 × 10 mm = 87 mm 이하
+- Iris 0.75: 잡는 폭 **81.3 mm** (−41.9 ~ +39.3), 질량 PhysX 0.80000 kg, 무게중심이 잡는 곳에서 수평 0.15 mm, DOF 0,
+  0.5 m 낙하 중 링크 상대 자세 변화 0.04°·0.0001 mm. 축소 후 프로펠러 위치 PhysX vs USD 0.5 mm 이내 (관절 프레임도 같이 축소됨)
+  - 바닥에 놓이면 **3.4° 기울어짐**: 앞쪽 아래 안테나(드론 x 73, y 49 mm)가 다리 끝보다 10 mm 더 내려옴 (원본 형상) → 허용 5° (`rest_tilt_max_deg`)
+  - **2-4 주의**: 안테나가 몸체 아래 앞쪽에 있음. 아래에서 접근할 때 손목 카메라(공구 축에서 +45~70 mm)가 앞쪽(+x)을 향하면 닿을 수 있음
+- 간이 드론: 잡는 폭 80.0 mm, 0.80000 kg, 무게중심 수평 0.000 mm, 다리로 똑바로 섬 (몸체 바닥–지면 10 mm)
+- 참고 (폐기한 Quadcopter 시험): 관절 한계 0/0 고정은 착지 충격에 0.79° 움직임 → 원래 관절 비활성화 + FixedJoint 로 고정 (Iris 도 같은 방식).
+  TCP 좌표계 충돌 형상 범위: 손목 카메라 공구 축에서 +45~70 mm (z −112~−87 mm), 반대쪽 최대 wrist_3 43 mm, 손가락 폭 ±13 mm,
+  완전 열림 손가락 안쪽 면 ±53.5 mm
+
 **작업**
 - 씬 구성을 GUI Action Graph 대신 **Python standalone 스크립트**로 작성 (씬 + ROS 2 OmniGraph 생성), `~/isaacsim/python.sh` 로 실행
 - 테이블 + 로봇 배치(최상위 prim Transform, root_joint 유지), 조명, third view 카메라
   - **조명은 씬 스크립트가 반드시 만든다** (Dome Light 등). 없으면 GUI 뷰포트가 비어 보이고 카메라 영상(손목·third view)도 검게 나온다.
     1-5 테스트 씬은 GUI 일 때만 Dome Light 를 넣지만(`test_scene.build_test_scene(light=...)`), 2단계 씬은 카메라를 녹화하므로 headless 에서도 항상 넣는다
 - 베이스 모드 인자 자리 확보: `--base fixed` 만 구현 (나중에 `--base kinematic` 추가)
-- 파라미터화된 간이 드론: 450급(1.2~1.5 kg), 본체 박스 + 암 4개 + 프롭 디스크 + **지름 약 25 mm 손잡이 봉**
-  (그리퍼 최대 열림 ≈ 107 mm → 본체가 아니라 손잡이/암을 잡는다)
-  - **손잡이는 드론 무게중심 바로 위**에 둔다 (봉을 축으로 드론이 돌아가는 것 방지, 1-6 참고)
+- 드론: 위 "데모 드론" (Iris 외형 0.75 배, 0.8 kg, 몸체 옆면을 잡음. 대안 간이 드론)
 - 드론 모드: `static`(공중 고정) → `hover`(중력 보상 + 약한 흔들림) → `trajectory`(이동)
 - 파지 성공 판정: 그리퍼 닫힘 + 드론이 손가락 사이 + 로봇과 함께 이동
 
 **결정 항목**
-- [ ] **파지 후 중력 보상 유지 여부**: 유지하면 로봇이 드론 무게를 거의 느끼지 않고, 끄면 잡는 순간 1.5 kg 하중이 갑자기 걸림.
-  실제 시나리오(프로펠러가 도는 드론인지, 정지한 드론인지)에 맞춰 결정
+- [x] **파지 후 중력 보상 유지 여부 → 끈다 (2026-10-01)**: 실물은 잡은 뒤 드론 모터를 멈추므로, 파지 판정 후 드론의 공중 유지 힘을 끄고
+  드론 무게(0.8 kg)가 그리퍼에 걸리게 한다. 0.8 kg 을 몸체 옆면으로 들고 내려놓을 때 미끄러지지 않는지 2단계에서 확인 (1-6 은 0.5 kg 까지 확인)
 
 **완료 기준**
 - [ ] 스크립트 실행만으로 씬이 뜸
