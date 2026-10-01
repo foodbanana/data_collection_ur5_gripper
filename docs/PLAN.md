@@ -498,17 +498,21 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   (k 8.55e-6, c 1e-6, ω 최대 1100 rad/s, 공기저항 [0.5, 0.3, 0])
   - Pegasus PX4 예제는 PX4 SITL 이 MAVLink 로 보내는 모터 출력을 ω 로 씀. 우리는 지금 Python 예제(NonlinearController)와 같은
     **기하 제어기**를 쓰고, 2단계 2번에서 제어기만 PX4 로 바꾼다 (로터 추력 인터페이스 그대로)
-  - 게인: Pegasus Iris 값(1.5 kg, Ixx 0.029: Kp 10, Kd 8.5, Ki 1.5, Kr 3.5, Kw 0.5)을 질량·관성으로 정규화해 옮김
-    (위치 ω 2.58·ζ 1.10·ki 1.0, 자세 ω 11·ζ 0.79). PhysX 질량·관성(전체 무게중심 둘레, 평행축 포함)을 읽어 계산 → 드론을 바꿔도 같은 응답
+  - **제어기는 Pegasus 와 같게 (2026-10-01 사용자 결정: 오차가 조금 크더라도 Pegasus 와 같은 동작이 실제에 가깝다)**:
+    식 그대로, 매 step 지난 step 에 계산한 ω 를 먼저 적용하고 제어기를 갱신 (Pegasus 의 한 step 지연),
+    게인 = Pegasus 값(Kp 10, Kd 8.5, Ki 1.5, Kr 3.5, Kw 0.5, 세 축 같음)을 Pegasus Iris(1.5 kg, I 0.029/0.029/0.055) 대비
+    우리 기체 비율로 환산 (Kp·Kd·Ki × m/m_ref, Kr·Kw × I/I_ref 축별, m·I 는 PhysX 값) → Pegasus Iris 와 같은 응답
+    - Pegasus 게인을 그대로 쓰면 관성이 6~9 배 작은 우리 드론에서 로터 명령이 매 step 크게 흔들림 (정지 오차 9.9 mm, 기울기 1.5°,
+      로터 ω 평균 363 vs 호버 479 rad/s, Kw·dt/I 최대 1.29) → 환산 후 Kw·dt/I 0.14, 정지 오차 0.56 mm
   - 모드: `static`, `hover` (목표 + 축별 사인파 2 개 합, 진폭 [20, 20, 10] mm, 0.2~0.5 Hz, seed 기록), `trajectory` 는 미구현 에러
   - `release()` = 모터 정지 (ω 0). 공기저항은 계속
 - **프로펠러 회전 (보여 주기용, `--prop-spin on|off`, 기본 off)**: Pegasus `handle_propeller_visual` 과 같음 — 실제 ω 와 무관하게
   로터 추력 ≥ 0.1 N 이면 100 rad/s, 0~0.1 N 이면 5 rad/s, 0 이면 정지 (방향 = rot_dir), 관절 속도를 매 step 덮어씀. 추력과는 분리.
   on 이면 프로펠러 관절을 FixedJoint 로 바꾸지 않음 (DOF 4)
-- 시험 결과 (off / on):
-  - F1 정지 호버 30 s (처음 20 s 제외): 오차 최대 0.49 / 0.56 mm, 로터 ω 평균이 계산 호버 값 479 rad/s 와 0.03%
-  - F2 계단 +5 cm: overshoot x 9.9 / 10.8%, z 9.5%, 2 mm 안 정착 9~11 s, 12 s 뒤 오차 1.0~1.3 mm, x 이동 중 기울기 1.4° (실물처럼 기울어 이동)
-  - F3 hover 20 s: 추적 오차 RMS 1.18 / 1.09 mm (최대 2.1 mm), 기울기 최대 0.51°
+- 시험 결과 (off / on, 환산 게인 + 한 step 지연):
+  - F1 정지 호버 30 s (처음 20 s 제외): 오차 최대 0.56 / 0.50 mm, 로터 ω 평균이 계산 호버 값 479 rad/s 와 0.03%
+  - F2 계단 +5 cm: overshoot x 9.5 / 10.9%, z 9.5%, 2 mm 안 정착 9~10 s, 12 s 뒤 오차 1.2~1.4 mm, x 이동 중 기울기 1.5° (실물처럼 기울어 이동)
+  - F3 hover 20 s: 추적 오차 RMS 1.19 / 0.96 mm (최대 2.1 mm), 기울기 최대 0.54°
   - F4 모터 정지: 수직 가속도 −9.810 m/s² (= −g), ω 0, 프로펠러 관절 속도 0.004 rad/s 로 멈춤
   - on 일 때 비행 중 프로펠러 관절 속도 ±99.95 rad/s (명령 ±100)
 - **알아 둘 특성 (Pegasus PID)**: 자세 적분항이 없어 무게중심이 0.14 mm 만 치우쳐도 몸체가 약 0.16° 기운 채 버티고 옆으로 약 4 mm 밀림 →
@@ -521,11 +525,11 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     공기저항 −D·v_body, 할당 행렬(로터 위치를 body 좌표계로, pinv, 음수 0, 최대 ω 넘으면 비율 유지 축소), 제어 식
     (F_des, u₁ = F_des·Z_B, R_des, e_R = ½ vee(R_desᵀR − RᵀR_des), 목표 각속도 = 목표 jerk 투영, τ = −Kr·e_R − Kw·e_ω), 적분 ∫e_p dt,
     프로펠러 표시 (0.1 N 기준 100 / 5 / 0 rad/s, 관절 속도 덮어쓰기)
-  - 다름: 게인을 PhysX 질량·관성으로 계산 (Pegasus 는 m 1.5 고정, Kr·Kw 세 축 같음 → 우리는 축별 관성 비례),
-    제어기 출력을 같은 step 에 적용 (Pegasus 는 backend 를 vehicle.update 끝에 갱신 → 한 step 늦음),
-    physics 1/120 s (Pegasus 1/250 s), yaw 목표 = 시작 yaw 고정 (Pegasus 는 궤적 파일), IMU·GPS 등 센서 없음
+  - 맞춤 (비교 후): 한 step 지연, Pegasus 게인 값 (우리 기체 비율로 환산)
+  - 남은 차이: 질량·관성은 우리 기체(PhysX) 값, physics 1/120 s (Pegasus 1/250 s, 로봇 drive 튜닝 기준이라 유지),
+    yaw 목표 = 시작 yaw 고정 (Pegasus 는 궤적 파일), IMU·GPS 등 센서 없음
   - 목표 각속도(jerk 투영) 비교 hover RMS: 0 배 0.56 mm, Pegasus 식(+1) 1.20 mm, −1 배 1.73 mm → 부호는 Pegasus 가 맞고,
-    차이가 1 mm 미만이라 **Pegasus 식 그대로 유지**
+    차이가 1 mm 미만이고 Pegasus 와 같은 동작이 실제에 가까우므로 **Pegasus 식 그대로 유지**
 - GUI 보기: `check_flight.py --view [--mode hover|static] [--prop-spin on] [--release-after 8]` (실제 시간 속도, 비행 → 모터 정지 → 낙하)
 
 **작업**

@@ -53,12 +53,21 @@ flight:
   prop_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
   prop_visual_speed: 100.0                     # rad/s
   prop_idle_speed: 5.0                         # rad/s
-  # 기하 제어기 (Pegasus 예제 NonlinearController 와 같은 식). 게인은 Pegasus Iris 값(1.5 kg, Ixx 0.029)을
-  #   질량·관성으로 나눈 응답 특성으로 옮김 → Kp = m·ω², Kd = 2·ζ·m·ω, Ki = m·ki, Kr = I·ω², Kw = 2·ζ·I·ω (축별, I 는 PhysX 값)
-  #   Pegasus: Kp 10, Kd 8.5, Ki 1.5, Kr 3.5, Kw 0.5 → 위치 ω 2.58·ζ 1.10·ki 1.0, 자세 ω 11.0·ζ 0.79
+  # 기하 제어기 = Pegasus 예제 NonlinearController 그대로 (식·한 step 지연). 게인 = Pegasus 값을 우리 기체로 환산
+  #   (2026-10-01 사용자 결정: 오차가 조금 크더라도 Pegasus 와 같은 동작이 실제에 가깝다)
+  #   Pegasus 게인을 그대로 쓰면 관성이 6~9 배 작은 우리 드론에서 자세 제어가 너무 세져 로터 명령이 매 step 크게 흔들림
+  #   (정지 호버 오차 9.9 mm, 기울기 1.5°, 로터 ω 평균 363 vs 호버 479 rad/s, Kw·dt/I 최대 1.29) → Pegasus Iris 와 같은 응답이 되도록
+  #   Kp·Kd·Ki × (m / m_ref), Kr·Kw × (I / I_ref) (축별). 환산 후 정지 오차 0.56 mm, 기울기 0°, ω 478.9
+  #   m, I 는 PhysX 값 (전체 무게중심 둘레). reference = Pegasus Iris (NonlinearController m 1.5, iris.usd body diagonalInertia)
   controller:
-    position: {omega: 2.58, zeta: 1.10, ki: 1.0}
-    attitude: {omega: 11.0, zeta: 0.79}
+    Kp: [10.0, 10.0, 10.0]
+    Kd: [8.5, 8.5, 8.5]
+    Ki: [1.50, 1.50, 1.50]
+    Kr: [3.5, 3.5, 3.5]
+    Kw: [0.5, 0.5, 0.5]
+    scale_to_airframe: true
+    reference_mass: 1.5
+    reference_inertia: [0.029125, 0.029125, 0.055225]
   # hover 모드: 목표 위치에 축별 사인파 합을 더함 (주파수·위상은 seed 로 뽑아 기록)
   hover:
     amplitude: [0.02, 0.02, 0.01]              # m

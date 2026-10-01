@@ -4,18 +4,20 @@
 #   제어기 → 로터 4 개 목표 각속도 ω (rad/s) → 이차 추력 모델 → PhysX 외력 (매 physics step, PHYSICS_PRE_STEP 콜백)
 #     - 로터 i 강체에 자기 z 축 방향 추력 Fᵢ = k·ωᵢ² (로터 위치에서)
 #     - body 에 반토크 Σ c·ωᵢ²·dirᵢ (body z 축) + 선형 공기저항 −D·v_body
-#   제어기: 기하 제어기 (Pegasus 예제 NonlinearController 와 같은 식, Lee/Mellinger). 2단계 2번에서 PX4 로 바꾼다
+#   제어기: 기하 제어기 = Pegasus 예제 NonlinearController 그대로 (식·게인·한 step 지연, Lee/Mellinger). 2단계 2번에서 PX4 로 바꾼다
 #     F_des = −Kp·e_p − Kd·e_v − Ki·∫e_p + m·g·ẑ + m·a_ref → 몸체를 F_des 방향으로 기울이고 u₁ = F_des·Z_B
 #     τ = −Kr·e_R − Kw·(ω − ω_des) (ω_des = 목표 jerk 투영),  (u₁, τ) → 할당 행렬 역행렬 → ω²  (음수는 0, 최대 ω 넘으면 비율 유지 축소)
-#   Pegasus 와 다른 점 (2026-10-01 코드 비교, PLAN 2-2): 게인을 PhysX 질량·관성으로 계산(Pegasus 는 m 1.5 고정, 세 축 같은 Kr·Kw),
-#     제어기 출력을 같은 step 에 적용(Pegasus 는 backend 를 vehicle.update 끝에 갱신해 한 step 늦음), physics 1/120 s (Pegasus 1/250 s),
-#     yaw 목표 = 시작 yaw 고정. 센서(IMU·GPS 등)는 없음
+#   Pegasus 와 같게 (2026-10-01 사용자 결정): 게인은 Pegasus 값을 우리 기체 질량·관성 비율로 환산(설정 scale_to_airframe,
+#     Pegasus Iris 와 같은 응답), 매 step 먼저 지난 step 에 계산한 ω 를 적용하고
+#     그다음 제어기를 돌림 (Pegasus vehicle.update: thrusters ← backend.input_reference() → 힘 적용 → backend.update)
+#   Pegasus 와 다른 점: 질량 m 은 PhysX 값 (Pegasus 는 1.5 고정), physics 1/120 s (Pegasus 1/250 s, 로봇 drive 튜닝 기준),
+#     yaw 목표 = 시작 yaw 고정 (Pegasus 는 궤적 파일), 센서(IMU·GPS 등) 없음
 #   모드: static (목표 고정), hover (목표 + 축별 사인파 합, seed), trajectory (미구현 → 에러)
 #   release(): 모터 정지 (ω = 0 → 추력 0. 실물: 잡은 뒤 모터를 멈춤). 공기저항은 계속
 #   프로펠러 회전 (보여 주기용, prop_spin): Pegasus handle_propeller_visual 과 같이 실제 ω 와 무관하게
 #     추력 ≥ 0.1 N 이면 prop_visual_speed, 0 < 추력 < 0.1 N 이면 prop_idle_speed, 0 이면 정지 (관절 속도를 매 step 덮어씀)
 #
-# 설정: drone_*.yaml 의 flight. 질량·관성은 PhysX 값을 읽어 게인을 계산한다 (Kp = m·ω², Kr = I·ω² …)
+# 설정: drone_*.yaml 의 flight. 질량·관성은 PhysX 값, 게인은 설정값 (세 축 [x, y, z]) × 기체 비율 (scale_to_airframe)
 # SimulationApp 을 만든 뒤에 import 할 것.
 # =============================================================
 
@@ -78,17 +80,23 @@ class Reference:
 
 class GeometricController:
     """Pegasus NonlinearController.update 와 같은 식 (yaw 목표 = 시작 yaw 고정, yaw rate 목표 0).
-    다른 점: Kp·Kd·Ki 는 세 축 같은 스칼라(Pegasus 도 세 축 같은 값), Kr·Kw 는 축별 관성 비례 (Pegasus 는 세 축 같은 값)."""
+    게인은 설정값 (축별 [x, y, z], Pegasus 는 np.diag). scale_to_airframe 이면 Kp·Kd·Ki × m/m_ref, Kr·Kw × I/I_ref (축별),
+    질량 m·관성 I 는 PhysX 값."""
 
     def __init__(self, mass, inertia_diag, ccfg):
-        p, a = ccfg["position"], ccfg["attitude"]
         self.m = mass
-        self.Kp = mass * p["omega"] ** 2
-        self.Kd = 2 * p["zeta"] * mass * p["omega"]
-        self.Ki = mass * p["ki"]
-        I = np.asarray(inertia_diag, dtype=float)
-        self.Kr = I * a["omega"] ** 2
-        self.Kw = 2 * a["zeta"] * I * a["omega"]
+        for k in ("Kp", "Kd", "Ki", "Kr", "Kw"):
+            v = np.asarray(ccfg[k], dtype=float)
+            if v.shape != (3,):
+                raise ValueError(f"flight.controller.{k} 는 [x, y, z] 세 값: {ccfg[k]}")
+            setattr(self, k, v)
+        if "scale_to_airframe" not in ccfg:
+            raise KeyError("flight.controller.scale_to_airframe 항목이 없습니다 (true/false 명시)")
+        if ccfg["scale_to_airframe"]:
+            s_m = mass / float(ccfg["reference_mass"])
+            s_I = np.asarray(inertia_diag, dtype=float) / np.asarray(ccfg["reference_inertia"], dtype=float)
+            self.Kp, self.Kd, self.Ki = self.Kp * s_m, self.Kd * s_m, self.Ki * s_m
+            self.Kr, self.Kw = self.Kr * s_I, self.Kw * s_I
         self.integral = np.zeros(3)
         self.yaw = 0.0
 
@@ -162,7 +170,8 @@ class DroneFlight:
             self.spin = np.array([names.index(j) for j in joints])
 
         self.armed, self.t, self.t_release = False, 0.0, None
-        self.omega = np.zeros(n)
+        self.omega = np.zeros(n)        # 이번 step 에 적용한 ω
+        self.omega_cmd = np.zeros(n)    # 제어기가 낸 ω (다음 step 에 적용)
         self.forces = np.zeros(n)
         self.prop_cmd = np.zeros(n)
         self.u1, self.tau = 0.0, np.zeros(3)
@@ -203,7 +212,7 @@ class DroneFlight:
         self.t, self.t_release, self.armed = 0.0, None, True
 
     def release(self):
-        """모터 정지 (ω = 0)."""
+        """모터 정지 (ω = 0). 한 step 지연 때문에 바로 다음 step 은 지난 ω 가 적용되고 그다음부터 0 (Pegasus 와 같은 순서)."""
         self.armed = False
         self.t_release = self.t
 
@@ -250,13 +259,8 @@ class DroneFlight:
         R = quat_to_R(q)
         v, w = (x.numpy().reshape(-1) for x in self.body.get_velocities())
         rp, rq = (x.numpy() for x in self.rotors.get_world_poses())
-        if self.armed:
-            ref = self.ref(self.t)
-            self.u1, self.tau = self.ctrl.update(dt, p, v, R, w, ref)
-            self.omega = self.allocate(self.u1, self.tau, (rp - p) @ R)
-        else:
-            self.u1, self.tau = 0.0, np.zeros(3)
-            self.omega = np.zeros(len(self.dir))
+        # Pegasus 순서: 지난 step 에 제어기가 낸 ω 를 먼저 적용 (한 step 지연) → 그다음 제어기 갱신
+        self.omega = self.omega_cmd
         self.forces = self.k * self.omega ** 2
         if self.forces.any():
             f_world = np.array([F * quat_to_R(qq)[:, 2] for F, qq in zip(self.forces, rq)])
@@ -270,6 +274,12 @@ class DroneFlight:
                            np.where(self.forces > 0, self.fc["prop_idle_speed"], 0.0))
             self.prop_cmd = spd * self.dir
             self.art.set_dof_velocities(self.prop_cmd.reshape(1, -1), dof_indices=self.spin)
+        if self.armed:
+            self.u1, self.tau = self.ctrl.update(dt, p, v, R, w, self.ref(self.t))
+            self.omega_cmd = self.allocate(self.u1, self.tau, (rp - p) @ R)
+        else:
+            self.u1, self.tau = 0.0, np.zeros(3)
+            self.omega_cmd = np.zeros(len(self.dir))
 
     def prop_velocities(self):
         if self.spin is None:

@@ -155,8 +155,10 @@ def prop_check(f, log, t0, why):
 def tests(cfg, info):
     f = fl.DroneFlight(cfg, info, mode="static", target=START)
     R.log(f"PhysX 질량 {f.mass:.4f} kg, 관성 대각 (kg·m², 전체 무게중심 둘레) {np.round(np.diag(f.inertia), 6).tolist()}")
-    R.log(f"게인 Kp {f.ctrl.Kp:.3f}, Kd {f.ctrl.Kd:.3f}, Ki {f.ctrl.Ki:.3f}, Kr {np.round(f.ctrl.Kr, 5).tolist()}, "
-          f"Kw {np.round(f.ctrl.Kw, 5).tolist()}")
+    sc = "기체 비율로 환산" if cfg["flight"]["controller"]["scale_to_airframe"] else "그대로"
+    R.log(f"게인 (Pegasus 값 {sc}) Kp {np.round(f.ctrl.Kp, 3).tolist()}, Kd {np.round(f.ctrl.Kd, 3).tolist()}, "
+          f"Ki {np.round(f.ctrl.Ki, 3).tolist()}, Kr {np.round(f.ctrl.Kr, 4).tolist()}, Kw {np.round(f.ctrl.Kw, 4).tolist()}, "
+          f"Kw·dt/I {np.round(f.ctrl.Kw * ts.PHYSICS_DT / np.diag(f.inertia), 3).tolist()}")
     R.log(f"호버 로터 각속도 (계산) {f.hover_omega():.1f} rad/s, 최대 {f.w_max:.0f}. 프로펠러 표시 {'켬' if f.spin is not None else '끔'}")
     f.start()
     f.arm()
