@@ -552,7 +552,12 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - `--check` (10 s): 로봇 홈 자세 편차 최대 0.033°, 드론 목표와 거리 2.7 mm (static) / 3.2 mm (hover, prop-spin on),
   카메라 두 대 영상 정상 (밝기 평균 188 / 211, 표준편차 11 / 50). 영상 PNG 는 `isaacsim/reports/drone_scene_<시각>/`
   - 홈 자세에서는 그리퍼가 아래를 향해 손목 카메라에 테이블만 보임 (정상)
-- 실행: GUI `drone_scene.py [--mode hover] [--prop-spin on] [--drone-pos x y z]` (손목·third view 카메라 창 같이), 점검 `--headless --check`.
+- **팔 시작 자세 `--init-pose q1..q6` [rad]** (기본 drive 설정 `home_pose` [0, −π/2, π/2, −π/2, −π/2, 0], 그리퍼는 항상 완전 열림으로 시작).
+  관절 한계 밖이면 에러. `--check` 의 자세 유지는 이 자세 기준 (팔이 테이블·드론·받침대에 닿으면 편차로 드러남)
+  - 그리퍼가 +z 를 보고 기본 위치 드론 바로 아래 21 cm: `--init-pose -0.1888 -0.7854 0.9599 1.3963 -1.5708 0.1888`
+    (FK 탐색, TCP (0.602, 0, 1.291), wrist_3 +0.1888 로 손가락 닫는 방향을 드론 폭(y) 방향에 맞춤) → `--check` 3/3,
+    **손목 카메라에 드론 아랫면이 화면 가득 보임** (화면 오른쪽으로 치우침 = 1-7 렌즈 32.5 mm 옆 문제)
+- 실행: GUI `drone_scene.py [--mode hover] [--prop-spin on] [--drone-pos x y z] [--init-pose …]` (손목·third view 카메라 창 같이), 점검 `--headless --check`.
   `--mode trajectory`, `--base kinematic` 은 미구현 에러
 
 **작업**

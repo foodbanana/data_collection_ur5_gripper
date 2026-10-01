@@ -14,6 +14,9 @@
 #   점검: ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --headless --check
 #         (CHECK_SEC 동안 돌린 뒤 로봇 자세 유지·드론 비행·카메라 영상 확인, 영상 PNG 와 리포트를 isaacsim/reports/ 에)
 #   인자: --robot-config --scene-config --drone-config --drone-pos x y z --mode static|hover --seed --prop-spin on|off --base fixed
+#         --init-pose q1..q6 (팔 6 관절 시작 각도 [rad], 기본 drive 설정 home_pose. 그리퍼는 항상 완전 열림으로 시작)
+#   예: 그리퍼가 +z 를 보고 드론(기본 위치) 바로 아래 약 21 cm (손목 카메라로 드론이 보이는지 확인)
+#         --init-pose -0.1888 -0.7854 0.9599 1.3963 -1.5708 0.1888
 #   미구현: --mode trajectory, --base kinematic (8단계) → 에러로 중단
 # =============================================================
 
@@ -41,6 +44,8 @@ parser.add_argument("--mode", default="static", choices=("static", "hover", "tra
 parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed")
 parser.add_argument("--prop-spin", choices=("on", "off"), default="off", help="프로펠러를 보여 주기용으로 돌림")
 parser.add_argument("--base", default="fixed", choices=BASE_CHOICES, help="로봇 베이스 (kinematic 은 8단계, 미구현)")
+parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q",
+                    help="팔 6 관절 시작 각도 [rad] (shoulder_pan … wrist_3). 기본 drive 설정 home_pose. 그리퍼는 항상 열림")
 parser.add_argument("--check", action="store_true", help="점검: 로봇 자세 유지·드론 비행·카메라 영상 확인 후 종료")
 parser.add_argument("--realtime", action="store_true", help="--check 도 실제 시간 속도로 (GUI 는 항상 실제 시간)")
 parser.add_argument("--report-dir", default=ts.REPORT_DIR)
@@ -170,8 +175,9 @@ class Scene:
 
 
 def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_pos=None, mode="static", seed=0,
-                prop_spin=False, base="fixed"):
-    """씬을 만들고 재생까지 한다. 로봇은 홈 자세, 드론은 drone_pos 에서 비행 시작. Scene 을 돌려준다."""
+                prop_spin=False, base="fixed", init_pose=None):
+    """씬을 만들고 재생까지 한다. 로봇은 init_pose (기본 drive 설정 home_pose, 그리퍼 열림), 드론은 drone_pos 에서 비행 시작.
+    Scene 을 돌려준다."""
     if base not in BASE_CHOICES:
         raise ValueError(f"base 는 {BASE_CHOICES} 중 하나: {base}")
     if base == "kinematic":
@@ -206,7 +212,15 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     s.drive.apply()
     s.drive.start()
     s.home = np.asarray(s.drive_cfg["home_pose"], dtype=float)
-    s.drive.reset_pose(s.home)
+    s.init_pose = s.home.copy() if init_pose is None else np.asarray(init_pose, dtype=float)
+    if s.init_pose.shape != (len(ts.ARM_JOINTS),):
+        raise ValueError(f"init_pose 는 팔 {len(ts.ARM_JOINTS)} 관절 값: {init_pose}")
+    lo, hi = (x.numpy()[0][s.drive.arm_i] for x in s.robot.get_dof_limits())
+    bad = [f"{n} {q:+.4f} (한계 {a:+.4f} ~ {b:+.4f})" for n, q, a, b in zip(ts.ARM_JOINTS, s.init_pose, lo, hi)
+           if not a <= q <= b]
+    if bad:
+        raise ValueError("init_pose 가 관절 한계 밖: " + ", ".join(bad))
+    s.drive.reset_pose(s.init_pose, gripper=0.0)   # 그리퍼는 항상 완전 열림으로 시작
     s.flight = fl.DroneFlight(s.drone_cfg, s.drone_info, mode=mode, seed=seed, target=s.drone_pos)
     s.flight.start()
     s.flight.arm()
@@ -265,6 +279,7 @@ def check(s):
     log(f"drone_scene --check  {datetime.datetime.now().isoformat(timespec='seconds')}")
     log(f"로봇 설정 {s.robot_cfg['path']}, 드론 설정 {s.drone_cfg['path']}, 드론 위치 {s.drone_pos.tolist()}, "
         f"모드 {s.flight.ref.mode}, prop_spin {args.prop_spin}")
+    log(f"팔 시작 자세 [rad] {np.round(s.init_pose, 4).tolist()}" + (" (home_pose)" if np.allclose(s.init_pose, s.home) else ""))
     log(f"third view 카메라: 렌즈 {s.tv_cfg['position']} → {s.tv_cfg['look_at']}, 받침대 높이 {s.mount_h * 1000:.0f} mm, "
         f"prim {s.third_cam}")
     sensors = camera_sensors(s)
@@ -279,9 +294,10 @@ def check(s):
     run(s, CHECK_SEC, realtime=args.realtime, on_step=rec)
     results = []
     half = [r for r in rows if r[0] >= CHECK_SEC / 2]
-    dev = max(float(np.degrees(np.abs(r[1] - s.home)).max()) for r in half)
-    log(f"[1] 로봇 홈 자세 유지 (뒤 {CHECK_SEC / 2:.0f} s): 팔 관절 최대 편차 {dev:.4f}°")
-    results.append(("로봇 홈 자세 유지", dev <= CRIT["arm_dev_deg"]))
+    dev = max(float(np.degrees(np.abs(r[1] - s.init_pose)).max()) for r in half)
+    log(f"[1] 로봇 시작 자세 유지 (뒤 {CHECK_SEC / 2:.0f} s): 팔 관절 최대 편차 {dev:.4f}° "
+        f"(크면 팔이 테이블·드론·받침대에 닿았거나 자세를 버티지 못함)")
+    results.append(("로봇 자세 유지", dev <= CRIT["arm_dev_deg"]))
     err = np.linalg.norm(rows[-1][2] - s.flight.ref(s.flight.t)[0]) * 1000
     tilt = max(r[3] for r in half)
     log(f"[2] 드론 비행 ({s.flight.ref.mode}): {CHECK_SEC:.0f} s 뒤 목표와 거리 {err:.2f} mm, 뒤 절반 기울기 최대 {tilt:.2f}°, "
@@ -321,7 +337,7 @@ def view(s):
         w, h = (int(x) for x in cfg["resolution"])
         win = create_viewport_window(title, width=w, height=h, camera_path=Sdf.Path(path))
         win.viewport_api.resolution = (w, h)
-    print(f"[view] 드론 {s.flight.ref.mode} 비행, 로봇 홈 자세. 'Wrist camera'·'Third view camera' 창. 창을 닫으면 종료", flush=True)
+    print(f"[view] 드론 {s.flight.ref.mode} 비행, 로봇 시작 자세 {np.round(s.init_pose, 4).tolist()}. 'Wrist camera'·'Third view camera' 창. 창을 닫으면 종료", flush=True)
     wall0, sim0 = time.monotonic(), s.flight.t
     while simulation_app.is_running():
         step(s)
@@ -334,7 +350,7 @@ if __name__ == "__main__":
     ok = False
     try:
         scene = build_scene(args.robot_config, args.scene_config, args.drone_config, args.drone_pos, args.mode, args.seed,
-                            args.prop_spin == "on", args.base)
+                            args.prop_spin == "on", args.base, args.init_pose)
         if args.check:
             ok = check(scene)
         elif args.headless:
