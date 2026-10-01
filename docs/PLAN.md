@@ -476,7 +476,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **2단계 1번 작업 순서 (데모 드론)**
 - 2-1 드론 에셋 (Iris 덮어쓰기, 대안 간이 드론)과 `check_drone.py` 점검
-- 2-2 공중 유지 (몸체에 중력 보상 + PD 힘·토크, `static`/`hover`, `release()` = 모터 정지)
+- 2-2 공중 유지 (Pegasus 방식: 로터 4 개 추력 + 기하 제어기, `static`/`hover`, `release()` = 모터 정지, 프로펠러 회전 `--prop-spin`)
 - 2-3 씬 스크립트 `drone_scene.py` (테이블·로봇·조명·손목/third view 카메라·드론, 인자 `--drone-config --drone-pos --mode --seed --base --headless --realtime`)
 - 2-4 스크립트 파지 데모(차분 IK, 아래에서 위로 접근) + 자동 판정 `approach → grasped → held → placed`, 실패 케이스(헛잡기·빗나감·떨어뜨림)도 판정 확인
 - 2-5 0.8 kg 들기·이동·내려놓기 미끄러짐 기록
@@ -491,6 +491,42 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 참고 (폐기한 Quadcopter 시험): 관절 한계 0/0 고정은 착지 충격에 0.79° 움직임 → 원래 관절 비활성화 + FixedJoint 로 고정 (Iris 도 같은 방식).
   TCP 좌표계 충돌 형상 범위: 손목 카메라 공구 축에서 +45~70 mm (z −112~−87 mm), 반대쪽 최대 wrist_3 43 mm, 손가락 폭 ±13 mm,
   완전 열림 손가락 안쪽 면 ±53.5 mm
+
+**2-2 결과 (2026-10-01)** — 비행 `isaacsim/scripts/drone_flight.py` (`DroneFlight`), 설정 `drone_iris.yaml` 의 `flight`, 시험 `isaacsim/scripts/check_flight.py` → **4/4 PASS** (프로펠러 회전 끔·켬 둘 다)
+- **Pegasus Simulator 방식** (6.0.1 포크 코드 확인): 제어기 → 로터 4 개 목표 ω → 이차 추력 Fᵢ = k·ωᵢ² 을 각 로터 강체 z 축으로,
+  반토크 Σ c·ωᵢ²·dirᵢ·선형 공기저항을 body 에 (매 physics step, PHYSICS_PRE_STEP). 추력 모델 값은 Pegasus Iris 기본값
+  (k 8.55e-6, c 1e-6, ω 최대 1100 rad/s, 공기저항 [0.5, 0.3, 0])
+  - Pegasus PX4 예제는 PX4 SITL 이 MAVLink 로 보내는 모터 출력을 ω 로 씀. 우리는 지금 Python 예제(NonlinearController)와 같은
+    **기하 제어기**를 쓰고, 2단계 2번에서 제어기만 PX4 로 바꾼다 (로터 추력 인터페이스 그대로)
+  - 게인: Pegasus Iris 값(1.5 kg, Ixx 0.029: Kp 10, Kd 8.5, Ki 1.5, Kr 3.5, Kw 0.5)을 질량·관성으로 정규화해 옮김
+    (위치 ω 2.58·ζ 1.10·ki 1.0, 자세 ω 11·ζ 0.79). PhysX 질량·관성(전체 무게중심 둘레, 평행축 포함)을 읽어 계산 → 드론을 바꿔도 같은 응답
+  - 모드: `static`, `hover` (목표 + 축별 사인파 2 개 합, 진폭 [20, 20, 10] mm, 0.2~0.5 Hz, seed 기록), `trajectory` 는 미구현 에러
+  - `release()` = 모터 정지 (ω 0). 공기저항은 계속
+- **프로펠러 회전 (보여 주기용, `--prop-spin on|off`, 기본 off)**: Pegasus `handle_propeller_visual` 과 같음 — 실제 ω 와 무관하게
+  로터 추력 ≥ 0.1 N 이면 100 rad/s, 0~0.1 N 이면 5 rad/s, 0 이면 정지 (방향 = rot_dir), 관절 속도를 매 step 덮어씀. 추력과는 분리.
+  on 이면 프로펠러 관절을 FixedJoint 로 바꾸지 않음 (DOF 4)
+- 시험 결과 (off / on):
+  - F1 정지 호버 30 s (처음 20 s 제외): 오차 최대 0.49 / 0.56 mm, 로터 ω 평균이 계산 호버 값 479 rad/s 와 0.03%
+  - F2 계단 +5 cm: overshoot x 9.9 / 10.8%, z 9.5%, 2 mm 안 정착 9~11 s, 12 s 뒤 오차 1.0~1.3 mm, x 이동 중 기울기 1.4° (실물처럼 기울어 이동)
+  - F3 hover 20 s: 추적 오차 RMS 1.18 / 1.09 mm (최대 2.1 mm), 기울기 최대 0.51°
+  - F4 모터 정지: 수직 가속도 −9.810 m/s² (= −g), ω 0, 프로펠러 관절 속도 0.004 rad/s 로 멈춤
+  - on 일 때 비행 중 프로펠러 관절 속도 ±99.95 rad/s (명령 ±100)
+- **알아 둘 특성 (Pegasus PID)**: 자세 적분항이 없어 무게중심이 0.14 mm 만 치우쳐도 몸체가 약 0.16° 기운 채 버티고 옆으로 약 4 mm 밀림 →
+  위치 적분(Ki/Kp ≈ 0.15 /s)이 수십 초에 걸쳐 없앰. 계단 목표에서는 적분이 쌓여 약 10% overshoot 후 느리게 돌아옴.
+  static·hover 에는 계단이 없어 영향 작음 (hover 추적 RMS < 1 mm). 시작 직후(재생 ~ 제어 시작 사이) 약 7 mm 처짐
+- **시간 주의**: 6.1.0 에서 `simulation_app.update()` 한 번에 physics 가 2 step (1/60 s) 진행됨 → 시간은 콜백이 센 sim 시간으로 잴 것
+  (grasp_tests·tune_drives 는 이미 그렇게 함)
+- **Pegasus 예제 코드와 비교 (2026-10-01, `nonlinear_controller.py`·`multirotor.py`·`vehicle.py`·`linear_drag.py`·`quadratic_thrust_curve.py`)**
+  - 같음: 추력 k·ω² 를 로터 강체 z 축으로(Pegasus 는 로터 local frame 에 걸고 우리는 같은 힘을 world 로 변환), 반토크 Σ c·ω²·dir,
+    공기저항 −D·v_body, 할당 행렬(로터 위치를 body 좌표계로, pinv, 음수 0, 최대 ω 넘으면 비율 유지 축소), 제어 식
+    (F_des, u₁ = F_des·Z_B, R_des, e_R = ½ vee(R_desᵀR − RᵀR_des), 목표 각속도 = 목표 jerk 투영, τ = −Kr·e_R − Kw·e_ω), 적분 ∫e_p dt,
+    프로펠러 표시 (0.1 N 기준 100 / 5 / 0 rad/s, 관절 속도 덮어쓰기)
+  - 다름: 게인을 PhysX 질량·관성으로 계산 (Pegasus 는 m 1.5 고정, Kr·Kw 세 축 같음 → 우리는 축별 관성 비례),
+    제어기 출력을 같은 step 에 적용 (Pegasus 는 backend 를 vehicle.update 끝에 갱신 → 한 step 늦음),
+    physics 1/120 s (Pegasus 1/250 s), yaw 목표 = 시작 yaw 고정 (Pegasus 는 궤적 파일), IMU·GPS 등 센서 없음
+  - 목표 각속도(jerk 투영) 비교 hover RMS: 0 배 0.56 mm, Pegasus 식(+1) 1.20 mm, −1 배 1.73 mm → 부호는 Pegasus 가 맞고,
+    차이가 1 mm 미만이라 **Pegasus 식 그대로 유지**
+- GUI 보기: `check_flight.py --view [--mode hover|static] [--prop-spin on] [--release-after 8]` (실제 시간 속도, 비행 → 모터 정지 → 낙하)
 
 **작업**
 - 씬 구성을 GUI Action Graph 대신 **Python standalone 스크립트**로 작성 (씬 + ROS 2 OmniGraph 생성), `~/isaacsim/python.sh` 로 실행

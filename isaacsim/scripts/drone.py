@@ -92,8 +92,9 @@ def _lock_joint(stage, jp):
     jp.SetActive(False)
 
 
-def add_drone(stage, cfg, position, path=DRONE_PATH):
-    """드론을 path 에 넣고 덮어쓴다 (메모리 stage 에만). 재생 전에 호출. 정보 dict 를 돌려준다."""
+def add_drone(stage, cfg, position, path=DRONE_PATH, prop_spin=False):
+    """드론을 path 에 넣고 덮어쓴다 (메모리 stage 에만). 재생 전에 호출. 정보 dict 를 돌려준다.
+    prop_spin: True 면 flight.prop_joints 는 고정하지 않고 회전 관절로 둔다 (보여 주기용 프로펠러 회전, drone_flight)"""
     import isaacsim.core.experimental.utils.stage as stage_utils
     from isaacsim.core.experimental.prims import XformPrim
     from pxr import Gf, PhysxSchema, Usd, UsdPhysics
@@ -124,7 +125,17 @@ def add_drone(stage, cfg, position, path=DRONE_PATH):
                 if attr and attr.HasAuthoredValue():
                     attr.Set(Gf.Vec3f(0, 0, 0) if a.endswith("Inertia") else Gf.Quatf(0, 0, 0, 0))
 
+    spin = []
+    if prop_spin:
+        if "flight" not in cfg or not cfg["flight"].get("prop_joints"):
+            raise KeyError(f"{cfg['path']}: prop_spin 을 켜려면 flight.prop_joints 가 필요")
+        spin = list(cfg["flight"]["prop_joints"])
+        for j in spin:
+            if not stage.GetPrimAtPath(_sub(path, j)).IsA(UsdPhysics.RevoluteJoint):
+                raise RuntimeError(f"프로펠러 관절이 revolute 가 아님: {_sub(path, j)}")
     for j in cfg["lock_joints"]:
+        if j in spin:
+            continue
         jp = stage.GetPrimAtPath(_sub(path, j))
         if not jp.IsValid() or not jp.IsA(UsdPhysics.Joint):
             raise RuntimeError(f"고정할 관절이 없음: {_sub(path, j)}")
@@ -150,7 +161,7 @@ def add_drone(stage, cfg, position, path=DRONE_PATH):
     xp.set_world_poses(positions=[list(map(float, position))])
     s = float(cfg["scale"])
     xp.set_local_scales([[s, s, s]])
-    return {"path": path, "body_path": bp, "bodies": bodies, "articulation": bool(roots)}
+    return {"path": path, "body_path": bp, "bodies": bodies, "articulation": bool(roots), "prop_spin": bool(spin)}
 
 
 def drone_frame(stage, path=DRONE_PATH):

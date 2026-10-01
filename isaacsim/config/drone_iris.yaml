@@ -24,7 +24,8 @@ link_masses:
   rotor2: 0.005
   rotor3: 0.005
 
-# 프로펠러 회전 관절 → FixedJoint (원래 관절 비활성화). 회전은 시각 효과뿐이라 데모에서는 고정
+# 프로펠러 회전 관절 → FixedJoint (원래 관절 비활성화). 프로펠러를 보여 주기용으로 돌릴 때(--prop-spin on)는
+#   flight.prop_joints 에 있는 관절은 고정하지 않는다
 lock_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
 
 zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 rad/s 등)를 0 으로
@@ -35,6 +36,34 @@ rest_tilt_max_deg: 5.0
 
 articulation:
   sleep_threshold: 0.0             # 공중에 떠 있는 동안 잠들지 않게
+
+# 비행 (Pegasus Simulator 방식, scripts/drone_flight.py, PLAN 2-2)
+#   제어기(지금은 기하 제어기, 나중에 PX4) → 로터 4 개 목표 각속도 ω → 추력 Fᵢ = k·ωᵢ² 을 각 로터 강체 z 축으로,
+#   반토크 Σ c·ωᵢ²·dirᵢ 와 선형 공기저항을 body 에. 모터 정지(release) = ω 0
+#   추력 모델 값은 Pegasus Iris 기본값 (QuadraticThrustCurve, LinearDrag) 그대로
+flight:
+  rotors: [rotor0, rotor1, rotor2, rotor3]     # 추력을 거는 강체 (최상위 prim 기준). 순서 = rot_dir 순서
+  rot_dir: [-1, -1, 1, 1]                      # 회전 방향 (Pegasus Iris: rotor0·1 과 rotor2·3 이 대각선 쌍)
+  rotor_constant: 8.54858e-6                   # k [N/(rad/s)²]
+  rolling_moment_coefficient: 1.0e-6           # c [N·m/(rad/s)²]
+  max_rotor_velocity: 1100.0                   # rad/s → 로터당 최대 약 10.3 N (0.8 kg 무게 7.8 N 의 5.3 배)
+  linear_drag: [0.50, 0.30, 0.0]               # body 좌표계 속도에 곱하는 계수 [N·s/m]
+  # 프로펠러 회전 (보여 주기용, Pegasus handle_propeller_visual 과 같음): 실제 ω 와 무관하게 로터 추력이
+  #   0.1 N 이상이면 visual_speed, 0 초과 0.1 N 미만이면 idle_speed, 0 이면 정지. 방향은 rot_dir
+  prop_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
+  prop_visual_speed: 100.0                     # rad/s
+  prop_idle_speed: 5.0                         # rad/s
+  # 기하 제어기 (Pegasus 예제 NonlinearController 와 같은 식). 게인은 Pegasus Iris 값(1.5 kg, Ixx 0.029)을
+  #   질량·관성으로 나눈 응답 특성으로 옮김 → Kp = m·ω², Kd = 2·ζ·m·ω, Ki = m·ki, Kr = I·ω², Kw = 2·ζ·I·ω (축별, I 는 PhysX 값)
+  #   Pegasus: Kp 10, Kd 8.5, Ki 1.5, Kr 3.5, Kw 0.5 → 위치 ω 2.58·ζ 1.10·ki 1.0, 자세 ω 11.0·ζ 0.79
+  controller:
+    position: {omega: 2.58, zeta: 1.10, ki: 1.0}
+    attitude: {omega: 11.0, zeta: 0.79}
+  # hover 모드: 목표 위치에 축별 사인파 합을 더함 (주파수·위상은 seed 로 뽑아 기록)
+  hover:
+    amplitude: [0.02, 0.02, 0.01]              # m
+    freq_range: [0.2, 0.5]                     # Hz
+    n_sines: 2                                 # 축마다 사인파 개수
 
 # 잡는 곳: 몸체 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근 (2-4 파지 시퀀스가 씀)
 grasp:
