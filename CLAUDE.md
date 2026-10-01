@@ -6,6 +6,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 전체 계획과 단계별 완료 기준: `docs/PLAN.md`
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
+드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, 식과 출처): `docs/drone_flight.md`
 
 ## 경로 규칙
 
