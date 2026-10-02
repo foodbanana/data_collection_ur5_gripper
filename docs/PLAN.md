@@ -616,6 +616,150 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - [x] 드론 위치·모드를 인자로 변경 가능 (`--drone-pos`, `--mode static|hover`, `--seed`)
 - [x] 파지 성공/실패가 자동 판정됨 (2-4 `grasp_judge.py`, 판정기 검증 6/6)
 
+### 2단계 2번: PX4 SITL 드론 (2026-10-02 계획)
+
+**목표**: 실제 PX4 펌웨어가 드론을 날리는 상태에서 **잡을 때의 움직임·떨림**을 재현한다.
+지금 기하 제어기는 정답 상태·잡음 없음·지연 없음·약한 위치 게인(5.3 N/m)이라 잡을 때 너무 조용함 (중앙 파지 시 1.4 mm 움직이고 멈춤).
+실물은 제어기가 그리퍼와 싸움 (속도·각속도 적분, 빠른 각속도 루프 + 딱딱한 구속, 추정 잡음, 모터 지연) → 떨림.
+기하 제어기는 비교 기준·빠른 시험용으로 남긴다 (`flight.controller: geometric | px4`).
+
+**결정 (2026-10-02 사용자)**: 실물 드론 제어기는 미정이지만 데모 → PX4. **시연은 실내** → GPS 없음,
+위치 정보 기본 = **Optical flow + 하향 거리 센서** (소비자 드론 실내 모드와 같은 원리). 모션캡처(외부 위치)는 비교용 옵션, 마커 + 드론 카메라는 나중에 같은 외부 위치 통로로
+- 이유: 그리퍼가 **아래에서** 올라오므로 하향 거리 센서가 바닥 대신 그리퍼를 재고(EKF 고도 급변 → 드론 상승), 흐름 카메라에 올라오는 팔이 보임 → 실물에서 잡을 때 드론이 움직이는 원인을 재현. 모션캡처로는 안 나옴
+
+**Pegasus 방식 확인 (livealive7/PegasusSimulator b1256ca, `px4_mavlink_backend.py`·`px4_launch_tool.py`·`sensors/*`)**
+- PX4-Autopilot **v1.16.0** (Ubuntu 24.04 시험), `make px4_sitl_default none`, `PX4_SIM_MODEL=gazebo-classic_iris`, 임시 rootfs 에서 `bin/px4 ROMFS/px4fmu_common -s rcS -i 0 -d` subprocess
+- pymavlink, TCP 4560 (sim = 서버), **lockstep**: 매 physics step (250 Hz) 지난 모터 명령 적용 → `HIL_ACTUATOR_CONTROLS` 올 때까지 대기 → `HIL_SENSOR`·`HIL_GPS` 전송 (시각 = sim μs), heartbeat 1 Hz
+- 모터 명령 ω = 1000·u + 100 rad/s (u 0~1, arm 아니면 0). 우리 호버 ω 479 → u ≈ 0.38. **모터 반응 지연 없음**
+- 센서 250 Hz: IMU (가속도 = 속도 차분 − g → 그리퍼가 미는 힘도 잡힘), 기압, 지자기, GPS. 드론 명령 도구 없음 (QGroundControl 등 외부)
+- Pegasus 코드 문제: 자이로 bias 시간상수에 가속도계 값 사용, 가속도계 bias 미적용(randn 대신 rand), 기압 잡음 Box-Muller 에 randn, GPS 250 Hz·속도 잡음 꺼짐, 센서 값 한 step 늦음
+
+**작업 순서**
+- P-1 PX4 v1.16.0 `~/PX4-Autopilot` clone·빌드 (빌드용 Python 패키지는 venv). pymavlink 는 `isaacsim/.pydeps/` (`pip install --target`, git 제외, `~/isaacsim` 에 만들지 않음)
+- P-2 Pegasus 그대로 재현 (기준선, 250 Hz·GPS·모터 지연 없음·gazebo-classic_iris): `px4_bridge.py`·`px4_sensors.py` (BSD-3 출처 표기). 연결·lockstep·EKF2·이륙·호버
+- P-3 우리 조건: physics 120 Hz 부터 (불안정하면 240 Hz + 로봇 drive 회귀 시험), PX4 파라미터 `isaacsim/config/px4/` (0.75 배 로터 위치 `CA_ROTORx_PX/PY`, 호버 추력, 게인,
+  flow·거리 센서 융합 `EKF2_OF_CTRL`·`EKF2_RNG_CTRL`·`EKF2_HGT_REF`, GPS 끔), `drone_iris.yaml` 에 `flight.controller`·px4 절
+- P-4 사실성: 모터 1차 지연 (올림 0.0125 s, 내림 0.025 s, PX4 Gazebo 기본값, 켬·끔), Pegasus 센서 버그 수정 (문서에 표시),
+  **거리 센서 = PhysX raycast** (팔·그리퍼에 맞음), **flow = 몸체 속도 ÷ 맞은 곳 거리 − 각속도** (맞은 물체가 움직이면 그 속도 반영, 잡음·품질), 모션캡처 옵션 (주기·지연·잡음)
+- P-5 드론 명령 `drone_cmd.py` (pymavlink): arm, takeoff, goto x y z [yaw], hold, land, kill (world 좌표 m). 씬 안 자동 시퀀스·다른 터미널 공용. 시작 = 테이블 옆 바닥 이륙 → 드론 위치로
+- P-6 `check_px4.py`: X1 이륙 → 목표 5 cm 안 30 s 이내, X2 호버 30 s 흔들림, X3 계단 +10 cm, X4 공중 kill → −g, X5 반복 실행 차이, X6 60 s 표류 (flow)
+- P-7 `--flight px4` 로 파지: 잡은 뒤 kill 까지 대기 0.5 / 2 / 5 s, 떨림 측정 (드론 위치·자세 진폭·주파수, 접촉력, 모터 명령, 거리 센서·EKF 고도),
+  기하 제어기 / PX4 (flow, mocap) / 모터 지연 켬·끔 비교, 6 케이스 다시
+- P-8 `docs/drone_flight.md` PX4 절, PLAN 결과, CLAUDE.md
+
+**P-1 결과 (2026-10-02)** — PX4 v1.16.0 `~/PX4-Autopilot` (shallow clone + submodule), 빌드용 venv `~/PX4-Autopilot/.venv` (Tools/setup/requirements.txt), sudo 불필요
+- shallow clone 이라 NuttX 태그가 없어 버전 헤더 생성이 멈춤 → `platforms/nuttx/NuttX/nuttx` 에 로컬 태그 `nuttx-11.0.0` (SITL 영향 없음)
+- `make px4_sitl_default none` 은 빌드 후 PX4 셸까지 띄움 (빌드만 확인하면 끌 것). 단독 실행 시 `Waiting for simulator to accept connection on TCP port 4560`
+- pymavlink 2.4.50 → `isaacsim/.pydeps/` (git 제외). airframe 에 `1010_gazebo-classic_iris_opt_flow` 있음 (P-3 참고)
+
+**P-2 결과 (2026-10-02)** — `px4_bridge.py` (PX4Launcher·PX4Bridge), `px4_sensors.py` (pegasus_compat), `pegasus_geo_mag.py` (원본 복사), `drone_cmd.py` (PX4Commander),
+`drone_flight.py` 에 `flight.backend: geometric | px4`, 설정 `px4_sitl.yaml`·`drone_iris_pegasus.yaml` (Pegasus Iris 원래 크기 1.52 kg), 시험 `check_px4.py` → **5/5 PASS** (250 Hz, GPS, compat)
+- 연결: lockstep 시작 sim 0.6 s, Offboard + arm 요청 1.2 s 뒤 armed. 실시간 비율 1.06 (headless). PX4 로그(.ulg)·콘솔은 `isaacsim/reports/px4_<시각>/`
+- **Pegasus Iris 는 그대로 쓰면 모터 명령이 17.4 Hz 로 0 ↔ 0.9 포화 진동** (ω 표준편차 355 rad/s, 그래도 날고 기울기 1.4°):
+  `iris.usd` body 관성이 비어 있어(diagonalInertia 0) PhysX 가 충돌 형상으로 계산 → [0.0175, 0.0107, 0.0268] kg·m², PX4 Iris 파라미터가 맞춰진 Gazebo Iris
+  [0.029, 0.029, 0.055] 보다 1.7~2.7 배 작음 → 각속도 루프가 사실상 너무 셈. **관성을 Gazebo 값으로 주면 ω 표준편차 1.3 rad/s, 기울기 0.19°**
+  → P-3 (0.75 배, 관성 6~9 배 작음) 은 PX4 각속도 게인을 기체 관성에 맞춰야 함 (기하 제어기 게인 환산과 같은 문제)
+- GPS 호버: 실제 위치 − 목표 RMS 48~55 mm (대부분 z −40 mm = EKF 고도 추정 오차, 추정 − 실제 RMS 43~47 mm), 계단 +10 cm overshoot 14~39% (실행마다 다름)
+- kill: disarm 까지 32 ms, 그 뒤 수직 가속도 −9.810 m/s², ω 0
+- 로터 순서·위치: USD rotor0~3 = PX4 CA_ROTOR0~3 (앞-오른쪽, 뒤-왼쪽, 앞-왼쪽, 뒤-오른쪽), 위치 차이 1~4 cm
+
+**P-3 결과 (2026-10-02)** — 0.75 배 Iris 0.8 kg (`drone_iris.yaml` 의 `px4` 절, `--flight`/backend 는 아직 geometric 기본), `check_px4.py --drone-config isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120` → **5/5 PASS**
+- **각속도 게인 환산** (`px4.rate_gain_scaling`, `drone_flight._px4_airframe_params`): `MC_{ROLL,PITCH,YAW}RATE_K = (I / I_ref) ÷ (팔 / 팔_ref)`,
+  기준 = P-2 에서 안정 확인한 Gazebo Iris 관성 + Pegasus 추력·로터 위치 → roll 0.246, pitch 0.148, yaw 0.148. `CA_ROTORi_PX/PY` 는 sim 로터 위치 (0.75 배)
+  → 모터 ω 표준편차 0.5 rad/s (진동 없음), 호버 기울기 최대 0.2°
+- **physics 120 Hz 그대로 됨** (250 Hz 와 같은 안정성, 실시간 비율 1.5) → 로봇 drive 재튜닝 불필요
+- **실내 위치 = optical flow + 하향 거리 센서** (`px4_sitl.yaml` `position_source: flow`, `--position-source gps|flow`):
+  거리 = PhysX raycast (드론 자기 충돌 형상 제외), flow = 몸체 FRD pixel_flow 각속도 `ω_xy + (−v_y, v_x)/거리` 적분 (50 Hz, 잡음 0.02 rad/s 가정), GPS 끔
+  - **부호 주의**: PX4 `EKF2.cpp` 가 pixel_flow·delta_angle 부호를 뒤집어 받음. 처음 `(v_y, −v_x)` 로 넣어 EKF 발산 → 고침 (추정/실제 속도 기울기 0.9~1.06)
+  - **고도 기준 = 기압계 + 거리 센서 조건부** (`EKF2_HGT_REF 0`, `EKF2_RNG_CTRL 1`, PX4 opt_flow airframe 과 같음).
+    고도 기준 = 거리 센서(`HGT_REF 2`)는 PX4 v1.16 에서 terrain 추정이 시작되지 않아 flow 융합 시작 조건을 못 넘음 → flow 미사용 → 수평 위치 무효 → failsafe (ulog 확인)
+  - PX4 local 원점을 arm 직전에 world 에 맞춤 (실제 − 추정, 실물에서 이륙 전 위치 등록과 같음). 이륙 판정은 PX4 추정 위치 기준
+  - 실물 flow 드론 같은 성질이 나옴: **이륙 중 11~23 cm 수평 표류** (바닥에서는 flow 최소 높이 0.08 m 아래라 무효 + PX4 지면 효과 보정 구간 → 그 사이 관성 추정),
+    그 뒤 위치 유지 (추정은 목표 ±1 cm, 실제는 밀린 자리에서 30 s 에 수 cm). **실제 고도가 기압 잡음으로 30 s 에 약 15 cm 천천히 표류** (추정은 목표에 고정)
+  - 파지는 실제 드론 위치(sim 정답 = 실물의 인식 결과)를 향해 가므로 표류 자체는 문제 아님. 접근 중 표류 속도가 중요 (P-7)
+
+**P-4 결과 (2026-10-02)** — 같은 명령 → **5/5 PASS** (비교 옵션 `--motor-lag on|off`, `--sensor-compat on|off`, `--px4-param NAME=VALUE`)
+- **모터 1차 지연** (`px4.motor_dynamics`, PX4 Gazebo motor_model τ 올림 0.0125 s / 내림 0.025 s, Pegasus 에는 없음): 호버에는 영향 거의 없음.
+  kill 뒤 모터가 지수적으로 감속 (125 ms = 5τ 뒤 −9.810 m/s² 낙하) → X4 판정을 감속 뒤로
+- **센서 버그 수정** (`pegasus_compat: false` 기본, 기준선 `drone_iris_pegasus.yaml` 만 true): 가속도계 bias 가 실물처럼 들어가자
+  **실제 고도가 40 s 에 1 m 넘게 표류** — PX4 기본 `EKF2_TERR_NOISE 5.0` 에서는 거리 센서 정보를 terrain 상태가 다 흡수하고 기압(EKF2_BARO_NOISE 3.5 m)은 약해서
+  수직 속도 오차(0.3 m/s)를 아무도 못 바로잡음 (ulog: 기압·거리 혁신 ≈ 0, 추정 vz = 목표 vz)
+  → **실내 평평한 바닥 `EKF2_TERR_NOISE 0.1`** (0.5 는 실제 오차 RMS 124 mm): 이륙 표류 3 mm, 호버 실제 − 목표 RMS 67 mm (고도 +48 mm 치우침, 기압 기준),
+  추정 − 실제 RMS 45 mm, 기울기 0.26°, 계단 +10 cm overshoot 16% / 2 cm 안 2.1 s
+  - 이 값은 그리퍼가 아래로 들어올 때의 반응도 바꿈 (작으면 "드론이 내려갔다" 쪽) → P-7 에서 기본값 5.0 과 비교
+- 기준선 재현은 `--drone-config isaacsim/config/drone_iris_pegasus.yaml --position-source gps --physics-hz 250` (기본 위치 방식이 flow 로 바뀜)
+
+**P-7 진행 (2026-10-02)** — `drone_scene.build_scene(flight=, position_source=)` (px4: 테이블 위 이륙 지점 (1.2, 0) → 수직 상승 → 수평 이동 → 호버 5 s),
+`grasp_demo.py --flight px4 [--position-source] [--kill-delay] [--px4-param]`, 잡은 뒤 kill 까지 `S3_hold` (설정 `kill_delay` 1.0 s) 떨림 지표 (`hold_metrics`)
+- PX4 프로세스 정리: Isaac Sim `close()` 는 빠른 종료라 atexit 이 안 돌아 PX4 가 남음 → `PR_SET_PDEATHSIG` (부모가 죽으면 커널이 PX4 종료) + 시작 전 같은 instance 검사
+- **flow + 하향 거리 센서에서는 팔이 드론 아래로 오면 드론이 위로 도망감** (success 케이스, 접근 전 단계에서 실패):
+  seed 자세(그리퍼가 드론 21 cm 아래)로 가면 거리 센서가 테이블(0.76 m) 대신 팔(0.66 m)을 잼 → PX4 가 "내려갔다"로 보고 상승 →
+  팔이 따라 올라가면 계속 팔을 잼 → 드론 3.2 m 까지 상승 (`EKF2_TERR_NOISE 0.1`), PX4 기본 5.0 에서도 2.2 m 까지 상승.
+  `EKF2_RNG_CTRL 0` (거리 센서 끔) 은 flow 가 terrain 을 못 써서 수평 위치를 잃고 failsafe 착륙
+  - 실물과 같은 현상: 하향 거리·비전 센서를 쓰는 드론(DJI 등) 아래에 손을 넣으면 드론이 올라감 (손으로 잡을 때 하향 센서를 끄라고 안내하는 이유)
+  - **결정 (2026-10-02 사용자): A — 실내 위치는 모션캡처(외부 위치)로 얻을 수 있다고 가정**. flow 는 옵션(`--position-source flow`)으로 남기고 이 문제를 기록
+  - **[기록] 실물 시연 위험**: 실물 드론이 하향 거리·비전 센서로 위치를 잡으면 팔이 아래로 오는 순간 같은 일이 생길 수 있음.
+    대책 후보: 모션캡처 등 아래를 보지 않는 위치 정보, 접근 직전 하향 센서 고도 보조 끄기(기압 고도 표류 감수), 하향 센서를 피하는 접근 경로(옆에서 들어오기)
+- **모션캡처 (`position_source: mocap`, 기본)**: world = 모션캡처 좌표, body 위치·자세 + 잡음(1 mm, 0.3°), 100 Hz, 지연 20 ms → `VISION_POSITION_ESTIMATE`.
+  PX4: `EKF2_EV_CTRL 11`(수평·수직 위치 + yaw), `EKF2_HGT_REF 3`, `EKF2_EV_NOISE_MD 1`, `EKF2_EVP_NOISE 0.01`, `EKF2_EVA_NOISE 0.05`, `EKF2_EV_DELAY 20`,
+  `EKF2_MAG_TYPE 5`, GPS·flow·거리 끔 → `check_px4` **5/5**: 호버 실제 − 목표 RMS 19 mm (축별 표준편차 8~10 mm, PX4 위치 유지의 느린 흔들림),
+  추정 − 실제 RMS 6 mm, 계단 overshoot 24%
+- **접근 중 드론 따라가기** (`grasp_demo.yaml` `approach_track_until` 0.03 m): PX4 호버는 ±1~2 cm 로 천천히 움직여 S2 목표를 시작 순간으로 고정하면
+  5 s 접근 중 18~22 mm 어긋나 손가락 끝(r2)이 몸체에 30 N 으로 부딪힘 → 잡는 높이 3 cm 전까지는 드론을 따라가고 그 뒤 고정 (닿은 뒤 쫓아가지 않게)
+- PX4 + 모션캡처 success → held (kill_delay 1 s). 처음 측정한 "모터 ω 흔들림 20~81 rad/s" 는 아래 가상 IMU 오류 때문이라 무효 (아래 고친 뒤 표)
+
+**P-7 결과 (2026-10-02)** — PX4 + 모션캡처 `grasp_demo.py --headless --case all --flight px4` → **6/6 PASS** (success·offset_y·offset_x held, empty·miss no_grasp_empty, drop slip; 가상 IMU 고친 뒤 다시 6/6)
+- **[고침] 가상 IMU 속도 = 자세·위치 차분** (`px4.sensor_kinematics: pose_difference`, 기준선은 `physx_velocity`):
+  그리퍼에 잡혀 접촉이 걸리면 **PhysX 가 보고하는 드론 각속도가 실제 자세 변화와 다름** (잡힌 동안 보고 평균 29 °/s, 실제 자세 차분 0.5 °/s,
+  접촉 없을 때는 둘 다 0) → 이 값을 자이로로 보내 PX4 자세 추정이 1.5 s 에 15° 틀어짐 → 모션캡처 위치가 오차 검사에서 거부 → 추정 발산 →
+  모터 최대 포화 → 드론이 비틀려 그리퍼에서 빠짐 (kill 5 s, 처음에 PX4 적분 누적으로 잘못 해석했다가 ulog·sim 기록 비교로 확인).
+  실물 IMU 는 실제 움직임만 재므로 차분이 맞음. 고치기 전 PX4 비교 결과(모터 흔들림 수십 rad/s, 5 s 에 빠짐)는 무효
+- **잡은 채 모터를 켜 두는 시간(kill_delay)별 비교** (고친 뒤, success, `S3_hold` 구간, 2026-10-02):
+
+  | 제어기 | kill 까지 | 결과 | TCP 기준 드론 위치 흔들림 (ptp, mm) | 자세 변화 최대 | 모터 ω 흔들림 (std) | 모터 ω 끝−처음 (최대) | 손가락 힘 흔들림 (std) | 모터 정지 뒤 내려앉음 |
+  |---|---|---|---|---|---|---|---|---|
+  | PX4 | 0.5 s | held | 0.03 | 0.02° | 0.4 rad/s | 1 rad/s | 0.1 N | 0.8 mm |
+  | PX4 | 1 s | held | 0.4 | 0.2° | 1.9 | 7 | 0.8~1.4 N | 1.4 mm |
+  | PX4 | 2 s | held | 0.4 | 0.5° | 1.0 | 2 | 0.7~1.0 N | 1.3 mm |
+  | PX4 | 5 s | held | 0.6 | 0.5° | 2.7 | 17 | 0.5~1.0 N | 0.9 mm |
+  | PX4 | 10 s | held | 0.5 | 0.6° | 2.9 | 21 | 0.3~1.1 N | 0.8 mm |
+  | 기하 | 1 s | held | 0.03 | 0.02° | 0.7 | 3 | 0.3 N | 6.1 mm |
+  | 기하 | 5 s | held | 0.03 | 0.01° | 0.3 | 4 | 0.01 N | 5.5 mm |
+
+  (호버 중 모터 ω 흔들림 0.5 rad/s. 잡힌 동안 자세 차분 자이로 흔들림 0.4~3 °/s = 접촉 미세 진동)
+  - PX4 는 잡힌 뒤 **천천히** 적분이 쌓임 (10 s 에 로터 간 ±20 rad/s 벌어짐), 손가락 힘이 기하 제어기보다 3~100 배 흔들림 → 그리퍼와 약하게 싸움.
+    10 s 켜 둬도 놓치지 않음 (고치기 전 "1 s 안에 끄기" 결론은 철회)
+  - 모터 정지 뒤 내려앉음이 PX4 0.8~1.4 mm vs 기하 5.5~6.1 mm → **원인: 잡는 높이 차이** (최종으로 얹히는 높이는 둘 다 TCP 기준 −0.2~−1.1 mm 로 같음).
+    S2 목표를 고정(남은 높이 3 cm)한 뒤 닫기 시작까지 1.3 s 동안 기하 드론은 0.4 mm 움직였지만 PX4 드론은 호버 흔들림으로 z −7.9 mm·x −8.2 mm
+    → 기하는 계획 높이(아랫면 여유 2 mm, 손가락 뿌리보다 약 5 mm 위)에서 잡아 끈 뒤 6 mm 내려앉고, PX4 는 이미 얹히는 높이 근처에서 잡아
+    (닫으며 약 2 mm 들어 올림) 1 mm 만 내려앉음. PX4 에서는 잡는 높이·내려앉음이 실행마다 달라짐 (드론이 더 내려오면 닫기 전 손가락 뿌리가
+    아랫면에 닿을 수 있음 → 그러면 고정 높이를 줄이거나 높이만 계속 따라가기)
+  - sim 에 없는 실물 요소: 프로펠러 바람이 그리퍼·팔에 부딪힘, 기체·프로펠러 진동, 모션캡처 마커 가림, ESC 잡음 → 실물 떨림은 이보다 클 수 있음
+  - `pegasus_compat` 기준선(drone_iris_pegasus)은 비행 시험 전용이라 영향 없음. `check_px4` 는 접촉이 없어 두 방식 결과 같음 (고친 뒤 5/5, 호버 RMS 19.5 mm 로 같음)
+  - 지표는 GUI 업데이트 주기(약 60 Hz)로 기록 → 30 Hz 넘는 떨림은 안 보임 (모터 명령 전체는 PX4 ulog 에 있음)
+- PX4 + 모션캡처 6 케이스 (고친 뒤) → **6/6 PASS**
+
+**이륙 이탈과 안테나 충돌 (2026-10-02)**
+- PX4 이륙 때 앞으로 최대 200 mm 밀림 → 원인: Iris 메시 앞쪽 아래 부품(안테나 추정)이 다리 끝보다 13.5 mm(0.75 배: 10 mm) 아래 → 바닥에서 3.4° 숙여져 섬,
+  뜨는 순간 7° 까지 숙여지며 앞으로 가속. PX4 공식 Gazebo Iris 는 충돌이 상자(0.47 × 0.47 × 0.11 m)라 평평하게 섬 (`iris.stl` 분석: 다리 끝 −53.5 mm, 부품 −67 mm)
+- 안테나 충돌만 끄는 것을 시도했다가 **되돌림 (2026-10-02 사용자 결정: 안테나 있는 원래 모델 유지, 파지에 영향 작음)**:
+  몸체는 보이는 메시 겸 충돌 메시 하나(점 18,171)라 부품만 끌 수 없어, 충돌 전용 복사본에서 안테나 점만 다리 높이로 올림 →
+  바닥 기울기 0°, 이륙 이탈 200 → 118 mm 로 줄었지만 **잡는 형상이 바뀜**: 원본 USD 에는 볼록 분해 결과가 미리 계산돼(cooked) 저장돼 있는데
+  복사본은 PhysX 가 다시 분해해 허리 모양까지 달라짐 → 손가락 닫힘 16.4° → 13.7~14.3°, 모터 정지 뒤 내려앉음 5~6 → 8~9 mm, PX4 6 케이스 4/6
+  - 다른 방법(몸체 충돌 그대로 + 다리 끝에 보이지 않는 받침)은 다리가 바닥에서 약 12 mm 떠 보여 하지 않음
+  - 남은 영향: 이륙 때 앞으로 최대 약 200 mm 밀렸다가 3 s 안에 되돌아옴 (파지는 호버 안정 뒤 시작). 실물 드론(STL, 2단계 3번)으로 바꾸면 사라짐
+
+**위험**: flow 표류·EKF 흔들림이 손가락 여유(한쪽 13 mm)를 넘으면 접근 중 부딪힘 → 접근 중 드론 따라가기 필요할 수 있음 (실물에도 필요할 가능성).
+그리퍼가 다가올 때 EKF 가 위치를 잃으면 PX4 가 고도 유지 모드로 failsafe → 그대로 기록
+
+**완료 기준**
+- [x] PX4 v1.16.0 SITL 이 Pegasus 조건(P-2)과 우리 조건(P-3)에서 이륙·호버·kill
+- [x] X1~X4 결과 기록 (모션캡처·flow·GPS). X5 반복 차이·X6 flow 표류는 남음 (flow 는 옵션이 돼 우선순위 낮음)
+- [x] `--flight px4` 로 파지 6 케이스 판정 → 6/6 (모션캡처)
+- [x] 잡을 때 떨림 비교표 (기하 vs PX4 모션캡처, kill 대기 0.5~10 s). flow 는 팔이 아래로 오면 드론이 도망가 파지 불가 (기록)
+- [x] 문서 정리 (`docs/drone_flight.md` 13장, CLAUDE.md)
+- [ ] (남음) P-5 다른 터미널에서 쓰는 드론 명령 CLI, `--drone-waypoints`, 기본 제어기를 px4 로 바꿀지 결정
+
 ---
 
 ## 3단계: sim ROS 2 인터페이스

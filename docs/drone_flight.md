@@ -1,10 +1,12 @@
-# 2-2. 드론 비행 정리 (Pegasus 방식)
+# 2-2. 드론 비행 정리 (Pegasus 방식, PX4 SITL)
 
 작성: 2026-10-01 · 대상 커밋: `4c6932d` (브랜치 `isaacsim_v6.1.0`)
+추가: 2026-10-02 — **13장 PX4 SITL** (실제 PX4 펌웨어가 드론을 날림, 2단계 2번)
 
 2단계 씬의 드론은 **로터 4 개의 추력으로 실제 쿼드콥터처럼 난다.** 몸체를 손으로 붙잡아 두는 가상의 힘이 아니라,
 제어기가 정한 로터 회전속도로 추력을 만들고 그 추력으로 몸체를 기울여 움직인다.
 구조·식·게인은 **Pegasus Simulator 의 Iris 예제를 그대로 옮겼고**, 우리 기체(Iris 0.75 배, 0.8 kg)에 맞게 게인만 환산했다.
+제어기는 두 가지다: **기하 제어기**(1~12장, `flight.backend: geometric`, 기본)와 **PX4 SITL**(13장, `--flight px4`). 추력·반토크·공기저항·프로펠러 표시는 같은 코드.
 
 ---
 
@@ -22,7 +24,7 @@
 | 모드 | `static` (제자리), `hover` (약한 흔들림, seed), `trajectory` (미구현) |
 | 모터 정지 | `release()` → ω = 0 → 추력 0 → 자유 낙하 (실물: 잡은 뒤 모터를 멈춤) |
 | 프로펠러 회전 | 보여 주기용, 추력과 분리 (`--prop-spin on`) |
-| 다음 단계 | 제어기 자리만 **PX4 SITL** 로 바꾼다 (로터 추력 부분은 그대로) |
+| PX4 SITL | 제어기 자리를 **실제 PX4 v1.16.0** 으로 (13장, `--flight px4`). 로터 추력 부분은 그대로 |
 
 ---
 
@@ -270,7 +272,7 @@ $$
 | physics 주기 | 1/250 s | 1/120 s | 로봇 drive 튜닝 기준 (`docs/drive_tuning.md`) |
 | yaw 목표 | 궤적 파일 | 시작 yaw 고정 | |
 | 센서 (IMU·GPS 등) | 있음 | 없음 | 필요할 때 추가 |
-| 제어기 교체 | PX4 / ROS 2 / Python backend | 지금은 Python 기하 제어기 | 2단계 2번에서 PX4 |
+| 제어기 교체 | PX4 / ROS 2 / Python backend | Python 기하 제어기 + PX4 SITL | PX4 는 13장 |
 
 **목표 각속도(jerk 투영) 비교** — hover 추적 RMS: 0 배 0.56 mm, Pegasus 식 1.20 mm, −1 배 1.73 mm.
 부호는 Pegasus 가 맞고 차이가 1 mm 미만이라, **오차가 조금 크더라도 Pegasus 와 같은 동작이 실제에 가깝다**는 판단(2026-10-01)으로 Pegasus 식을 유지.
@@ -318,3 +320,134 @@ $$
 # 로봇·카메라와 함께
 ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --mode hover --prop-spin on
 ```
+
+---
+
+## 13. PX4 SITL (2단계 2번, `--flight px4`)
+
+기하 제어기는 정답 상태·잡음 없음·지연 없음이라 **잡힐 때 거의 반응하지 않는다** (실물은 제어기가 그리퍼와 싸움).
+그래서 제어기 자리에 **실제 PX4 펌웨어**를 넣었다. 연결 방식은 Pegasus 의 PX4 backend 를 옮겼고, Pegasus 에 없는 사실성 요소를 더했다.
+
+### 13-1. 구조
+
+```
+Isaac Sim (physics 120 Hz, lockstep)                         PX4-Autopilot v1.16.0 SITL (별도 프로세스)
+  드론 실제 상태 ─ 가상 센서 ─────────── TCP 4560 ──────▶  EKF2 (IMU + 외부 위치)
+    IMU·기압·지자기 (매 step), 모션캡처 (100 Hz, 20 ms)        위치 → 속도 → 자세 → 각속도 PID → 모터 출력 u (0~1)
+  ω = 1000·u + 100 → 모터 1차 지연 → 추력 (1~9장 그대로) ◀──
+                                             UDP 14540 ─── drone_cmd.PX4Commander (Offboard 위치 목표, arm, kill)
+```
+
+| 파일 | 역할 |
+|---|---|
+| `isaacsim/scripts/px4_bridge.py` | `PX4Launcher` (PX4 실행·종료, `PR_SET_PDEATHSIG`), `PX4Bridge` (MAVLink lockstep, 센서 송신, 모터 명령 → ω) |
+| `isaacsim/scripts/px4_sensors.py` | 가상 센서: IMU, 기압, 지자기, GPS, 거리 센서, optical flow, 모션캡처 |
+| `isaacsim/scripts/pegasus_geo_mag.py` | Pegasus `geo_mag_utils.py` 원본 복사 (지자기 표, 위경도 변환) |
+| `isaacsim/scripts/drone_cmd.py` | `PX4Commander`: world ENU ↔ PX4 NED, Offboard 위치 목표 20 Hz, 모드·arm 재요청, kill |
+| `isaacsim/scripts/drone_flight.py` | `flight.backend` 선택, PX4 기체 파라미터 자동값, 모터 지연, 하향 raycast, 센서용 속도 = 자세 차분 |
+| `isaacsim/config/px4_sitl.yaml` | PX4 경로·포트, 위치 정보 방식(`mocap` / `flow` / `gps`)별 센서·PX4 파라미터, 센서 잡음 |
+| `isaacsim/config/drone_iris.yaml` `px4` 절 | 기체별: airframe, 모터 명령 변환, 게인 환산, 모터 지연, 센서 덮어쓰기 |
+| `isaacsim/config/drone_iris_pegasus.yaml` | 기준선: Pegasus Iris 원래 크기 1.52 kg + PX4 Iris 값 그대로 (Pegasus 조건 재현용) |
+| `isaacsim/scripts/check_px4.py` | 비행 시험 X0~X4, GUI `--view` |
+
+출처: livealive7/PegasusSimulator `b1256ca` `logic/backends/px4_mavlink_backend.py`, `tools/px4_launch_tool.py`, `logic/sensors/*.py` (BSD-3).
+PX4: https://github.com/PX4/PX4-Autopilot `v1.16.0` (Pegasus 포크가 시험한 버전), `make px4_sitl_default none`, airframe `10015_gazebo-classic_iris`.
+
+### 13-2. 매 physics step (Pegasus `PX4MavlinkBackend.update` 순서)
+1. 지난 step 에 받은 모터 명령 → ω (모터 지연) → 추력 적용 (1~9장과 같은 코드)
+2. 첫 모터 명령을 받은 뒤부터는 PX4 의 `HIL_ACTUATOR_CONTROLS` 가 올 때까지 기다림 (**lockstep**: sim 이 느려도 PX4 가 같이 기다림, 결과가 실행 속도와 무관)
+3. heartbeat (실제 시간 1 Hz), `HIL_SENSOR` (이번 step 새 값만 비트), 거리·flow·모션캡처·GPS 메시지. 시각 = sim 시간 μs
+4. 이번 상태로 센서 갱신 (다음 step 에 보냄 → 센서 한 step 지연, Pegasus 와 같음)
+
+모터 명령 → ω: armed 이면 $\omega_i = 1000\,u_i + 100$ rad/s 를 $[0, \omega_{max}]$ 로 자름 (Pegasus 기본값), 아니면 0.
+우리 호버 ω 479 rad/s → $u \approx 0.38$.
+
+### 13-3. 기체에 맞춘 PX4 파라미터 (`drone_flight._px4_airframe_params`)
+- `CA_ROTORi_PX/PY` = sim 로터 위치 (body 원점 기준 FRD, 0.75 배)
+- **각속도 게인 환산** (기하 제어기 8-2 와 같은 문제): `MC_{ROLL,PITCH,YAW}RATE_K` (P·I·D 전체 배율) $= \dfrac{I/I_{ref}}{\text{팔}/\text{팔}_{ref}}$
+  - 각가속도 = 토크 / I, 최대 토크 ∝ 팔 길이 (roll: 로터 |y| 평균, pitch: |x| 평균, yaw: 반토크라 팔 무관)
+  - 기준 = P-2 에서 안정 확인한 조합: Gazebo Iris 관성 (0.029125, 0.029125, 0.055225) + Pegasus 추력 + Pegasus Iris 로터 위치 (|x| 0.131, |y| 0.213 m)
+  - 결과 roll 0.246, pitch 0.148, yaw 0.148 → 호버 모터 ω 흔들림 0.5 rad/s
+  - **환산하지 않으면**: Pegasus Iris(원래 크기)조차 모터 명령이 17.4 Hz 로 0 ↔ 0.9 포화 진동 (ω 표준편차 355 rad/s). `iris.usd` 관성이 비어 PhysX 가
+    충돌 형상으로 계산한 값(0.0175, 0.0107, 0.0268)이 PX4 Iris 게인이 맞춰진 Gazebo Iris 보다 1.7~2.7 배 작기 때문. 0.75 배는 6~9 배 작음
+
+### 13-4. Pegasus 에 없는 것 (사실성)
+| 항목 | 내용 | 이유 |
+|---|---|---|
+| 모터 1차 지연 | $\omega \leftarrow \omega + (\omega_{cmd} - \omega)(1 - e^{-\Delta t/\tau})$, 올림 τ 0.0125 s, 내림 0.025 s (PX4 Gazebo `motor_model`) | 실물 모터는 즉시 바뀌지 않음. kill 뒤 125 ms 에 걸쳐 감속 |
+| 센서 버그 수정 | `pegasus_compat: false`: 자이로 bias 시간상수, 가속도계 bias 적용, 기압 잡음 분포, GPS bias 이산화 | Pegasus 코드 오류 (기준선 설정만 compat) |
+| 센서용 속도 = 자세 차분 | IMU·flow 에 주는 속도·각속도 = $(p_k - p_{k-1})/\Delta t$, $\log(R_{k-1}^T R_k)/\Delta t$ (`px4.sensor_kinematics: pose_difference`) | **그리퍼에 잡혀 접촉이 걸리면 PhysX 가 보고하는 각속도가 실제 자세 변화와 다름** (보고 평균 29 °/s, 실제 0.5 °/s). 이 값을 자이로로 쓰면 PX4 자세 추정이 1.5 s 에 15° 틀어지고 추정 발산 → 모터 포화 → 드론이 비틀려 빠짐. 실물 IMU 는 실제 움직임만 잼 |
+| 실내 위치 정보 | 모션캡처 (13-5) | 실내 시연, GPS 없음 |
+| Pegasus HIL_SENSOR 온도 인자 | 기압계 온도 (Pegasus 는 GPS 고도 mm 를 넣음, 인자 순서 오류) | |
+| PX4 무응답 | 시간 제한 넘으면 에러 (Pegasus 는 무한 대기) | 조용한 실패 금지 |
+
+### 13-5. 위치 정보 방식 (`px4_sitl.yaml` `position_source`, `--position-source`)
+| 방식 | 센서 | PX4 EKF2 | 결과 |
+|---|---|---|---|
+| **mocap (기본)** | 실제 body 위치·자세 + 잡음 1 mm·0.3°, 100 Hz, 지연 20 ms → `VISION_POSITION_ESTIMATE` (카메라·마커 장면 없음, 정답값 + 잡음) | `EV_CTRL 11` (수평·수직 위치 + yaw), `HGT_REF 3`, `EV_DELAY 20`, 지자기·GPS 끔 | 호버 실제 − 목표 RMS 19 mm (PX4 위치 유지의 느린 흔들림), 추정 − 실제 RMS 6 mm |
+| flow | 하향 거리 센서 (PhysX raycast, 50 Hz, 1 cm) + optical flow (50 Hz) | `OF_CTRL 1`, `RNG_CTRL 1`, `HGT_REF 0` (기압), `TERR_NOISE 0.1` | 이륙 표류 수 cm, 기압 고도 표류. **팔이 아래로 오면 드론이 위로 도망감** (아래) |
+| gps | GPS + 기압 + 지자기 (Pegasus 기본) | PX4 기본 | 실외용. 고도 추정 오차 수 cm |
+
+실물 모션캡처(Vicon·OptiTrack)는 잡음 0.1~0.5 mm, 0.1°, 지연 5~10 ms, 100~360 Hz → 지금 값은 약간 보수적. 마커 가림은 없음.
+
+**optical flow 부호**: PX4 `EKF2.cpp` 가 pixel_flow·delta_angle 부호를 뒤집어 받으므로, 센서는 몸체 FRD 에서 pixel_flow 각속도
+$= \omega_{xy} + (-v_y,\ v_x)/d$ 를 보낸다 (회전 +ω_x 는 화면을 +Y 로, 오른쪽 이동 +v_y 는 −Y 로). 반대로 넣으면 EKF 가 발산한다.
+
+**flow 의 한계 (실물 위험, PLAN 기록)**: 그리퍼가 아래에서 올라오면 하향 거리 센서가 바닥 대신 팔을 잼 → PX4 가 "내려갔다"로 보고 상승 →
+팔이 따라가면 계속 상승 (3.2 m 까지). 하향 센서 드론 아래에 손을 넣으면 올라가는 것과 같은 현상. 거리 센서를 끄면 flow 가 terrain 을 못 써 failsafe.
+→ 실내 위치는 모션캡처로 얻을 수 있다고 가정 (2026-10-02 사용자 결정)
+
+### 13-6. 시험 결과
+**비행 (`check_px4.py`, 0.75 배 Iris 0.8 kg, 120 Hz, 모션캡처)** → 5/5
+
+| 시험 | 결과 |
+|---|---|
+| X0 연결 | lockstep 시작 sim 약 1 s, arm 요청 1.5 s 뒤 armed, 실시간 비율 약 1.5 (headless) |
+| X1 이륙 | 바닥 → 1 m 위, PX4 추정 5 cm 안 7.3 s. **뜨는 순간 앞으로 최대 약 200 mm 밀렸다가 3 s 안에 되돌아옴** (아래) |
+| X2 호버 30 s | 실제 − 목표 RMS 19.5 mm (축별 표준편차 8~10 mm), 기울기 최대 0.23°, 모터 ω 흔들림 0.5 rad/s |
+| X3 계단 +10 cm | overshoot 약 23%, 2 cm 안 정착 약 7 s |
+| X4 kill | disarm 33 ms, 모터 감속 125 ms 뒤 −9.810 m/s² 낙하 |
+
+이륙 이탈: Iris 메시 앞쪽 아래 부품이 다리 끝보다 13.5 mm(0.75 배 10 mm) 아래라 바닥에서 3.4° 숙여져 서고, 뜨는 순간 7° 까지 숙여지며 앞으로 가속.
+PX4 공식 Gazebo Iris 는 충돌이 상자라 평평하게 선다. 충돌 메시를 고쳐 보았지만 원본 USD 의 미리 계산된 볼록 분해가 바뀌어 잡는 형상까지 달라져서 되돌림 (원래 모델 유지)
+
+**파지 (`grasp_demo.py --flight px4`, 모션캡처)** → 6 케이스 6/6 (판정이 기대와 같음)
+- 드론: 테이블 위 (1.2, 0) 에서 이륙 → 수직 상승 → (0.60, 0, 1.50) 수평 이동 → 5 s 호버 → 팔 시작
+- 접근 중 드론 따라가기 (`approach_track_until` 3 cm): PX4 호버는 ±1~2 cm 로 움직여 목표를 미리 고정하면 손가락 끝이 몸체에 부딪힘
+
+잡은 채 모터를 켜 두는 시간(`--kill-delay`)별 (success, 잡은 뒤 ~ kill 구간):
+
+| 제어기 | kill 까지 | 결과 | 드론 흔들림 (TCP 기준) | 자세 변화 | 모터 ω 흔들림 | 모터 ω 끝−처음 | 손가락 힘 흔들림 |
+|---|---|---|---|---|---|---|---|
+| PX4 | 0.5 s | held | 0.03 mm | 0.02° | 0.4 rad/s | 1 rad/s | 0.1 N |
+| PX4 | 1 s | held | 0.4 mm | 0.2° | 1.9 | 7 | 0.8~1.4 N |
+| PX4 | 2 s | held | 0.4 mm | 0.5° | 1.0 | 2 | 0.7~1.0 N |
+| PX4 | 5 s | held | 0.6 mm | 0.5° | 2.7 | 17 | 0.5~1.0 N |
+| PX4 | 10 s | held | 0.5 mm | 0.6° | 2.9 | 21 | 0.3~1.1 N |
+| 기하 | 1 s | held | 0.03 mm | 0.02° | 0.7 | 3 | 0.3 N |
+| 기하 | 5 s | held | 0.03 mm | 0.01° | 0.3 | 4 | 0.01 N |
+
+- PX4 는 잡힌 뒤 **천천히 적분이 쌓이며** 그리퍼와 약하게 싸움 (10 s 에 로터 간 ±20 rad/s), 손가락 힘이 기하보다 3~100 배 흔들림. 10 s 켜 둬도 놓치지 않음
+- 모터 정지 뒤 내려앉음: PX4 약 1 mm vs 기하 약 6 mm. 최종으로 얹히는 높이는 같고, PX4 는 접근 목표 고정 뒤 호버 흔들림으로 드론이 약 8 mm 내려와
+  이미 얹히는 높이 근처에서 잡혔기 때문 → PX4 에서는 잡는 높이가 실행마다 달라짐
+- sim 에 없는 실물 요소: 프로펠러 바람이 그리퍼·팔에 부딪힘, 기체·프로펠러 진동, 모션캡처 가림 → 실물 떨림은 이보다 클 수 있음
+
+### 13-7. 실행
+```bash
+# PX4 설치 (한 번): ~/PX4-Autopilot, v1.16.0, 빌드용 venv ~/PX4-Autopilot/.venv, make px4_sitl_default none (빌드 뒤 PX4 셸이 뜨면 끔)
+#   pymavlink: ~/isaacsim/python.sh -m pip install --target isaacsim/.pydeps pymavlink
+
+# 비행 시험 (0.75 배 Iris, 모션캡처)
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/check_px4.py --headless --drone-config ~/data_collection_ur5_gripper/isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120
+#   비교 옵션: --position-source mocap|flow|gps, --motor-lag on|off, --sensor-compat on|off, --px4-param NAME=VALUE
+#   Pegasus 기준선: --drone-config .../drone_iris_pegasus.yaml --position-source gps --physics-hz 250 (--start-z 0.10)
+# GUI 비행 보기
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/check_px4.py --view --drone-config ~/data_collection_ur5_gripper/isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120 --prop-spin on
+
+# 로봇 씬 + PX4 드론, 파지
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --flight px4 --prop-spin on
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --case success --flight px4 [--kill-delay 10] --prop-spin on --hold
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --headless --case all --flight px4
+```
+PX4 비행 로그(`.ulg`)·콘솔은 `isaacsim/reports/px4_<시각>/` (분석: pyulog). 스크립트가 어떻게 끝나도 PX4 는 같이 종료된다 (`PR_SET_PDEATHSIG`).
+

@@ -1,11 +1,8 @@
 # =============================================================
-# drone_iris.yaml — 2단계 데모 드론: 3DR Iris (PX4 기본 기체 외형) 0.75 배 (docs/PLAN.md 2단계)
-#
-# 원본 USD(isaacsim/assets/drones/iris/, README 참고)는 그대로 두고 씬 레이어에서 덮어쓴다 (drone.add_drone):
-#   축소, 링크 질량, 프로펠러 관절 고정(FixedJoint), 저장된 초기 속도 0, 물체 재질
-# 실물: 접이식 소형 쿼드콥터 0.8 kg, 그리퍼가 아래에서 위로 다가가 몸체 옆면을 폭 방향으로 잡는다
-#
-# 좌표: 드론 좌표계 = 드론 최상위 prim 의 위치·자세 (축소 반영된 m 단위), +x 앞, +y 왼쪽, +z 위
+# drone_iris_pegasus.yaml — PX4 SITL 기준선 (PLAN 2단계 2번 P-2): Pegasus Iris 원래 크기·질량 + PX4 gazebo-classic_iris
+#   Pegasus PX4 예제와 같은 조건으로 연결을 확인하는 용도 (기체 = PX4 airframe 파라미터와 같은 Iris).
+#   drone_iris.yaml 을 복사해 scale 1.0, 질량 1.52 kg (body 1.5 원본 + 프로펠러 0.005 × 4), backend px4 만 바꿈
+#   (잡는 폭 약 105 mm 라 그리퍼로는 잡을 수 없음 → 비행 시험 전용)
 # =============================================================
 
 usd: assets/drones/iris/iris.usd   # isaacsim/ 기준 상대 경로
@@ -13,12 +10,12 @@ name: Iris
 body_link: body                    # 중심 강체 (최상위 prim 기준 상대 경로). 공중 유지 힘을 거는 링크, 잡는 곳
 
 # 0.75 배: 원본 허리 폭 105 mm → 약 79 mm (그리퍼 열림 107 − 여유 2 × 10 = 87 mm 이하). 전체 폭 약 36 cm
-scale: 0.75
+scale: 1.0
 
-mass: 0.8                          # 총 질량 (실물)
+mass: 1.52
 # 링크 질량 [kg] (최상위 prim 기준 상대 경로). 합계 = mass 여야 함. 원본 body 1.5 kg, 프로펠러 미지정
 link_masses:
-  body: 0.78
+  body: 1.5
   rotor0: 0.005
   rotor1: 0.005
   rotor2: 0.005
@@ -34,7 +31,6 @@ zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.
 #   안테나 + 다리로 3.4° 기울어져 섬 (원본 형상, 2026-10-01 check_drone)
 rest_tilt_max_deg: 5.0
 
-
 articulation:
   sleep_threshold: 0.0             # 공중에 떠 있는 동안 잠들지 않게
 
@@ -44,7 +40,7 @@ articulation:
 #   추력 모델 값은 Pegasus Iris 기본값 (QuadraticThrustCurve, LinearDrag) 그대로
 flight:
   # 제어기: geometric (Pegasus 예제 기하 제어기, 아래 controller) | px4 (PX4 SITL, 아래 px4 절, PLAN 2단계 2번)
-  backend: geometric
+  backend: px4
   rotors: [rotor0, rotor1, rotor2, rotor3]     # 추력을 거는 강체 (최상위 prim 기준). 순서 = rot_dir 순서 = PX4 모터 순서
   rot_dir: [-1, -1, 1, 1]                      # 회전 방향 (Pegasus Iris: rotor0·1 과 rotor2·3 이 대각선 쌍)
   rotor_constant: 8.54858e-6                   # k [N/(rad/s)²]
@@ -83,26 +79,19 @@ grasp:
   close_axis: [0.0, 1.0, 0.0]
   center_xy: [0.0, 0.0]            # 허리 (원본 x = 0 단면이 가장 좁음)
 
-# PX4 SITL (flight.backend: px4 또는 --flight px4 일 때, scripts/px4_bridge.py, PLAN 2단계 2번 P-3)
-#   모터 명령 u (0~1) → ω = (u + input_offset)·input_scaling + zero_position_armed (Pegasus 기본값, 호버 ω 479 → u ≈ 0.38)
+# PX4 SITL (flight.backend: px4 일 때, scripts/px4_bridge.py). 모터 명령 u (0~1) → ω = (u + input_offset)·input_scaling + zero_position_armed
+#   (Pegasus PX4MavlinkBackendConfig 기본값)
 px4:
   sitl_config: config/px4_sitl.yaml
-  airframe: gazebo-classic_iris        # PX4 ROMFS init.d-posix/airframes/10015_gazebo-classic_iris
+  airframe: gazebo-classic_iris        # PX4 ROMFS init.d-posix/airframes/10015_gazebo-classic_iris (Pegasus 기본)
   input_offset: [0.0, 0.0, 0.0, 0.0]
   input_scaling: [1000.0, 1000.0, 1000.0, 1000.0]
   zero_position_armed: [100.0, 100.0, 100.0, 100.0]
-  rotor_geometry_from_sim: true        # CA_ROTORi_PX/PY ← sim 로터 위치 (0.75 배)
-  downward_sensor_position: [0.0, 0.0, 0.0]   # m, body 좌표계. 하향 거리 센서·flow 위치 (광축 = body −z). 바닥에 놓이면 약 4 cm
-  # 각속도 게인 환산: MC_{ROLL,PITCH,YAW}RATE_K = (I / I_ref) ÷ (팔 / 팔_ref) (축별, drone_flight._px4_airframe_params)
-  #   기준 = P-2 에서 안정 확인한 조합 (2026-10-02): Gazebo Iris 관성 + Pegasus 추력 모델 + Pegasus Iris 로터 위치 → ω 표준편차 1.3 rad/s
-  #   (Pegasus Iris USD 관성 그대로는 PX4 Iris 게인이 너무 세서 17 Hz 포화 진동)
-  rate_gain_scaling:
-    enabled: true
-    reference_inertia: [0.029125, 0.029125, 0.055225]   # kg·m², PX4 Gazebo Iris (sitl_gazebo iris.sdf)
-    reference_arm_xy: [0.13135, 0.21265]                 # m, Pegasus Iris (1.0 배) 로터 |x|·|y| 평균 (FRD, P-2 측정)
+  rotor_geometry_from_sim: false       # 기준선: PX4 Iris 값 그대로
+  downward_sensor_position: [0.0, 0.0, 0.0]   # m, body 좌표계 (flow 일 때)
+  rate_gain_scaling: {enabled: false}  # 기준선: PX4 Iris 게인 그대로 (P-2: USD 관성으로는 17 Hz 진동, PLAN 참고)
   # 모터 1차 지연 (PX4 Gazebo motor_model timeConstantUp/Down 기본값). Pegasus 에는 없음 → 기준선은 끔
-  motor_dynamics: {enabled: true, tau_up: 0.0125, tau_down: 0.025}
-  sensor_kinematics: pose_difference     # IMU·flow 속도 = 자세·위치 차분 (잡혔을 때 PhysX 속도가 실제 움직임과 다름, PLAN P-7)
-  sensor_overrides: {}                 # px4_sitl.yaml sensors 덮어쓰기 (기체별)
-  params: {}                           # PX4 파라미터 덮어쓰기 (PX4_PARAM_<이름>, 위 자동값보다 우선)
-
+  motor_dynamics: {enabled: false, tau_up: 0.0125, tau_down: 0.025}
+  sensor_kinematics: physx_velocity      # 기준선: Pegasus 와 같이 PhysX 속도
+  sensor_overrides: {pegasus_compat: true}   # 기준선: Pegasus 센서 코드 동작 그대로 (버그 포함)
+  params: {}                           # PX4 파라미터 덮어쓰기 (PX4_PARAM_<이름>)

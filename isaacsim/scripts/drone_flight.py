@@ -4,7 +4,15 @@
 #   제어기 → 로터 4 개 목표 각속도 ω (rad/s) → 이차 추력 모델 → PhysX 외력 (매 physics step, PHYSICS_PRE_STEP 콜백)
 #     - 로터 i 강체에 자기 z 축 방향 추력 Fᵢ = k·ωᵢ² (로터 위치에서)
 #     - body 에 반토크 Σ c·ωᵢ²·dirᵢ (body z 축) + 선형 공기저항 −D·v_body
-#   제어기: 기하 제어기 = Pegasus 예제 NonlinearController 그대로 (식·게인·한 step 지연, Lee/Mellinger). 2단계 2번에서 PX4 로 바꾼다
+#   제어기 (flight.backend):
+#     geometric — 기하 제어기 = Pegasus 예제 NonlinearController 그대로 (식·게인·한 step 지연, Lee/Mellinger)
+#     px4       — PX4 SITL (px4_bridge.PX4Bridge: 가상 센서 → PX4 → 모터 명령, lockstep) + 명령 drone_cmd.PX4Commander
+#                 (arm() = Offboard 위치 목표 + arm 요청, release() = kill). 추력·반토크·공기저항·프로펠러 표시는 같은 코드
+#                 가상 센서(IMU·flow)에 주는 속도·각속도 = 자세·위치 차분 (PhysX 가 보고하는 속도 대신, px4.sensor_kinematics):
+#                   그리퍼에 잡혀 접촉이 걸리면 PhysX 각속도가 실제 자세 변화와 맞지 않음 (자세는 0.5° 안인데 보고 각속도 평균 11~19 °/s)
+#                   → 가짜 자이로로 PX4 자세 추정이 1.5 s 에 15° 틀어지고 발산 (2026-10-02 ulog). 실물 IMU 는 실제 움직임만 잼
+#                 px4.motor_dynamics: 모터 1차 지연 (PX4 Gazebo motor_model 과 같음, Pegasus 에는 없음):
+#                   ω ← ω + (ω_cmd − ω)·(1 − e^(−dt/τ)), τ = 올릴 때 tau_up, 내릴 때 tau_down. geometric 은 Pegasus 그대로 (지연 없음)
 #     F_des = −Kp·e_p − Kd·e_v − Ki·∫e_p + m·g·ẑ + m·a_ref → 몸체를 F_des 방향으로 기울이고 u₁ = F_des·Z_B
 #     τ = −Kr·e_R − Kw·(ω − ω_des) (ω_des = 목표 jerk 투영),  (u₁, τ) → 할당 행렬 역행렬 → ω²  (음수는 0, 최대 ω 넘으면 비율 유지 축소)
 #   Pegasus 와 같게 (2026-10-01 사용자 결정): 게인은 Pegasus 값을 우리 기체 질량·관성 비율로 환산(설정 scale_to_airframe,
@@ -22,6 +30,7 @@
 # =============================================================
 
 import math
+import os
 
 import numpy as np
 
@@ -29,7 +38,8 @@ import drone as dr
 
 G = 9.81
 MODES = ("static", "hover", "trajectory")
-FLIGHT_KEYS = ("rotors", "rot_dir", "rotor_constant", "rolling_moment_coefficient", "max_rotor_velocity", "linear_drag",
+BACKENDS = ("geometric", "px4")
+FLIGHT_KEYS = ("backend", "rotors", "rot_dir", "rotor_constant", "rolling_moment_coefficient", "max_rotor_velocity", "linear_drag",
                "prop_joints", "prop_visual_speed", "prop_idle_speed", "controller", "hover")
 VISUAL_FORCE = 0.1   # N, Pegasus 프로펠러 표시 기준
 
@@ -43,6 +53,16 @@ def quat_to_R(q):
 
 def vee(M):
     return np.array([M[2, 1], M[0, 2], M[1, 0]])
+
+
+def _log_so3(R):
+    """회전 행렬 → 회전 벡터 (rad)."""
+    c = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
+    th = math.acos(c)
+    w = vee(R - R.T) / 2.0
+    if th < 1e-9:
+        return w
+    return w * (th / math.sin(th))
 
 
 class Reference:
@@ -127,9 +147,10 @@ class GeometricController:
 
 
 class DroneFlight:
-    """드론 비행 (physics 콜백). start() 전에 재생(play) 되어 있어야 한다. 콜백 예외는 check() 에서 다시 올린다."""
+    """드론 비행 (physics 콜백). start() 전에 재생(play) 되어 있어야 한다. 콜백 예외는 check() 에서 다시 올린다.
+    check() 는 매 루프(simulation_app.update() 뒤) 부른다 (px4: 명령 송수신)."""
 
-    def __init__(self, cfg, info, mode="static", seed=0, target=None):
+    def __init__(self, cfg, info, mode="static", seed=0, target=None, backend=None, report_dir=None, position_source=None):
         from isaacsim.core.experimental.prims import RigidPrim
 
         if "flight" not in cfg:
@@ -142,6 +163,9 @@ class DroneFlight:
         if len(fc["rot_dir"]) != n:
             raise ValueError("flight.rot_dir 길이 != rotors")
         self.fc, self.info = fc, info
+        self.backend = fc["backend"] if backend is None else backend
+        if self.backend not in BACKENDS:
+            raise ValueError(f"flight.backend 는 {BACKENDS} 중 하나: {self.backend}")
         path = info["path"]
         self.body = RigidPrim(info["body_path"])
         self.rotors = RigidPrim([dr._sub(path, r) for r in fc["rotors"]])
@@ -169,13 +193,117 @@ class DroneFlight:
                 raise RuntimeError(f"프로펠러 관절 DOF 가 없음: {missing} (DOF: {names})")
             self.spin = np.array([names.index(j) for j in joints])
 
+        self.px4, self.cmd = None, None
+        if self.backend == "px4":
+            self._init_px4(cfg, n, seed, p, report_dir, position_source)
+
         self.armed, self.t, self.t_release = False, 0.0, None
+        self.t_arm = 0.0
+        if self.px4 is None:
+            self.motor_tau = None
         self.omega = np.zeros(n)        # 이번 step 에 적용한 ω
         self.omega_cmd = np.zeros(n)    # 제어기가 낸 ω (다음 step 에 적용)
         self.forces = np.zeros(n)
         self.prop_cmd = np.zeros(n)
         self.u1, self.tau = 0.0, np.zeros(3)
         self._cb, self.cb_error = None, None
+
+    def _init_px4(self, cfg, n, seed, p_start, report_dir, position_source):
+        import yaml
+
+        import drone_cmd
+        import px4_bridge
+        import test_scene as ts
+
+        if "px4" not in cfg:
+            raise KeyError(f"{cfg['path']}: flight.backend px4 인데 'px4' 항목이 없습니다")
+        px4c = dict(cfg["px4"])
+        for k in ("sitl_config", "airframe", "input_offset", "input_scaling", "zero_position_armed", "params",
+                  "rotor_geometry_from_sim", "rate_gain_scaling", "downward_sensor_position", "motor_dynamics",
+                  "sensor_overrides", "sensor_kinematics"):
+            if k not in px4c:
+                raise KeyError(f"{cfg['path']}: 'px4.{k}' 항목이 없습니다")
+        sp = px4c["sitl_config"] if os.path.isabs(px4c["sitl_config"]) else os.path.join(ts.SIM_ROOT, px4c["sitl_config"])
+        with open(sp, encoding="utf-8") as f:
+            sitl = yaml.safe_load(f)
+        self.sitl = sitl
+        # 위치 정보 방식 → 켤 센서 + PX4 파라미터 (우선순위: 위치 방식 < 기체 자동값 < 드론 설정 px4.params)
+        self.position_source = sitl["position_source"] if position_source is None else position_source
+        if self.position_source not in sitl["position_sources"]:
+            raise ValueError(f"position_source '{self.position_source}' 가 {sp} position_sources 에 없음")
+        src = sitl["position_sources"][self.position_source]
+        sensors = {k: (dict(v) if isinstance(v, dict) else v) for k, v in sitl["sensors"].items()}
+        for k, v in (px4c["sensor_overrides"] or {}).items():                  # 기체별 센서 덮어쓰기 (한 단계 깊이)
+            if k not in sensors:
+                raise KeyError(f"px4.sensor_overrides.{k} 는 {sp} sensors 에 없는 항목")
+            if isinstance(v, dict):
+                sensors[k].update(v)
+            else:
+                sensors[k] = v
+        self.sensors_cfg = sensors
+        if px4c["sensor_kinematics"] not in ("pose_difference", "physx_velocity"):
+            raise ValueError(f"px4.sensor_kinematics 는 pose_difference | physx_velocity: {px4c['sensor_kinematics']}")
+        self.sensor_kin = px4c["sensor_kinematics"]
+        self._prev_pose = None
+        md = px4c["motor_dynamics"]
+        self.motor_tau = (float(md["tau_up"]), float(md["tau_down"])) if md["enabled"] else None
+        for k, sk in (("gps", "gps"), ("rangefinder", "rangefinder"), ("optical_flow", "optical_flow"), ("mocap", "mocap")):
+            sensors[sk]["enabled"] = bool(src[k])
+        self.px4_auto_params = self._px4_airframe_params(px4c)
+        px4c["params"] = {**(src["params"] or {}), **self.px4_auto_params, **(px4c["params"] or {})}
+        self.px4_params = px4c["params"]
+        self.down_sensor = np.asarray(px4c["downward_sensor_position"], dtype=float)
+        self.ground_max = max(float(sensors["rangefinder"]["max_distance"]), float(sensors["optical_flow"]["max_distance"]))
+        self.ground, self.ground_hit = None, None
+        self.px4 = px4_bridge.PX4Bridge(sitl, px4c, sensors, self.w_max, n, seed, report_dir or ts.REPORT_DIR)
+        # PX4 local 원점 = EKF 초기화 위치 = 시작 위치 (바닥에 놓인 드론)
+        self.cmd = drone_cmd.PX4Commander(int(sitl["offboard_port"]) + int(sitl["instance"]), p_start,
+                                          sitl["commander"]["setpoint_hz"], sitl["commander"]["retry_sec"])
+
+    def _px4_airframe_params(self, px4c):
+        """우리 기체에 맞춘 PX4 파라미터 (설정에서 켠 것만).
+        rotor_geometry_from_sim: CA_ROTORi_PX/PY = sim 로터 위치 (body 원점 기준, FRD).
+        rate_gain_scaling: 각속도 루프 전체 게인 MC_{ROLL,PITCH,YAW}RATE_K = (I / I_ref) ÷ (팔 / 팔_ref) (축별).
+          각가속도 = 토크 / I, 최대 토크 ∝ 팔 길이 (roll: 로터 |y| 평균, pitch: |x| 평균, yaw: 반토크라 팔 무관)
+          → 기준 기체와 같은 각속도 응답. K 는 P·I·D 를 함께 곱함 (PX4 MC_*RATE_K 설명)"""
+        out = {}
+        p, q = self._body_pose()
+        R = quat_to_R(q)
+        rp = self.rotors.get_world_poses()[0].numpy()
+        rel = (rp - p) @ R                                   # body FLU
+        frd = np.column_stack([rel[:, 0], -rel[:, 1]])
+        if px4c["rotor_geometry_from_sim"]:
+            for i, (x, y) in enumerate(frd):
+                out[f"CA_ROTOR{i}_PX"] = round(float(x), 4)
+                out[f"CA_ROTOR{i}_PY"] = round(float(y), 4)
+        rs = px4c["rate_gain_scaling"]
+        if rs["enabled"]:
+            I = np.diag(self.inertia)
+            I_ref = np.asarray(rs["reference_inertia"], dtype=float)
+            arm = np.abs(frd).mean(axis=0)                     # [|x|, |y|]
+            arm_ref = np.asarray(rs["reference_arm_xy"], dtype=float)
+            k = (I / I_ref) / np.array([arm[1] / arm_ref[1], arm[0] / arm_ref[0], 1.0])
+            for name, v in zip(("MC_ROLLRATE_K", "MC_PITCHRATE_K", "MC_YAWRATE_K"), k):
+                out[name] = round(float(v), 4)
+        return out
+
+    def _ground_distance(self, p, R):
+        """하향 센서 광축(body −z) 방향 PhysX raycast, 드론 자기 충돌 형상은 건너뜀 → (거리, 맞은 충돌 형상 경로) 또는 (None, None)."""
+        import carb
+        from omni.physx import get_physx_scene_query_interface
+
+        origin = p + R @ self.down_sensor
+        d = -R[:, 2]
+        own = self.info["path"] + "/"
+        best = [None, None]
+
+        def report(hit):
+            if not hit.collision.startswith(own) and (best[0] is None or hit.distance < best[0]):
+                best[0], best[1] = float(hit.distance), hit.collision
+            return True
+
+        get_physx_scene_query_interface().raycast_all(carb.Float3(*origin), carb.Float3(*d), self.ground_max + 0.5, report)
+        return best[0], best[1]
 
     # ── 질량·관성 (PhysX) ──
     def _body_pose(self):
@@ -202,24 +330,42 @@ class DroneFlight:
 
     # ── 명령 ──
     def arm(self, target=None):
-        """모터 시동 + 현재 자세의 yaw 로 제어 시작 (target 을 주면 static·hover 의 기준 위치를 바꿈)."""
+        """모터 시동 + 현재 자세의 yaw 로 제어 시작 (target 을 주면 static·hover 의 기준 위치를 바꿈).
+        geometric: 바로 제어 시작 (시간 t 를 0 으로). px4: Offboard 위치 목표 + arm 요청 (실제 arm 은 PX4 가 판단, armed 로 확인)."""
         p, q = self._body_pose()
         R = quat_to_R(q)
-        self.ctrl.reset(math.atan2(R[1, 0], R[0, 0]))
+        yaw = math.atan2(R[1, 0], R[0, 0])
         if target is not None:
             self.ref.p0 = np.asarray(target, dtype=float)
             self.ref.params["p0"] = self.ref.p0.tolist()
-        self.t, self.t_release, self.armed = 0.0, None, True
+        self.t_release = None
+        if self.backend == "px4":
+            # PX4 local 좌표 원점을 world 에 맞춤: 바닥에 멈춰 있는 지금 실제 위치 − PX4 추정 위치 만큼 옮김
+            #   (EKF 원점 = PX4 부팅 때 위치. 실물에서 이륙 전 드론 위치를 world 에 등록하는 것과 같음)
+            if not self.px4.armed and self.cmd.estimate_enu is not None:
+                self.cmd.origin = self.cmd.origin + (p - self.cmd.estimate_enu)
+                self.cmd.estimate_enu = p.copy()
+            self.t_arm = self.t
+            self.cmd.fly_to(self.ref.p0, yaw)
+            return
+        self.ctrl.reset(yaw)
+        self.t, self.t_arm, self.armed = 0.0, 0.0, True
 
     def release(self):
-        """모터 정지 (ω = 0). 한 step 지연 때문에 바로 다음 step 은 지난 ω 가 적용되고 그다음부터 0 (Pegasus 와 같은 순서)."""
-        self.armed = False
+        """모터 정지. geometric: ω = 0 (한 step 지연 때문에 바로 다음 step 은 지난 ω, 그다음부터 0, Pegasus 와 같은 순서).
+        px4: kill 명령 (공중 강제 disarm, 실물과 같음) → PX4 가 모터 명령을 0 으로."""
+        if self.backend == "px4":
+            self.cmd.kill()
+        else:
+            self.armed = False
         self.t_release = self.t
 
     def start(self):
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
 
         if self._cb is None:
+            if self.px4 is not None:
+                self.px4.start()
             self._cb = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
 
     def stop(self):
@@ -228,11 +374,18 @@ class DroneFlight:
         if self._cb is not None:
             SimulationManager.deregister_callback(self._cb)
             self._cb = None
+        if self.px4 is not None:
+            self.px4.stop()
+            self.cmd.close()
 
     def check(self):
         if self.cb_error is not None:
             e, self.cb_error = self.cb_error, None
             raise RuntimeError(f"드론 비행 콜백 에러: {e!r}") from e
+        if self.cmd is not None:
+            if self.ref.mode == "hover" and self.cmd.target is not None:
+                self.cmd.goto(self.ref(self.t - self.t_arm)[0])
+            self.cmd.tick(self.t)
 
     # ── 할당 (Pegasus force_and_torques_to_velocities) ──
     def allocate(self, u1, tau, rotor_rel):
@@ -260,7 +413,11 @@ class DroneFlight:
         v, w = (x.numpy().reshape(-1) for x in self.body.get_velocities())
         rp, rq = (x.numpy() for x in self.rotors.get_world_poses())
         # Pegasus 순서: 지난 step 에 제어기가 낸 ω 를 먼저 적용 (한 step 지연) → 그다음 제어기 갱신
-        self.omega = self.omega_cmd
+        if self.motor_tau is None:
+            self.omega = self.omega_cmd
+        else:
+            tau = np.where(self.omega_cmd > self.omega, self.motor_tau[0], self.motor_tau[1])
+            self.omega = self.omega + (self.omega_cmd - self.omega) * (1.0 - np.exp(-dt / tau))
         self.forces = self.k * self.omega ** 2
         if self.forces.any():
             f_world = np.array([F * quat_to_R(qq)[:, 2] for F, qq in zip(self.forces, rq)])
@@ -274,7 +431,21 @@ class DroneFlight:
                            np.where(self.forces > 0, self.fc["prop_idle_speed"], 0.0))
             self.prop_cmd = spd * self.dir
             self.art.set_dof_velocities(self.prop_cmd.reshape(1, -1), dof_indices=self.spin)
-        if self.armed:
+        if self.px4 is not None:
+            if self.px4.needs_ground:
+                self.ground, self.ground_hit = self._ground_distance(p, R)
+            v_s, w_s = v, R.T @ w
+            if self.sensor_kin == "pose_difference":
+                if self._prev_pose is not None:
+                    p0, R0 = self._prev_pose
+                    v_s = (p - p0) / dt
+                    w_s = _log_so3(R0.T @ R) / dt               # 몸체 좌표계 각속도
+                self._prev_pose = (p.copy(), R.copy())
+            self.sensor_v, self.sensor_w = v_s, w_s
+            self.physx_w = R.T @ w
+            self.omega_cmd = self.px4.step(dt, p, v_s, R, w_s, self.ground)
+            self.armed = self.px4.armed
+        elif self.armed:
             self.u1, self.tau = self.ctrl.update(dt, p, v, R, w, self.ref(self.t))
             self.omega_cmd = self.allocate(self.u1, self.tau, (rp - p) @ R)
         else:

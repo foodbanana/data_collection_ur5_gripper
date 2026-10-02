@@ -17,6 +17,16 @@ table:
 #   실제로 닿는지는 2-4 (IK) 에서 확인
 drone_pos: [0.60, 0.0, 1.50]
 
+# PX4 드론 (flight.backend px4 / --flight px4, PLAN 2단계 2번 P-7): 실물처럼 이륙해서 드론 위치로 감
+#   이륙 지점 = 테이블 위 로봇에서 먼 쪽 (x 1.2 m, 상판 위). 수직 상승 → 수평 이동 (로봇 위를 지나지 않게), 경로 내내 아래가 테이블 (거리 센서·flow)
+px4:
+  takeoff_xy: [1.2, 0.0]
+  spawn_above_table: 0.06     # m, body 원점 시작 높이 (다리 끝 약 40 mm → 바닥에 내려앉음)
+  connect_timeout: 60.0       # sim s, PX4 부팅·arm 까지
+  leg_timeout: 30.0           # sim s, 이동 한 구간 (PX4 추정 위치가 목표 tol 안)
+  arrive_tol: 0.05            # m
+  settle_time: 5.0            # s, 도착 뒤 호버 안정
+
 light:
   dome_intensity: 1000.0      # 조명이 없으면 카메라 영상이 검게 나옴 → headless 에서도 항상 만든다
 

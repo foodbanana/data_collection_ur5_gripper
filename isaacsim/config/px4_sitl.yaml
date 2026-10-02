@@ -1,0 +1,126 @@
+# =============================================================
+# px4_sitl.yaml — PX4 SITL 실행·연결·가상 센서 (docs/PLAN.md 2단계 2번, scripts/px4_bridge.py·px4_sensors.py·drone_cmd.py)
+#
+# PX4-Autopilot v1.16.0 (Pegasus Simulator 시험 버전), ~/PX4-Autopilot 에서 make px4_sitl_default none 으로 빌드 (2026-10-02)
+#   (shallow clone 이라 NuttX 태그가 없어 버전 헤더 생성이 멈춤 → platforms/nuttx/NuttX/nuttx 에 로컬 태그 nuttx-11.0.0. SITL 에는 영향 없음)
+# 센서 값은 Pegasus Simulator 기본값 (livealive7/PegasusSimulator b1256ca logic/sensors/*.py, PX4 sitl_gazebo 와 같음)
+# =============================================================
+
+px4_dir: ~/PX4-Autopilot
+autolaunch: true          # true: 씬 스크립트가 PX4 를 띄우고 끝낼 때 끔. false: 다른 터미널에서 띄운 PX4 에 붙음
+instance: 0               # PX4 -i (포트 = 기본 포트 + instance)
+sim_port: 4560            # TCP, sim = 서버 (PX4 simulator_mavlink 가 접속)
+offboard_port: 14540      # UDP, PX4 offboard API 링크 (drone_cmd.PX4Commander)
+lockstep_timeout: 10.0    # s (실제 시간), 첫 모터 명령 뒤 이만큼 PX4 응답이 없으면 에러
+
+# 위치 정보 방식 --position-source 로 바꿈
+#   mocap (기본, 2026-10-02 결정 A): 실내 모션캡처(외부 위치) = 위치를 얻을 수 있다고 가정. 아래를 보지 않아 팔 영향 없음
+#         EKF2 외부 위치로 수평·수직 위치 + yaw (지자기·GPS·flow·거리 센서 끔), 지연 보상 = 센서 지연
+#   gps : Pegasus 기본 (GPS + 기압 + 지자기, 실외)
+#   flow: 하향 거리 센서 + optical flow (소비자 드론 실내 모드와 같은 원리). GPS 끔, 고도 기준 = 기압계 + 거리 센서 조건부
+#         (PX4 1010_gazebo-classic_iris_opt_flow 와 같음. 낮고 느릴 때 거리 센서를 고도 보조로, 항상 terrain(바닥까지 높이) 추정에 씀)
+#         → 그리퍼가 아래에서 올라오면 거리 센서가 그리퍼를 잼 (EKF 고도·terrain 급변, flow 속도 환산 거리 변화)
+#         = 실물에서 잡을 때 드론이 움직이는 원인 재현
+#         고도 기준 = 거리 센서(EKF2_HGT_REF 2)는 쓰지 않음: PX4 v1.16 EKF2 에서 terrain 추정이 시작되지 않아(rng_terrain 0)
+#         flow 융합 시작 조건(terrain 유효)을 못 넘음 → flow 를 한 번도 안 씀 → 수평 위치 무효 → failsafe (2026-10-02 ulog 확인)
+#   PX4 파라미터는 Iris airframe 위에 덮어씀 (PX4 1010_gazebo-classic_iris_opt_flow 참고, 센서 회전 없이 몸체 FRD 로 보냄)
+#   EKF2_*_DELAY 0: sim 센서에 지연이 아직 없음 (P-4 에서 실물 지연을 넣으면 같이 맞춤)
+position_source: mocap
+position_sources:
+  mocap:
+    gps: false
+    rangefinder: false
+    optical_flow: false
+    mocap: true
+    params:
+      EKF2_GPS_CTRL: 0
+      EKF2_OF_CTRL: 0
+      EKF2_RNG_CTRL: 0
+      EKF2_EV_CTRL: 11          # 비트: 1 수평 위치, 2 수직 위치, 4 속도, 8 yaw
+      EKF2_HGT_REF: 3           # 고도 기준 = 외부 위치
+      EKF2_EV_NOISE_MD: 1       # 잡음 = 아래 파라미터 (메시지 분산 안 보냄)
+      EKF2_EVP_NOISE: 0.01      # m
+      EKF2_EVA_NOISE: 0.05      # rad
+      EKF2_EV_DELAY: 20         # ms = sensors.mocap.latency
+      EKF2_MAG_TYPE: 5          # 지자기 안 씀 (실내, yaw 는 외부 위치)
+  gps:
+    gps: true
+    rangefinder: false
+    optical_flow: false
+    mocap: false
+    params: {}
+  flow:
+    gps: false
+    rangefinder: true
+    optical_flow: true
+    mocap: false
+    params:
+      EKF2_GPS_CTRL: 0
+      EKF2_OF_CTRL: 1
+      EKF2_RNG_CTRL: 1          # 거리 센서 조건부 고도 보조 (0 끔, 1 조건부, 2 항상). terrain 추정에는 항상 씀
+      EKF2_HGT_REF: 0           # 고도 기준 = 기압계 (0 기압, 1 GPS, 2 거리, 3 비전)
+      EKF2_MIN_RNG: 0.04        # 바닥에 놓였을 때 거리 [m]
+      # terrain(바닥 높이) 과정 잡음 [m/s]. PX4 기본 5.0 은 바닥이 빠르게 변할 수 있다고 봐서 거리 센서 정보를 terrain 이 다 흡수 →
+      #   가속도계 bias(실물처럼 넣음, P-4) 로 생긴 수직 속도 오차를 못 바로잡아 실제 고도가 40 s 에 1 m 넘게 표류 (2026-10-02).
+      #   실내 평평한 바닥 → 0.1: 호버 실제 오차 RMS 65 mm, 고도 범위 84 mm. (0.5: 124 mm, 138 mm)
+      #   그리퍼가 아래로 들어오면 terrain 이 아닌 "드론이 내려갔다"로 보는 쪽이 커짐 → P-7 에서 기본값 5.0 과 비교
+      EKF2_TERR_NOISE: 0.1
+      EKF2_OF_DELAY: 0
+      EKF2_RNG_DELAY: 0
+      SENS_FLOW_ROT: 0
+      SENS_FLOW_MINHGT: 0.08
+      SENS_FLOW_MAXHGT: 4.0
+      SENS_FLOW_MAXR: 2.5       # rad/s (PX4 opt_flow airframe 값)
+
+commander:
+  setpoint_hz: 20.0       # Offboard 위치 목표 송신 주기 (sim 시간). PX4 는 2 Hz 이상이어야 Offboard 유지
+  retry_sec: 1.0          # 모드·arm 재요청 주기 (sim 시간)
+
+sensors:
+  # true: Pegasus 코드 동작 그대로 (버그 포함, P-2 기준선, drone_iris_pegasus.yaml 이 덮어씀).
+  # false: PX4 sitl_gazebo 원래 식으로 고침 (px4_sensors.py 머리말, P-4)
+  pegasus_compat: false
+  origin_lat_lon_alt: [38.736832, -9.137977, 90.0]     # world 원점의 위경도·해발 (Pegasus configs.yaml 기본값, 리스본)
+  imu:
+    update_rate: 250.0
+    gyroscope: {noise_density: 3.393695767766752e-4, random_walk: 3.878509448876288e-5, bias_correlation_time: 1000.0}
+    accelerometer: {noise_density: 4.0e-3, random_walk: 6.0e-3, bias_correlation_time: 300.0}
+  barometer:
+    update_rate: 250.0
+    drift_pa_per_sec: 0.0
+  magnetometer:
+    update_rate: 250.0
+    noise_density: 4.0e-4          # gauss / sqrt(Hz)
+    random_walk: 6.4e-6            # gauss * sqrt(Hz)
+    bias_correlation_time: 600.0
+  gps:                             # position_sources.<방식>.gps 로 켬
+    update_rate: 250.0             # Pegasus 기본값 (실물 GPS 는 5~10 Hz)
+    fix_type: 3
+    eph: 1.0
+    epv: 1.0
+    satellites_visible: 10
+    xy_random_walk: 2.0            # (m/s) / sqrt(Hz)
+    z_random_walk: 4.0
+    xy_noise_density: 2.0e-4       # m / sqrt(Hz)
+    z_noise_density: 4.0e-4
+    vxy_noise_density: 0.2         # (m/s) / sqrt(Hz), pegasus_compat 이면 쓰지 않음 (Pegasus 는 꺼짐)
+    vz_noise_density: 0.4
+    correlation_time: 60.0         # s
+  # 하향 거리 센서 (ToF, VL53L1X 급: 4 m, 약 1 cm). 거리 = PhysX raycast (드론 아래 방향, 드론 자기 충돌 형상 제외)
+  rangefinder:
+    update_rate: 50.0
+    min_distance: 0.03
+    max_distance: 4.0
+    noise_std: 0.01                # m
+  # optical flow (PMW3901 급). pixel_flow 각속도 = ω_xy + (−v_y, v_x)/거리 + 잡음 (PX4 EKF2 모델, 몸체 FRD), 주기마다 적분값
+  optical_flow:
+    update_rate: 50.0
+    min_distance: 0.03             # 이 거리 밖이면 quality 0
+    max_distance: 4.0
+    noise_std: 0.02                # rad/s (가정값, 실물 로그로 맞출 것)
+  # 모션캡처 (Vicon·OptiTrack 급, 가정값). world 좌표 body 위치·자세 → VISION_POSITION_ESTIMATE
+  mocap:
+    update_rate: 100.0
+    latency: 0.02                  # s (px4 EKF2_EV_DELAY 와 맞춤)
+    position_noise_std: 0.001      # m
+    angle_noise_std: 0.005         # rad (약 0.3°)

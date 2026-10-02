@@ -6,7 +6,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 전체 계획과 단계별 완료 기준: `docs/PLAN.md`
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
-드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, 식과 출처): `docs/drone_flight.md`
+드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
 
 ## 경로 규칙
 
@@ -78,4 +78,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 - **root_joint**: body0 = 로봇 최상위 prim(강체 아님), body1 = `robot_mount`. 유지한다. 로봇 위치는 최상위 prim Transform 으로 지정하고,
   `robot_mount` 에 FixedJoint 를 추가하지 않는다
 - 질량 없는 링크(`tool0`, `flange`, `rh_p12_rn_tcp`, 카메라 프레임)는 물리 없는 Xform
+- **PX4 SITL** (`--flight px4`, `docs/drone_flight.md` 13장): `~/PX4-Autopilot` v1.16.0, pymavlink 은 `isaacsim/.pydeps/` (git 제외, `~/isaacsim` 에 설치 안 함).
+  **가상 센서에 주는 속도는 자세·위치 차분**: 그리퍼 접촉이 걸리면 PhysX 가 보고하는 강체 각속도가 실제 자세 변화와 다름 (잡힌 드론: 보고 29 °/s, 실제 0.5 °/s)
+- PX4 를 띄운 스크립트는 `PR_SET_PDEATHSIG` 로 같이 끝난다 (`simulation_app.close()` 는 atexit 을 건너뜀). 같은 instance PX4 가 남아 있으면 시작 전에 에러
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다
