@@ -22,6 +22,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 씬(UR5 단독 시험용): Ground Plane, Dome Light, EastRural_Table(collider 추가, 상판 z=0.762), UR5 를 테이블에 FixedJoint 로 고정
 - 로봇 description: `isaacsim/ur5_rh_p12_description/` (UR5 + 샌드위치 마운트 + RH-P12-RN(A) + D435i 단일 URDF, xacro 빌드·기구학 검증 완료)
 - 로봇 USD import 완료: `isaacsim/assets/robots/ur5_rh_p12_d435i/ur5_rh_p12_d435i.usda` (1-3 확인 결과 참고)
+- 1·2단계 sim 구성 완료 (로봇 에셋·drive·파지·손목 카메라, 드론 씬·PX4 SITL 드론·스크립트 파지 데모). **단계별 실행 명령: 부록 D**
 
 ---
 
@@ -961,3 +962,101 @@ robot_mount ─ base_link ─ ... ─ wrist_3_link ─ flange ─ tool0
 - 0단계 확정값(스키마, 토픽 이름, 원칙)과 경로 규칙은 `CLAUDE.md`
 - 작업은 단계 단위로 요청하고, 각 단계의 **완료 기준을 검증 항목으로 그대로 전달**한다
 - sim 전용 코드는 `isaacsim/` 폴더, `isaacsim_v6.1.0` 브랜치에서 작업한다
+
+---
+
+## 부록 D: 단계별 실행 명령 (bash)
+
+모두 레포 최상위(`~/data_collection_ur5_gripper`)에서 실행. Isaac Sim 스크립트는 `~/isaacsim/python.sh`, `--headless` 는 점검(결과 PASS/FAIL, 리포트는 `isaacsim/reports/`),
+빼면 GUI (실제 시간 속도, 창을 닫으면 종료). 결과 해석은 각 단계 절 참고.
+
+```bash
+cd ~/data_collection_ur5_gripper
+```
+
+### 1단계: 로봇 에셋
+
+```bash
+# 1-2 URDF 빌드 (xacro → out/, git 제외). 기구학 yaml 은 실물 로봇 값으로
+isaacsim/ur5_rh_p12_description/scripts/build_urdf.sh kinematics_params:=$HOME/my_robot_calibration.yaml
+# 1-3 import 는 Isaac Sim GUI (URDF importer, 1-3 의 옵션) → isaacsim/assets/robots/ur5_rh_p12_d435i/
+
+# 1-4 구조 회귀 검사 (로봇 USD 재import 할 때마다) → 8/8 PASS
+~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless
+~/isaacsim/python.sh isaacsim/scripts/check_self_collision.py --headless
+
+# 1-5 drive 튜닝 (자세한 것: docs/drive_tuning.md)
+~/isaacsim/python.sh isaacsim/scripts/compute_gain_seed.py --headless
+~/isaacsim/python.sh isaacsim/scripts/tune_drives.py --headless
+~/isaacsim/python.sh isaacsim/scripts/tune_drives.py --tests ACD --configs isaacsim/config/drive_gains.yaml --realtime   # GUI
+
+# 1-6 손가락 collider·마찰·파지 시험 (파지력: docs/gripper_force.md)
+~/isaacsim/python.sh isaacsim/scripts/grasp_tests.py --headless
+~/isaacsim/python.sh isaacsim/scripts/grasp_tests.py --tests K,G1 --realtime --wrist-view                              # GUI, 일부만
+
+# 1-7 손목 카메라
+~/isaacsim/python.sh isaacsim/scripts/check_wrist_camera.py --headless
+~/isaacsim/python.sh isaacsim/scripts/check_wrist_camera.py --hold --tilts 0                                           # GUI 손목 시점
+```
+
+### 2단계 1번: 드론 씬·기하 제어기 드론
+
+```bash
+# 2-1 드론 에셋 점검 (드론 설정·에셋을 바꿀 때마다) → 4/4. 간이 드론은 먼저 빌드
+~/isaacsim/python.sh isaacsim/scripts/check_drone.py --headless
+~/isaacsim/python.sh isaacsim/scripts/build_simple_drone.py
+~/isaacsim/python.sh isaacsim/scripts/check_drone.py --headless --drone-config isaacsim/config/drone_simple.yaml
+
+# 2-2 기하 제어기 비행 시험 (드론 설정과 무관하게 기하) → 4/4
+~/isaacsim/python.sh isaacsim/scripts/check_flight.py --headless --prop-spin on
+~/isaacsim/python.sh isaacsim/scripts/check_flight.py --view --mode hover --prop-spin on --release-after 8              # GUI
+
+# 2-3 씬 (테이블·로봇·카메라·드론) — 기하 제어기로 보려면 --flight geometric
+~/isaacsim/python.sh isaacsim/scripts/drone_scene.py --headless --check                                                # → 3/3
+~/isaacsim/python.sh isaacsim/scripts/drone_scene.py --flight geometric --mode hover --prop-spin on                      # GUI
+~/isaacsim/python.sh isaacsim/scripts/drone_scene.py --init-pose -0.1888 -0.7854 0.9599 1.3963 -1.5708 0.1888          # 팔 시작 자세
+
+# 2-4 스크립트 파지 데모 + 자동 판정
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --headless --case all --flight geometric                          # → 6/6
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --case offset_y --flight geometric --prop-spin on --hold            # GUI
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --case success --tcp-offset 0 0.005 0 --flight geometric            # 어긋나게 잡기
+```
+
+### 2단계 2번: PX4 SITL 드론 (기본 제어기)
+
+```bash
+# 설치 (한 번, 2단계 2번 P-1): PX4 v1.16.0, 빌드용 venv, pymavlink
+cd ~ && git clone --branch v1.16.0 --depth 1 https://github.com/PX4/PX4-Autopilot.git && cd PX4-Autopilot
+git submodule update --init --recursive --depth 1
+git -C platforms/nuttx/NuttX/nuttx tag nuttx-11.0.0 HEAD          # shallow clone 이라 버전 헤더용 태그가 없음 (SITL 영향 없음)
+python3 -m venv .venv && .venv/bin/pip install -r Tools/setup/requirements.txt
+PATH=$HOME/PX4-Autopilot/.venv/bin:$PATH make px4_sitl_default none   # 빌드 뒤 PX4 셸이 뜨면 Ctrl+C
+cd ~/data_collection_ur5_gripper
+~/isaacsim/python.sh -m pip install --target isaacsim/.pydeps pymavlink
+
+# PX4 비행 시험 (0.75 배 Iris, 모션캡처, 120 Hz) → 5/5
+~/isaacsim/python.sh isaacsim/scripts/check_px4.py --headless --drone-config isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120
+~/isaacsim/python.sh isaacsim/scripts/check_px4.py --view --drone-config isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120 --prop-spin on   # GUI
+#   비교 옵션: --position-source mocap|flow|gps, --motor-lag on|off, --sensor-compat on|off, --px4-param NAME=VALUE
+#   Pegasus 기준선: --drone-config isaacsim/config/drone_iris_pegasus.yaml --position-source gps --physics-hz 250
+
+# 씬 (테이블 위 이륙 → 호버, 약 25 s), waypoint
+~/isaacsim/python.sh isaacsim/scripts/drone_scene.py --prop-spin on
+~/isaacsim/python.sh isaacsim/scripts/drone_scene.py --drone-waypoints 1.0,0.2,1.3 0.8,-0.1,1.6 --drone-pos 0.6 0 1.5 --prop-spin on
+
+# 다른 터미널에서 드론 명령 (drone_scene.py 에서, status 의 ready 가 true 가 된 뒤. 시스템 python3)
+python3 isaacsim/scripts/drone_cmd.py status
+python3 isaacsim/scripts/drone_cmd.py goto 0.65 0.05 1.45 --yaw-deg 20
+python3 isaacsim/scripts/drone_cmd.py hold          # land | kill (kill 은 언제나)
+
+# 파지 데모 (PX4 드론) → 6/6. 잡은 뒤 모터 정지까지 --kill-delay [s] (기본 1)
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --headless --case all
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --case success --kill-delay 10 --prop-spin on --hold                # GUI
+~/isaacsim/python.sh isaacsim/scripts/grasp_demo.py --case success --position-source flow --prop-spin on                # 참고: flow 는 팔이 아래로 오면 드론이 도망감
+
+# PX4 비행 로그 분석 (isaacsim/reports/px4_<시각>/log/*/*.ulg): pyulog (레포 밖 venv 에 설치해서)
+```
+
+### 3단계 이후
+(각 단계 작업 후 여기에 추가)
+
