@@ -56,6 +56,8 @@ parser.add_argument("--tcp-offset", type=float, nargs=3, default=None, metavar=(
                          "x = 몸체 길이 방향")
 parser.add_argument("--flight", default=None, choices=("geometric", "px4"), help="드론 제어기 (기본: 드론 설정 flight.backend)")
 parser.add_argument("--position-source", default=None, choices=("mocap", "flow", "gps"), help="px4 위치 정보 (기본: px4_sitl.yaml)")
+parser.add_argument("--drone-waypoints", nargs="+", default=None, metavar="X,Y,Z",
+                    help="px4: 이륙 뒤 차례로 들를 위치 (world m, 'x,y,z'), 마지막에 드론 위치에서 호버")
 parser.add_argument("--kill-delay", type=float, default=None, help="잡은 뒤 드론 모터 정지까지 [s] (기본: 설정 kill_delay)")
 parser.add_argument("--px4-param", action="append", default=[], metavar="NAME=VALUE", help="비교용: PX4 파라미터 덮어쓰기")
 parser.add_argument("--hold", action="store_true", help="GUI: 끝난 뒤 창을 닫을 때까지 유지")
@@ -128,7 +130,8 @@ class Demo:
             drone_config = _drone_config_with_params(args.drone_config, args.px4_param)
         self.s = s = ds.build_scene(args.robot_config, args.scene_config, drone_config, spawn, args.mode, args.seed,
                                     args.prop_spin == "on", "fixed", args.init_pose, extra_setup=setup, flight=args.flight,
-                                    position_source=args.position_source, report_dir=args.report_dir, realtime=REALTIME)
+                                    position_source=args.position_source, report_dir=args.report_dir, realtime=REALTIME,
+                                    waypoints=[ds.parse_waypoint(w) for w in (args.drone_waypoints or [])])
         from isaacsim.core.experimental.prims import RigidPrim
 
         self.link_paths = s.extra_setup

@@ -258,7 +258,8 @@ class DroneFlight:
         self.px4 = px4_bridge.PX4Bridge(sitl, px4c, sensors, self.w_max, n, seed, report_dir or ts.REPORT_DIR)
         # PX4 local 원점 = EKF 초기화 위치 = 시작 위치 (바닥에 놓인 드론)
         self.cmd = drone_cmd.PX4Commander(int(sitl["offboard_port"]) + int(sitl["instance"]), p_start,
-                                          sitl["commander"]["setpoint_hz"], sitl["commander"]["retry_sec"])
+                                          sitl["commander"]["setpoint_hz"], sitl["commander"]["retry_sec"],
+                                          command_port=int(sitl["command_port"]) + int(sitl["instance"]))
 
     def _px4_airframe_params(self, px4c):
         """우리 기체에 맞춘 PX4 파라미터 (설정에서 켠 것만).
@@ -383,7 +384,7 @@ class DroneFlight:
             e, self.cb_error = self.cb_error, None
             raise RuntimeError(f"드론 비행 콜백 에러: {e!r}") from e
         if self.cmd is not None:
-            if self.ref.mode == "hover" and self.cmd.target is not None:
+            if self.ref.mode == "hover" and self.cmd.target is not None and not self.cmd.external:
                 self.cmd.goto(self.ref(self.t - self.t_arm)[0])
             self.cmd.tick(self.t)
 

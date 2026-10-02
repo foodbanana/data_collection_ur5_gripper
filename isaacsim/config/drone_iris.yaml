@@ -44,7 +44,8 @@ articulation:
 #   추력 모델 값은 Pegasus Iris 기본값 (QuadraticThrustCurve, LinearDrag) 그대로
 flight:
   # 제어기: geometric (Pegasus 예제 기하 제어기, 아래 controller) | px4 (PX4 SITL, 아래 px4 절, PLAN 2단계 2번)
-  backend: geometric
+  #   기본 px4 (2026-10-02 사용자 결정: 잡을 때 실물처럼 제어기가 버팀). 기하 제어기는 --flight geometric (이륙 없이 바로 시작)
+  backend: px4
   rotors: [rotor0, rotor1, rotor2, rotor3]     # 추력을 거는 강체 (최상위 prim 기준). 순서 = rot_dir 순서 = PX4 모터 순서
   rot_dir: [-1, -1, 1, 1]                      # 회전 방향 (Pegasus Iris: rotor0·1 과 rotor2·3 이 대각선 쌍)
   rotor_constant: 8.54858e-6                   # k [N/(rad/s)²]

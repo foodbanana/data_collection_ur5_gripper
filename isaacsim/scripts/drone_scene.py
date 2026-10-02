@@ -44,7 +44,9 @@ TABLE_PATH = "/World/Table"
 THIRD_VIEW_ROOT = "/World/ThirdView"
 THIRD_VIEW_NAME = "third_view_color_camera"
 CHECK_SEC = 10.0
-CRIT = {"arm_dev_deg": 0.1, "drone_err_mm": 10.0, "drone_tilt_deg": 2.0, "img_mean": (10.0, 245.0), "img_std": 5.0}
+# drone_err_mm: geometric 은 정답 상태로 mm 단위 유지, px4 는 PX4 위치 유지 흔들림 (모션캡처 호버 RMS 19 mm, 최대 약 33 mm, 2026-10-02)
+CRIT = {"arm_dev_deg": 0.1, "drone_err_mm": {"geometric": 10.0, "px4": 50.0}, "drone_tilt_deg": 2.0, "img_mean": (10.0, 245.0),
+        "img_std": 5.0}
 
 
 def _update():
@@ -60,6 +62,17 @@ def _running():
     return omni.kit.app.get_app().is_running()
 
 
+def parse_waypoint(text):
+    """'x,y,z' → [x, y, z] (argparse type)."""
+    try:
+        v = [float(t) for t in text.split(",")]
+    except ValueError:
+        v = []
+    if len(v) != 3:
+        raise argparse.ArgumentTypeError(f"waypoint 는 'x,y,z' (m): {text}")
+    return v
+
+
 def make_parser():
     parser = argparse.ArgumentParser(description="드론 파지 씬 (PLAN 2-3)")
     parser.add_argument("--headless", action="store_true")
@@ -72,6 +85,8 @@ def make_parser():
     parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed (px4: 센서 잡음 seed)")
     parser.add_argument("--flight", default=None, choices=fl.BACKENDS, help="드론 제어기 (기본: 드론 설정 flight.backend)")
     parser.add_argument("--position-source", default=None, choices=("mocap", "flow", "gps"), help="px4 위치 정보 (기본: px4_sitl.yaml)")
+    parser.add_argument("--drone-waypoints", nargs="+", default=None, metavar="X,Y,Z", type=parse_waypoint,
+                        help="px4: 이륙 뒤 차례로 들를 위치 (world m, 'x,y,z'). 첫 점 높이까지 수직 상승 → 각 점 → --drone-pos 에서 호버")
     parser.add_argument("--prop-spin", choices=("on", "off"), default="off", help="프로펠러를 보여 주기용으로 돌림")
     parser.add_argument("--base", default="fixed", choices=BASE_CHOICES, help="로봇 베이스 (kinematic 은 8단계, 미구현)")
     parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q",
@@ -187,9 +202,9 @@ class Scene:
 
 def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_pos=None, mode="static", seed=0,
                 prop_spin=False, base="fixed", init_pose=None, extra_setup=None, flight=None, position_source=None,
-                report_dir=None, realtime=False):
+                report_dir=None, realtime=False, waypoints=None):
     """씬을 만들고 재생까지 한다. 로봇은 init_pose (기본 drive 설정 home_pose, 그리퍼 열림), 드론은 drone_pos 에서 비행 시작.
-    flight: 드론 제어기 (None = 드론 설정 flight.backend). px4 면 테이블 위 이륙 지점에서 PX4 로 이륙 → drone_pos 호버까지 마치고 돌려준다.
+    flight: 드론 제어기 (None = 드론 설정 flight.backend). px4 면 테이블 위 이륙 지점에서 PX4 로 이륙 → (waypoints) → drone_pos 호버까지 마치고 돌려준다.
     extra_setup(s): 재생 전에 호출할 함수 (예: 접촉 보고 켜기). Scene 을 돌려준다."""
     import isaacsim.core.experimental.utils.app as app_utils
     from isaacsim.core.experimental.objects import DomeLight
@@ -221,6 +236,9 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     s.third_cam, s.mount_h = add_third_view_camera(s.stage, s.tv_cfg, float(tc["top_z"]))
     s.extra_setup = extra_setup(s) if extra_setup is not None else None   # 재생 전 (접촉 보고 등)
     s.backend = flight or s.drone_cfg["flight"]["backend"]
+    if waypoints and s.backend != "px4":
+        raise ValueError("--drone-waypoints 는 px4 드론에서만 (geometric 은 drone_pos 에서 바로 시작)")
+    s.waypoints = [np.asarray(w, dtype=float) for w in (waypoints or [])]
     s.px4_cfg = s.scene_cfg["px4"] if s.backend == "px4" else None
     if s.px4_cfg is not None:
         if "px4" not in s.scene_cfg:
@@ -259,7 +277,7 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
 
 
 def px4_takeoff(s, realtime=False):
-    """PX4 드론: 연결 → (이륙 지점 위 목표 높이) 수직 상승 → 드론 위치로 수평 이동 → settle_time 호버.
+    """PX4 드론: 연결 → 이륙 지점 위로 수직 상승 (높이 = 첫 waypoint 또는 드론 위치) → waypoint 차례로 → 드론 위치 → settle_time 호버.
     도착 = PX4 추정 위치가 arrive_tol 안 (실물처럼 실제 위치는 표류만큼 다를 수 있음). 실패하면 에러."""
     c, f = s.px4_cfg, s.flight
     t0 = f.t
@@ -269,7 +287,8 @@ def px4_takeoff(s, realtime=False):
             raise RuntimeError(f"PX4 연결 안 됨 ({f.px4.status}, 명령 링크 {f.cmd.connected}), 로그 {f.px4.run_dir}")
     run(s, 5.0, realtime)                         # EKF 초기화 여유 (바닥에 놓인 채)
     p0 = f._body_pose()[0]
-    legs = [np.array([p0[0], p0[1], s.drone_pos[2]]), s.drone_pos.copy()]
+    first_z = s.waypoints[0][2] if s.waypoints else s.drone_pos[2]
+    legs = [np.array([p0[0], p0[1], first_z]), *[w.copy() for w in s.waypoints], s.drone_pos.copy()]
     f.arm(legs[0])
     for i, goal in enumerate(legs):
         f.cmd.goto(goal)
@@ -293,6 +312,7 @@ def px4_takeoff(s, realtime=False):
     f.t_arm = f.t
     run(s, c["settle_time"], realtime)
     s.px4_ready_t = f.t
+    f.cmd.cli_ready = True                        # 다른 터미널 drone_cmd.py 이동 명령 받기 시작
 
 
 def step(s):
@@ -368,11 +388,13 @@ def check(s, prop_spin, realtime, report_dir):
     log(f"[1] 로봇 시작 자세 유지 (뒤 {CHECK_SEC / 2:.0f} s): 팔 관절 최대 편차 {dev:.4f}° "
         f"(크면 팔이 테이블·드론·받침대에 닿았거나 자세를 버티지 못함)")
     results.append(("로봇 자세 유지", dev <= CRIT["arm_dev_deg"]))
-    err = np.linalg.norm(rows[-1][2] - s.flight.ref(s.flight.t)[0]) * 1000
+    # 목표 = px4 면 지금 명령 목표 (다른 터미널 drone_cmd.py goto 로 바뀌었을 수 있음), geometric 이면 기준 궤적
+    goal = s.flight.cmd.target if s.backend == "px4" and s.flight.cmd.target is not None else s.flight.ref(s.flight.t)[0]
+    err = np.linalg.norm(rows[-1][2] - goal) * 1000
     tilt = max(r[3] for r in half)
-    log(f"[2] 드론 비행 ({s.flight.ref.mode}): {CHECK_SEC:.0f} s 뒤 목표와 거리 {err:.2f} mm, 뒤 절반 기울기 최대 {tilt:.2f}°, "
+    log(f"[2] 드론 비행 ({s.backend}, {s.flight.ref.mode}): {CHECK_SEC:.0f} s 뒤 목표와 거리 {err:.2f} mm (기준 {CRIT['drone_err_mm'][s.backend]:.0f}), 뒤 절반 기울기 최대 {tilt:.2f}°, "
         f"로터 ω {np.round(s.flight.omega, 1).tolist()} rad/s")
-    results.append(("드론 비행", err <= CRIT["drone_err_mm"] and tilt <= CRIT["drone_tilt_deg"]))
+    results.append(("드론 비행", err <= CRIT["drone_err_mm"][s.backend] and tilt <= CRIT["drone_tilt_deg"]))
     out_dir = os.path.join(report_dir, f"drone_scene_{datetime.datetime.now():%Y%m%d_%H%M%S}")
     os.makedirs(out_dir, exist_ok=True)
     imgs, ok_img = {}, True
@@ -436,7 +458,7 @@ def main():
         scene = build_scene(args.robot_config, args.scene_config, args.drone_config, args.drone_pos, args.mode, args.seed,
                             args.prop_spin == "on", args.base, args.init_pose, flight=args.flight,
                             position_source=args.position_source, report_dir=args.report_dir,
-                            realtime=not args.headless or args.realtime)
+                            realtime=not args.headless or args.realtime, waypoints=args.drone_waypoints)
         if args.check:
             ok = check(scene, args.prop_spin, args.realtime, args.report_dir)
         elif args.headless:

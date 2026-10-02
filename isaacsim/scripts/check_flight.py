@@ -2,7 +2,7 @@
 # =============================================================
 # check_flight.py  (docs/PLAN.md 2-2)
 #
-# 드론 비행(drone_flight.DroneFlight, Pegasus 방식: 로터 4 개 추력 + 기하 제어기) 시험. 씬: ground plane + 드론 (로봇 없음)
+# 드론 비행(drone_flight.DroneFlight, Pegasus 방식: 로터 4 개 추력 + 기하 제어기) 시험. 드론 설정 backend 와 무관하게 기하 제어기 (PX4 는 check_px4.py). 씬: ground plane + 드론 (로봇 없음)
 #   F1 정지 호버 (static): 목표 = 시작 위치, FLY_SEC → 처음 SETTLE_SEC 뒤 위치 오차·기울기, 로터 ω 가 호버 값 근처
 #      (무게중심이 조금만 치우쳐도 자세 적분항이 없는 Pegasus 제어기는 몸체가 살짝 기운 채 버티며 옆으로 밀리고,
 #       위치 적분항(Ki/Kp ≈ 0.15 /s)이 수 초에 걸쳐 없앤다 → 처음 SETTLE_SEC 는 수렴 구간으로 제외)
@@ -153,7 +153,7 @@ def prop_check(f, log, t0, why):
 
 
 def tests(cfg, info):
-    f = fl.DroneFlight(cfg, info, mode="static", target=START)
+    f = fl.DroneFlight(cfg, info, mode="static", target=START, backend="geometric")
     R.log(f"PhysX 질량 {f.mass:.4f} kg, 관성 대각 (kg·m², 전체 무게중심 둘레) {np.round(np.diag(f.inertia), 6).tolist()}")
     sc = "기체 비율로 환산" if cfg["flight"]["controller"]["scale_to_airframe"] else "그대로"
     R.log(f"게인 (Pegasus 값 {sc}) Kp {np.round(f.ctrl.Kp, 3).tolist()}, Kd {np.round(f.ctrl.Kd, 3).tolist()}, "
@@ -256,7 +256,7 @@ def view(cfg, info):
     from isaacsim.core.rendering_manager import ViewportManager
 
     ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[0.9, -0.9, START[2] + 0.4], target=list(START))
-    f = fl.DroneFlight(cfg, info, mode=args.mode, seed=args.seed, target=START)
+    f = fl.DroneFlight(cfg, info, mode=args.mode, seed=args.seed, target=START, backend="geometric")
     f.start()
     f.arm()
     print(f"[view] {args.mode} 비행 → {args.release_after:.0f} s 뒤 모터 정지. 창을 닫으면 종료", flush=True)

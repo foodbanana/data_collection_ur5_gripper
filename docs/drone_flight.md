@@ -6,7 +6,7 @@
 2단계 씬의 드론은 **로터 4 개의 추력으로 실제 쿼드콥터처럼 난다.** 몸체를 손으로 붙잡아 두는 가상의 힘이 아니라,
 제어기가 정한 로터 회전속도로 추력을 만들고 그 추력으로 몸체를 기울여 움직인다.
 구조·식·게인은 **Pegasus Simulator 의 Iris 예제를 그대로 옮겼고**, 우리 기체(Iris 0.75 배, 0.8 kg)에 맞게 게인만 환산했다.
-제어기는 두 가지다: **기하 제어기**(1~12장, `flight.backend: geometric`, 기본)와 **PX4 SITL**(13장, `--flight px4`). 추력·반토크·공기저항·프로펠러 표시는 같은 코드.
+제어기는 두 가지다: **PX4 SITL**(13장, `flight.backend: px4`, **기본**, 2026-10-02)과 **기하 제어기**(1~12장, `--flight geometric`). 추력·반토크·공기저항·프로펠러 표시는 같은 코드.
 
 ---
 
@@ -444,10 +444,23 @@ PX4 공식 Gazebo Iris 는 충돌이 상자라 평평하게 선다. 충돌 메�
 # GUI 비행 보기
 ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/check_px4.py --view --drone-config ~/data_collection_ur5_gripper/isaacsim/config/drone_iris.yaml --start-z 0.08 --physics-hz 120 --prop-spin on
 
-# 로봇 씬 + PX4 드론, 파지
-~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --flight px4 --prop-spin on
-~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --case success --flight px4 [--kill-delay 10] --prop-spin on --hold
-~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --headless --case all --flight px4
+# 로봇 씬 + PX4 드론 (기본), 파지. 기하 제어기는 --flight geometric
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --prop-spin on
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --case success [--kill-delay 10] --prop-spin on --hold
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --headless --case all
+
+# 이륙 뒤 들를 위치 (world m): 첫 점 높이까지 수직 상승 → 각 점 → --drone-pos (기본 0.60, 0, 1.50) 에서 호버
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --drone-waypoints 1.0,0.2,1.3 0.8,-0.1,1.6 --prop-spin on
+
+# 다른 터미널에서 명령 (씬이 이륙·waypoint 를 마친 뒤 = status 의 ready true). 시스템 python3 로 실행
+python3 ~/data_collection_ur5_gripper/isaacsim/scripts/drone_cmd.py status
+python3 ~/data_collection_ur5_gripper/isaacsim/scripts/drone_cmd.py goto 0.65 0.05 1.45 --yaw-deg 20
+python3 ~/data_collection_ur5_gripper/isaacsim/scripts/drone_cmd.py hold      # | land | kill (kill 은 언제나)
 ```
 PX4 비행 로그(`.ulg`)·콘솔은 `isaacsim/reports/px4_<시각>/` (분석: pyulog). 스크립트가 어떻게 끝나도 PX4 는 같이 종료된다 (`PR_SET_PDEATHSIG`).
+
+**다른 터미널 명령 (`drone_cmd.py` CLI)**: PX4 Offboard 는 위치 목표를 끊김 없이(2 Hz 이상) 받아야 유지되므로, 목표는 씬 안 `PX4Commander` 가 20 Hz 로 계속 보내고
+CLI 는 UDP localhost `command_port` (14600) 로 JSON 명령을 보내 그 목표를 바꾼다 (실물에서 보조 컴퓨터가 setpoint 를 보내고 사람이 높은 수준 명령을 주는 구성).
+씬이 이륙·waypoint 를 마치기 전에는 이동 명령 거부. CLI 로 goto·hold 하면 hover 모드 사인파 목표는 멈춤.
+확인 (2026-10-02): 이륙 중 goto → 거부, waypoint 2 개 뒤 ready, `goto 0.65 0.05 1.45 --yaw-deg 20` → 4 s 뒤 추정 (0.654, 0.060, 1.465)
 

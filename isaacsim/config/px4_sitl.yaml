@@ -11,6 +11,7 @@ autolaunch: true          # true: 씬 스크립트가 PX4 를 띄우고 끝낼 �
 instance: 0               # PX4 -i (포트 = 기본 포트 + instance)
 sim_port: 4560            # TCP, sim = 서버 (PX4 simulator_mavlink 가 접속)
 offboard_port: 14540      # UDP, PX4 offboard API 링크 (drone_cmd.PX4Commander)
+command_port: 14600       # UDP (localhost), 다른 터미널의 drone_cmd.py CLI → 씬 안 PX4Commander (goto·hold·land·kill·status)
 lockstep_timeout: 10.0    # s (실제 시간), 첫 모터 명령 뒤 이만큼 PX4 응답이 없으면 에러
 
 # 위치 정보 방식 --position-source 로 바꿈

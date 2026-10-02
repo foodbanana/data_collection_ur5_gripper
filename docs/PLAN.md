@@ -758,7 +758,16 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - [x] `--flight px4` 로 파지 6 케이스 판정 → 6/6 (모션캡처)
 - [x] 잡을 때 떨림 비교표 (기하 vs PX4 모션캡처, kill 대기 0.5~10 s). flow 는 팔이 아래로 오면 드론이 도망가 파지 불가 (기록)
 - [x] 문서 정리 (`docs/drone_flight.md` 13장, CLAUDE.md)
-- [ ] (남음) P-5 다른 터미널에서 쓰는 드론 명령 CLI, `--drone-waypoints`, 기본 제어기를 px4 로 바꿀지 결정
+- [x] 기본 제어기 px4 (2026-10-02 사용자 결정, `drone_iris.yaml` `flight.backend: px4`, 기하는 `--flight geometric`. `check_flight` 는 기하 고정,
+  `drone_scene --check` 드론 오차 기준 geometric 10 mm / px4 50 mm)
+- [x] P-5 `--drone-waypoints x,y,z ...` (이륙 뒤 차례로, 마지막 드론 위치 호버), 다른 터미널 CLI `drone_cmd.py goto|hold|land|kill|status`
+  (UDP localhost 14600 → 씬 안 PX4Commander 가 목표를 바꿔 계속 송신. 이륙 중 이동 명령 거부, kill 은 항상)
+  - **추천 씬**: `goto` 는 `drone_scene.py` (드론과 팔이 같이 있지만 팔이 자동으로 잡지 않는 씬)에서 — 드론 위치를 바꿔 카메라에 보이는 모습·팔이 닿는 범위 확인,
+    나중에 텔레옵 수집(5~6단계)에서 에피소드마다 드론 위치 바꾸기. `grasp_demo.py` 는 ready 직후 팔이 자동으로 드론을 쫓아가 잡으므로 `goto` 를 쓰면
+    파지를 방해 → `--drone-waypoints`·`--drone-pos` 만 씀
+  - 확인 (2026-10-02): 이륙 중 goto 거부, waypoint 2 개 뒤 sim 29 s 에 ready, `goto 0.65 0.05 1.45 --yaw-deg 20` → 4 s 뒤 추정 (0.654, 0.060, 1.465).
+    `drone_scene --check` 드론 오차는 px4 면 지금 명령 목표와 비교 (goto 로 바뀔 수 있음)
+  - 회귀 (기본 px4): `drone_scene --check` 3/3 (목표와 20.8 mm), `check_flight` (기하 고정) 4/4, `grasp_demo --case success` held
 
 ---
 
