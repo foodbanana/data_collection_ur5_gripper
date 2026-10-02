@@ -26,6 +26,7 @@
 #     센서 주기는 physics step 정수배로 셈 (Pegasus 는 시간 누적 비교)
 # =============================================================
 
+import functools
 import math
 
 import numpy as np
@@ -139,6 +140,19 @@ class Barometer:
         return {"abs_pressure_hpa": p_noisy * 0.01, "pressure_alt": p_alt, "temperature": T + self.ABS_ZERO}
 
 
+@functools.lru_cache(maxsize=4096)
+def _mag_field_enu(lat, lon):
+    """지구 자기장 (ENU, gauss). 표 보간이 매 스텝 Python 시간을 먹어 (PLAN 3-1) 위경도 1e-5° (약 1.1 m) 격자로 캐시.
+    1 m 안 자기장 차이는 센서 잡음보다 훨씬 작다."""
+    dec, inc = math.radians(get_mag_declination(lat, lon)), math.radians(get_mag_inclination(lat, lon))
+    s = 0.01 * get_mag_strength(lat, lon)                        # gauss
+    H = s * math.cos(inc)
+    field_ned = np.array([H * math.cos(dec), H * math.sin(dec), math.tan(inc) * H])
+    field_enu = enu_to_ned(field_ned)                            # NED ↔ ENU 는 같은 변환
+    field_enu.setflags(write=False)                              # 캐시 값이 바뀌지 않게
+    return field_enu
+
+
 class Magnetometer:
     def __init__(self, c, dt, rng, origin):
         self.nd, self.rw, self.tau = c["noise_density"], c["random_walk"], c["bias_correlation_time"]
@@ -151,13 +165,7 @@ class Magnetometer:
             return None
         dt = self.gate.period
         lat, lon = reprojection(p, math.radians(self.origin[0]), math.radians(self.origin[1]))
-        lat, lon = math.degrees(lat), math.degrees(lon)
-        dec, inc = math.radians(get_mag_declination(lat, lon)), math.radians(get_mag_inclination(lat, lon))
-        s = 0.01 * get_mag_strength(lat, lon)                        # gauss
-        H = s * math.cos(inc)
-        field_ned = np.array([H * math.cos(dec), H * math.sin(dec), math.tan(inc) * H])
-        field_enu = enu_to_ned(field_ned)                            # NED ↔ ENU 는 같은 변환
-        body = flu_to_frd(R.T @ field_enu)
+        body = flu_to_frd(R.T @ _mag_field_enu(round(math.degrees(lat), 5), round(math.degrees(lon), 5)))
         sd = self.nd / math.sqrt(dt)
         sb = _bias_sigma(self.rw, self.tau, dt)
         self.bias = math.exp(-dt / self.tau) * self.bias + sb * self.rng.standard_normal(3)

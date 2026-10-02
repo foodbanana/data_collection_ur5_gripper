@@ -7,6 +7,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
+sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
 
 ## 경로 규칙
 
@@ -81,4 +82,9 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 - **PX4 SITL** (`--flight px4`, `docs/drone_flight.md` 13장): `~/PX4-Autopilot` v1.16.0, pymavlink 은 `isaacsim/.pydeps/` (git 제외, `~/isaacsim` 에 설치 안 함).
   **가상 센서에 주는 속도는 자세·위치 차분**: 그리퍼 접촉이 걸리면 PhysX 가 보고하는 강체 각속도가 실제 자세 변화와 다름 (잡힌 드론: 보고 29 °/s, 실제 0.5 °/s)
 - PX4 를 띄운 스크립트는 `PR_SET_PDEATHSIG` 로 같이 끝난다 (`simulation_app.close()` 는 atexit 을 건너뜀). 같은 instance PX4 가 남아 있으면 시작 전에 에러
+- **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).
+  카메라는 OmniGraph Camera Helper, 주기는 카메라 prim `omni:sensor:tickRate` (6.0 부터, `frameSkipCount` deprecated). 앱 루프 30 Hz (= 카메라), 물리 120 Hz.
+  카메라 받는 쪽은 RELIABLE (best effort 면 640x480 이미지가 통째로 버려짐)
+- **카메라 렌더 설정은 `ros2_iface.yaml` `render` 에 명시** (DLSS Performance). RTX 실시간 렌더러는 DLSS·DLAA 만 지원(TAA·끔 불가),
+  DLSS 모드는 새 stage 마다 기본값으로 돌아가므로 stage 를 만든 뒤 적용하고 다시 읽어 확인
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다

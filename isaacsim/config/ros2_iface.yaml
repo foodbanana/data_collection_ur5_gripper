@@ -1,0 +1,27 @@
+# =============================================================
+# ros2_iface.yaml — sim ROS 2 인터페이스 (docs/PLAN.md 3단계)
+#
+# 토픽 이름은 실물과 같다 (PLAN 부록 B). 카메라는 OmniGraph Camera Helper, 나머지는 rclpy (PLAN 3단계 결정 1)
+# =============================================================
+
+ros_distro: jazzy                 # python.sh 실행 전에 source /opt/ros/<distro>/setup.bash. 다르면 에러
+
+# 카메라 렌더 (VLA 학습 이미지). Isaac Sim 기본값에 맡기지 않고 명시 (docs/sim_performance.md 7장, 2026-10-02 사용자 결정)
+#   RTX 실시간 렌더러는 DLSS(3)·DLAA(4)만 지원. DLSS Performance 는 640x480 을 절반 해상도로 렌더해 키움 —
+#   DLAA(원래 해상도) 대비 평균 차이 1/255 이하, RTF 1.01 vs 0.84
+#   dlss_exec_mode 는 새 stage 마다 기본값으로 돌아가므로 stage 를 만든 뒤 적용하고 다시 읽어 확인 (ros2_iface.apply_render_settings)
+render:
+  anti_aliasing: 3                # SimulationApp anti_aliasing: 3 DLSS, 4 DLAA
+  dlss_exec_mode: 0               # /rtx/post/dlss/execMode: 0 Performance, 1 Balanced, 2 Quality, 3 Auto
+
+cameras:
+  tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz
+  # frame_id: realsense-ros 규칙 <카메라>_color_optical_frame. 실물 wrapper 값은 실물 PC 에서 확인 필요 (PLAN 3단계)
+  wrist:
+    topic: /cam/wrist/color/image_raw
+    info_topic: /cam/wrist/color/camera_info
+    frame_id: wrist_camera_color_optical_frame
+  third_view:
+    topic: /cam/third_view/color/image_raw
+    info_topic: /cam/third_view/color/camera_info
+    frame_id: third_view_camera_color_optical_frame

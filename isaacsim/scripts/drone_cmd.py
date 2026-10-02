@@ -87,8 +87,19 @@ class CommandServer:
 
 
 class PX4Commander:
-    def __init__(self, port, origin_enu, setpoint_hz=20.0, retry_sec=1.0, target_system=1, command_port=None):
+    def __init__(self, port, origin_enu, setpoint_hz=20.0, retry_sec=1.0, target_system=1, command_port=None, disable_streams=()):
         _load_mavlink()
+        # 연결되면 끌 스트림 (px4_sitl.yaml commander.disable_streams). 이름이 틀리면 에러
+        #   메시지 ID 는 MAVLink 2 common 에서 찾는다 (M 은 처음 import 때 v1 dialect 일 수 있고 ODOMETRY 등이 없음. PX4 는 MAVLink 2)
+        from pymavlink.dialects.v20 import common as mav2
+
+        self.disable_ids = []
+        for name in disable_streams:
+            mid = getattr(mav2, f"MAVLINK_MSG_ID_{name}", None)
+            if mid is None:
+                raise ValueError(f"모르는 MAVLink 메시지 이름: {name}")
+            self.disable_ids.append(int(mid))
+        self._streams_sent = False
         self.conn = mavutil.mavlink_connection(f"udpin:0.0.0.0:{int(port)}")
         self.server = CommandServer(command_port) if command_port is not None else None
         self.external = False       # CLI 가 목표를 바꿨음 (씬의 hover 목표 갱신 멈춤)
@@ -177,6 +188,8 @@ class PX4Commander:
                 self.messages.append((round(self.t, 3), int(m.severity), m.text))
             elif k == "COMMAND_ACK":
                 self.acks.append((round(self.t, 3), int(m.command), int(m.result)))
+                if m.command == M.MAV_CMD_SET_MESSAGE_INTERVAL and m.result != M.MAV_RESULT_ACCEPTED:
+                    raise RuntimeError(f"PX4 가 스트림 끄기(SET_MESSAGE_INTERVAL)를 거부: result {m.result}")
 
     # ── 송신 ──
     def _command(self, cmd, *params):
@@ -222,6 +235,10 @@ class PX4Commander:
         """sim 시간 t 로 매 루프 호출: 수신, setpoint 송신, 모드·arm 재요청."""
         self.t = float(t)
         self.poll()
+        if self.connected and not self._streams_sent:
+            for mid in self.disable_ids:
+                self._command(M.MAV_CMD_SET_MESSAGE_INTERVAL, mid, -1)
+            self._streams_sent = True
         if self.server is not None:
             for req, addr in self.server.poll():
                 res = self._handle_cli(req)

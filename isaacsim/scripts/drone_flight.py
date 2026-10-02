@@ -65,6 +65,60 @@ def _log_so3(R):
     return w * (th / math.sin(th))
 
 
+class FastRigid:
+    """매 physics 스텝 읽기·쓰기용: RigidPrim 의 physics tensor view 를 직접 쓴다 (PLAN 3-1).
+    RigidPrim.get_world_poses / apply_forces_and_torques_at_pos 는 호출마다 warp 배열을 여러 개 새로 만들고 복사해
+    드론 스텝 하나에 Python 시간이 크게 든다 (프로파일: warp copy 가 물리 스텝당 18 번). 읽는 값은 같은 view 데이터 (float32).
+    view 는 재생 때 다시 만들어질 수 있어 매번 prim 에서 가져온다."""
+
+    def __init__(self, prim):
+        import warp as wp
+
+        self.prim, self.n = prim, len(prim)
+        self._wp = wp
+        self._cache = None
+
+    @property
+    def view(self):
+        v = self.prim._physics_rigid_body_view
+        if v is None:
+            raise RuntimeError(f"physics tensor view 없음 (재생 전?): {self.prim.paths}")
+        return v
+
+    def poses(self):
+        """(위치 (N, 3), 자세 쿼터니언 wxyz (N, 4)). view 는 xyzw."""
+        d = self.view.get_transforms().numpy()
+        return d[:, :3].copy(), d[:, [6, 3, 4, 5]]       # 복사: CPU 장치면 numpy 가 view 버퍼를 공유할 수 있음
+
+    def velocities(self):
+        """(선속도 (N, 3), 각속도 (N, 3)) world."""
+        d = self.view.get_velocities().numpy()
+        return d[:, :3].copy(), d[:, 3:6].copy()
+
+    def apply_global(self, forces=None, torques=None, positions=None):
+        """world 좌표 힘·토크 (positions: 힘 작용점 world). RigidPrim.apply_forces_and_torques_at_pos(local_frame=False) 와 같음."""
+        wp, view = self._wp, self.view
+        if self._cache is None or self._cache[0] is not view:      # view 가 바뀌면 (재생 다시) 장치·인덱스·버퍼 다시
+            dev = view.get_transforms().device
+            idx = wp.array(np.arange(self.n, dtype=np.int32), dtype=wp.int32, device=dev)
+            bufs = [wp.zeros((self.n, 3), dtype=wp.float32, device=dev) for _ in range(3)]
+            self._cache = (view, idx, bufs, dev.is_cpu)
+        _, idx, bufs, on_cpu = self._cache
+
+        def arr(x, buf):
+            if x is None:
+                return None
+            x = np.asarray(x, dtype=np.float32).reshape(self.n, 3)
+            if on_cpu:
+                buf.numpy()[:] = x                                # CPU: numpy 가 버퍼를 공유 → 새 배열 없이 씀
+            else:
+                buf.assign(x)
+            return buf
+
+        view.apply_forces_and_torques_at_position(arr(forces, bufs[0]), arr(torques, bufs[1]), arr(positions, bufs[2]),
+                                                  indices=idx, is_global=True)
+
+
 class Reference:
     """목표 위치·속도·가속도·jerk (world). static: p0 고정. hover: p0 + 축별 사인파 합 (진폭 합 = amplitude)."""
 
@@ -170,7 +224,8 @@ class DroneFlight:
         self.body = RigidPrim(info["body_path"])
         self.rotors = RigidPrim([dr._sub(path, r) for r in fc["rotors"]])
         self.links = RigidPrim(info["bodies"])
-        self.k = float(fc["rotor_constant"])
+        self.body_io, self.rotors_io = FastRigid(self.body), FastRigid(self.rotors)   # 매 스텝 읽기·쓰기
+        self.k =float(fc["rotor_constant"])
         self.c = float(fc["rolling_moment_coefficient"])
         self.dir = np.asarray(fc["rot_dir"], dtype=float)
         self.w_max = float(fc["max_rotor_velocity"])
@@ -259,7 +314,8 @@ class DroneFlight:
         # PX4 local 원점 = EKF 초기화 위치 = 시작 위치 (바닥에 놓인 드론)
         self.cmd = drone_cmd.PX4Commander(int(sitl["offboard_port"]) + int(sitl["instance"]), p_start,
                                           sitl["commander"]["setpoint_hz"], sitl["commander"]["retry_sec"],
-                                          command_port=int(sitl["command_port"]) + int(sitl["instance"]))
+                                          command_port=int(sitl["command_port"]) + int(sitl["instance"]),
+                                          disable_streams=sitl["commander"]["disable_streams"])
 
     def _px4_airframe_params(self, px4c):
         """우리 기체에 맞춘 PX4 파라미터 (설정에서 켠 것만).
@@ -308,8 +364,8 @@ class DroneFlight:
 
     # ── 질량·관성 (PhysX) ──
     def _body_pose(self):
-        p, q = (x.numpy().reshape(-1) for x in self.body.get_world_poses())
-        return p, q
+        p, q = self.body_io.poses()
+        return p[0], q[0]
 
     def _mass_properties(self):
         """전체 질량, body 좌표계 기준 전체 무게중심 둘레 관성 (링크 관성 + 평행축)."""
@@ -411,8 +467,8 @@ class DroneFlight:
         self.t += dt
         p, q = self._body_pose()
         R = quat_to_R(q)
-        v, w = (x.numpy().reshape(-1) for x in self.body.get_velocities())
-        rp, rq = (x.numpy() for x in self.rotors.get_world_poses())
+        v, w = (x[0] for x in self.body_io.velocities())
+        rp, rq = self.rotors_io.poses()
         # Pegasus 순서: 지난 step 에 제어기가 낸 ω 를 먼저 적용 (한 step 지연) → 그다음 제어기 갱신
         if self.motor_tau is None:
             self.omega = self.omega_cmd
@@ -422,11 +478,10 @@ class DroneFlight:
         self.forces = self.k * self.omega ** 2
         if self.forces.any():
             f_world = np.array([F * quat_to_R(qq)[:, 2] for F, qq in zip(self.forces, rq)])
-            self.rotors.apply_forces_and_torques_at_pos(forces=f_world, positions=rp, local_frame=False)
+            self.rotors_io.apply_global(forces=f_world, positions=rp)
         yaw_torque = float((self.c * self.omega ** 2 * self.dir).sum()) * R[:, 2]
         drag = R @ (-self.drag * (R.T @ v))
-        self.body.apply_forces_and_torques_at_pos(forces=drag.reshape(1, 3), torques=yaw_torque.reshape(1, 3),
-                                                  positions=p.reshape(1, 3), local_frame=False)
+        self.body_io.apply_global(forces=drag, torques=yaw_torque, positions=p)
         if self.spin is not None:
             spd = np.where(self.forces >= VISUAL_FORCE, self.fc["prop_visual_speed"],
                            np.where(self.forces > 0, self.fc["prop_idle_speed"], 0.0))

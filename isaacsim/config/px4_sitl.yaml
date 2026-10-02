@@ -76,6 +76,10 @@ position_sources:
 commander:
   setpoint_hz: 20.0       # Offboard 위치 목표 송신 주기 (sim 시간). PX4 는 2 Hz 이상이어야 Offboard 유지
   retry_sec: 1.0          # 모드·arm 재요청 주기 (sim 시간)
+  # 연결되면 끌 offboard 링크 스트림 (MAV_CMD_SET_MESSAGE_INTERVAL −1, 실물 companion 이 스트림을 고르는 것과 같음).
+  # PX4 onboard 모드는 sim 1 s 에 약 320 개를 보내고 pymavlink 파싱이 sim 프로세스 Python 시간을 먹는다 (PLAN 3-1).
+  # 명령 쪽은 HEARTBEAT·LOCAL_POSITION_NED·ATTITUDE·EXTENDED_SYS_STATE·STATUSTEXT·COMMAND_ACK 만 쓴다
+  disable_streams: [HIGHRES_IMU, ATTITUDE_QUATERNION, ODOMETRY]
 
 sensors:
   # true: Pegasus 코드 동작 그대로 (버그 포함, P-2 기준선, drone_iris_pegasus.yaml 이 덮어씀).

@@ -837,6 +837,47 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     | 관절 속도 | 180 °/s | UR5 관절 최대 속도 (URDF `velocity` π rad/s 와 같음, 넘으면 Cat 0) |
 - 에피소드 리셋 서비스: 로봇 홈 자세, 드론 재배치(랜덤 시드 기록)
   - **홈 자세 복귀는 목표를 한 번에 바꾸지 않고 부드러운 궤적으로 이동** (큰 스텝은 오버슈트와 손목 흔들림 유발, 1-5 A 시험)
+- **이미지 stamp ↔ 실제 화면 상태 지연 측정 (3-8)**: stamp 는 sim time 이지만 렌더 지연으로 이미지가 1프레임 전 물리 상태일 수 있다.
+  팔을 일정 속도로 돌리며 화면 속 위치와 joint 값을 비교해 지연을 잰다
+
+- **sim 카메라 안티에일리어싱(DLSS) 결정 — 6단계(데이터 수집) 전에** (2026-10-02, 9단계에서 옮김. 다 모은 뒤 바꾸면 이미지 분포가 달라짐):
+  Isaac Sim 기본값 = `SimulationApp` `anti_aliasing: 3` (DLSS) + `rtx.post.dlss.execMode = 0` (Performance) → 640x480 카메라를 320x240 으로 렌더해 키움
+  (3-1 GUI 경고 `DLSS increasing input dimensions`). 가는 경계(드론 프레임·프로펠러·손가락 끝)가 뭉개지거나, 시간 누적 방식이라 빠른 움직임에 잔상 가능.
+  실물 RealSense 는 원래 해상도. DLSS Performance / Quality / DLAA(RTXAA) / TAA 비교 이미지(정지·팔 움직임) + RTF 로 정한다 (우리 코드는 아직 설정 안 함)
+  - **비교 결과 (2026-10-02, `docs/sim_performance.md` 7장)**: RTX 실시간 렌더러는 DLSS·DLAA 만 지원 (TAA·끔 불가). DLAA 대비 평균 차이
+    Performance 0.48~1.21 / Balanced 0.42~1.06 / Quality 0.35~0.90 (0~255), 경계 선명도 98~101%, 눈에 띄는 뭉개짐·잔상 없음.
+    RTF (기하 제어기) Performance 1.01 / Balanced 0.99 / Quality 0.96 / DLAA 0.84. DLSS 모드는 새 stage 마다 기본값으로 돌아감 → stage 만든 뒤 설정
+  - **결정 (사용자): DLSS Performance, Isaac Sim 기본값에 맡기지 않고 `ros2_iface.yaml` `render` 에 명시** (적용 후 다시 읽어 확인, 다르면 에러).
+    4단계 에피소드 메타데이터에 렌더 설정 기록
+
+**3-0 결과 (2026-10-02)**: `python.sh` 안 rclpy = 시스템 `/opt/ros/jazzy` (`rmw_fastrtps_cpp`, domain 기본), 외부 터미널에서 토픽 보임.
+python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.enable_ros2` 가 확인, 아니면 에러)
+
+**3-1 결과 (2026-10-02, `measure_rtf.py`, headless, 기하 제어기 드론, 물리 120 Hz, RTX 4070 Ti SUPER)**
+| loop(렌더) | 카메라 tickRate | RTF | update 1회 | 물리 구간 | 나머지(렌더·앱) | 카메라 (sim 기준) |
+|---|---|---|---|---|---|---|
+| 120 Hz | 끔 | 0.71 | 11.7 ms | – | – | – |
+| 120 Hz | 0 (매 프레임) | 0.40 | 20.7 ms | – | – | 106 Hz |
+| 120 Hz | 30 | 0.52 | 15.9 ms | 6.4 ms (1 스텝) | 9.5 ms | 30.0 Hz |
+| 60 Hz | 30 | 0.81 | 20.7 ms | – | – | – |
+| **30 Hz** | **30** | **0.94** | 35.6 ms | 23.5 ms (4 스텝) | 12.0 ms | **30.0 Hz**, 간격 최대 33 ms |
+| 30 Hz | 끔 | 1.25 | 26.8 ms | 20.1 ms (4 스텝) | 6.7 ms | – |
+- loop 30 Hz (= 카메라 주기) 가 맞다: 렌더·앱 처리가 카메라 한 번에 묶이고 카메라 주기는 그대로
+- **남은 병목은 물리 스텝당 약 5~6 ms** (sim 1 s 에 0.6~0.7 s). PhysX 와 우리 Python 콜백(드론·drive)을 나눠 볼 것
+- **받는 쪽 QoS**: best effort 로 받으면 640x480 이미지(0.9 MB)가 UDP 조각 손실로 통째로 버려져 sim 25 Hz, 0.6~1.2 s 끊김.
+  RELIABLE 로 받으면 600/600 장 (위 표). 보내는 쪽(Camera Helper, realsense-ros)과 받는 쪽 중 하나라도 best effort 면 best effort 로 동작
+- **GUI** (PX4, loop 30): 메인 뷰포트만 0.89 (+0.7 ms), 카메라 뷰포트 창 2개를 더 띄우면 0.75 (+7 ms, 같은 카메라를 또 렌더).
+  **결정: 텔레옵 GUI 는 메인 뷰포트 하나, 손목·third view 는 ROS 토픽으로 본다** (`rqt_image_view` 등, 녹화 이미지 그대로)
+- **Python 콜백 최적화** (PX4, loop 30, update 당 Python 6.3 → 2.4 ms. 렌더·PhysX 설정은 바꾸지 않음, 사용자 결정):
+  - 드론 매 스텝 읽기·쓰기를 RigidPrim 대신 physics tensor view 직접 (`drone_flight.FastRigid`, 같은 값. warp 배열 생성·복사가 스텝당 18 번이던 것)
+  - PX4 offboard 링크의 안 쓰는 스트림 끄기 (`px4_sitl.yaml` `commander.disable_streams`: HIGHRES_IMU 50 Hz, ATTITUDE_QUATERNION 50 Hz, ODOMETRY 30 Hz.
+    onboard 모드는 sim 1 s 에 약 320 개를 보냄. 실물 companion 이 스트림을 고르는 것과 같음, 거부되면 에러)
+  - 지자기 표 보간 캐시 (위경도 1e-5° ≈ 1.1 m 격자, 1 m 안 차이는 센서 잡음보다 훨씬 작음)
+  - **결과: RTF 헤드리스 0.91 → 0.99, GUI(메인 뷰포트) 0.89 → 0.97**, 카메라 sim 30.0 Hz 그대로. 남은 시간 PhysX 약 18 ms + 렌더·앱 약 13 ms
+  - 프로펠러 회전(GUI 기본으로 사용)을 켜면 GUI 0.94 (Articulation API 오버헤드 +1 ms, 지금은 최적화 안 함)
+  - RTF 0.97 = 실제보다 3% 느림. stamp 가 sim time 이라 데이터 정합성은 문제없음. 실제 텔레옵에서 느리게 느껴지면 렌더·PhysX 를 다시 본다
+- CPU 경고 `CPU performance profile is set to powersave` 는 잘못된 경보: `intel_pstate` 의 governor 이름이 powersave 일 뿐,
+  EPP·전원 프로필은 performance, 부하 중 P코어 5.3 GHz(최대). 바꾸지 않는다
 
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
@@ -854,7 +895,11 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **작업**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
+  - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
+    (`ros2 topic info -v /d435i/d435i/color/image_raw`, 실물 30 Hz 카메라가 20~25 Hz 로 떨어지는 원인일 수 있음)
 - stage1
+  - **이미지 나이 검사**: 25 Hz 격자 시각 t 와 고른 이미지 stamp 의 차이가 기준(예: 66 ms = 2 프레임)을 넘으면 에러.
+    지금은 이미지가 빠지면 `latest_at` 이 옛날 이미지를 조용히 고른다 (옛 이미지 + 새 joint). 실물에도 적용
   - 카메라 매핑: 고정 표 `/cam/wrist/...` → `wrist`, `/cam/third_view/...` → `third_view` (토픽 없으면 에러)
   - `fake_gripper_cameras_sim.py` 의 카메라 토픽을 `/cam/wrist/color/image_raw`(D435i 역할), `/cam/third_view/color/image_raw`(D456 역할)로 변경.
     stage1 카메라 매핑 변경과 같은 커밋에서 할 것
@@ -959,6 +1004,9 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 실물 파이프라인을 같은 스키마(카메라 키, 그리퍼 스케일)로 통일
 - 실물 카메라 장착 위치를 sim 과 일치 (1-7 에서 확정한 `cam_tilt` 로 실물 마운트 출력)
 - sim/실물 데이터 혼합 비율 실험
+- **실물 시계 확인**: RealSense stamp(카메라 하드웨어 시각 또는 PC 시각)와 UR 드라이버 stamp(PC 시각)가 같은 기준인지.
+  stage1 은 header.stamp 로 맞추므로 기준이 다르면 이미지와 관절이 어긋난다 (sim 은 둘 다 sim time)
+- sim camera_info 의 fy 는 fx 로 맞춰진다 (렌더러가 정사각 픽셀만, 실물 fy 618.956 vs fx 618.551, 0.07%). stage1 은 camera_info 를 쓰지 않음
 
 ---
 
@@ -1099,6 +1147,21 @@ python3 isaacsim/scripts/drone_cmd.py hold          # land | kill (kill 은 언�
 # PX4 비행 로그 분석 (isaacsim/reports/px4_<시각>/log/*/*.ulg): pyulog (레포 밖 venv 에 설치해서)
 ```
 
-### 3단계 이후
+### 3단계: sim ROS 2 인터페이스 (진행 중)
+```bash
+# 모든 sim ROS 2 실행 전에 (python.sh 안 rclpy 가 시스템 Jazzy 를 쓰게)
+source /opt/ros/jazzy/setup.bash
+
+# 3-1 RTF·카메라 주기 측정 (카메라 받는 쪽 = 별도 프로세스 topic_rate.py, RELIABLE). 리포트 isaacsim/reports/measure_rtf_<시각>/
+~/isaacsim/python.sh isaacsim/scripts/measure_rtf.py --headless --loop-hz 30                  # 기본 드론(PX4), 카메라 tickRate 30
+~/isaacsim/python.sh isaacsim/scripts/measure_rtf.py --loop-hz 30                             # GUI (메인 뷰포트)
+#   옵션: --flight geometric|px4, --tick-rate 0|30, --cameras off, --camera-windows (GUI), --prop-spin on, --profile (cProfile → profile.txt),
+#         --init-pose q1..q6, --arm-motion, --save-images, --dlss-mode 0|1|2, --anti-aliasing 3|4 (렌더 비교, 기본은 ros2_iface.yaml render)
+
+# 토픽 도착 시각·stamp 기록 (시스템 python3)
+python3 isaacsim/scripts/topic_rate.py --out rate.json --duration 30 /cam/wrist/color/image_raw:sensor_msgs/msg/Image
+```
+
+### 4단계 이후
 (각 단계 작업 후 여기에 추가)
 
