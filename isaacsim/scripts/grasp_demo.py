@@ -20,7 +20,8 @@
 #         (실제 시간 속도, 'Wrist camera'·'Third view camera' 창을 같이 띄움. 끝나면 --hold 면 창을 닫을 때까지 유지)
 #   어긋남 직접 지정: --tcp-offset DX DY DZ [m] (예: --case success --tcp-offset 0 0.015 0)
 #   점검: ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/grasp_demo.py --headless --case all
-#   결과: isaacsim/reports/grasp_demo_<시각>/ (report.txt, result_<케이스>.json, timeline_<케이스>.csv)
+#   결과: isaacsim/reports/grasp_demo_<시각>/ (report.txt, result_<케이스>.json, timeline_<케이스>.csv,
+#         commands_<케이스>.csv = 제어 주기마다 팔 관절 목표 [rad] + 그리퍼 goal raw. ROS 로 재생해 3단계 브리지 시험·가짜 에피소드에 씀)
 # =============================================================
 
 import argparse
@@ -149,6 +150,7 @@ class Demo:
         self.next_tick = 0.0
         self.q_target = s.init_pose.copy()
         self.rows = []
+        self.cmd_rows = []                  # (t, 팔 관절 목표 6, 그리퍼 goal raw) 제어 주기마다
         self.phase = "start"
         self.f_other_max = {}
         self.link_force_max = {}            # 단계 → 링크 → 드론과 접촉력 최대 (> 1 N)
@@ -198,6 +200,7 @@ class Demo:
             if control is not None:
                 control()
             s.drive.set_arm_targets(self.q_target)
+            self.cmd_rows.append((s.flight.t, *self.q_target, s.drive.gripper.goal * ts.GRIPPER_RAW_MAX / ts.GRIPPER_UPPER))
         rel_p = o["tcp_R"].T @ (o["drone_p"] - o["tcp_p"])                      # TCP 좌표계 드론 위치
         rel_rv = Rotation.from_matrix(o["tcp_R"].T @ o["drone_R"]).as_rotvec()
         gnd = getattr(s.flight, "ground", None)
@@ -423,6 +426,10 @@ def run_case(case, dc, out_dir, log):
         f.write(",".join(ROW_KEYS) + "\n")
         for r in d.rows:
             f.write(",".join(f"{v:.5f}" if isinstance(v, float) else str(v) for v in r) + "\n")
+    with open(os.path.join(out_dir, f"commands_{case}.csv"), "w", encoding="utf-8") as f:
+        f.write("t," + ",".join(ts.ARM_JOINTS) + ",gripper_goal_raw\n")
+        for r in d.cmd_rows:
+            f.write(",".join(f"{float(v):.6f}" for v in r) + "\n")
     return d, ok
 
 

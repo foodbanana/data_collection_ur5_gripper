@@ -8,7 +8,9 @@
 #   enable_ros2(cfg)              : isaacsim.ros2.bridge 를 켜고 rclpy 가 시스템 ROS 2 (cfg ros_distro) 인지 확인
 #   set_camera_tick_rate(paths, r): 카메라 prim 에 OmniSensorAPI + omni:sensor:tickRate (6.0 부터 카메라 주기는 이것으로, multi-tick rendering)
 #   add_camera_publishers(s, cfg) : OmniGraph Camera Helper (rgb) + Camera Info Helper. stamp = sim time (useSystemTime False)
-#   ArmBridge(s, cfg, rclpy)      : /clock·/joint_states 발행 (물리 스텝마다, PHYSICS_POST_STEP), /joint_command 구독 → 팔 drive 목표 (3-2)
+#   ArmBridge(s, cfg, node)       : /clock·/joint_states 발행 (물리 스텝마다, PHYSICS_POST_STEP), /joint_command 구독 → 팔 drive 목표 (3-2)
+#   GripperBridge(s, cfg, node)   : /gripper/command 구독 → GripperProfile, /gripper/joint_states·/gripper/target 30 Hz 같은 stamp (3-3)
+#   spin(rclpy, node, bridges)    : 매 루프 쌓인 구독 메시지를 모두 처리하고 브리지 에러를 올린다
 # 공식 방식 조사·결정: PLAN 3단계
 # =============================================================
 
@@ -29,7 +31,7 @@ def load_ros2_config(path=None):
     path = path or DEFAULT_ROS2_CONFIG
     with open(path, encoding="utf-8") as f:
         c = yaml.safe_load(f)
-    for k in ("ros_distro", "node_name", "loop_hz", "render", "arm", "cameras"):
+    for k in ("ros_distro", "node_name", "loop_hz", "render", "arm", "gripper", "cameras"):
         if k not in c:
             raise KeyError(f"{path}: '{k}' 항목이 없습니다")
     r = c["render"]
@@ -40,6 +42,9 @@ def load_ros2_config(path=None):
     for k in ("clock_topic", "joint_states_topic", "joint_command_topic"):
         if k not in c["arm"]:
             raise KeyError(f"{path}: 'arm.{k}' 항목이 없습니다")
+    for k in ("command_topic", "joint_states_topic", "target_topic", "joint_name", "publish_hz"):
+        if k not in c["gripper"]:
+            raise KeyError(f"{path}: 'gripper.{k}' 항목이 없습니다")
     if "tick_rate" not in c["cameras"]:
         raise KeyError(f"{path}: 'cameras.tick_rate' 항목이 없습니다")
     for name in CAMERA_NAMES:
@@ -138,6 +143,26 @@ def add_camera_publishers(s, cfg):
     return CAMERA_GRAPH
 
 
+def sim_stamp(t):
+    """sim time [s] → (sec, nanosec)."""
+    sec = int(t)
+    nsec = int(round((t - sec) * 1e9))
+    if nsec >= 1_000_000_000:
+        sec, nsec = sec + 1, nsec - 1_000_000_000
+    return sec, nsec
+
+
+def spin(rclpy, node, bridges):
+    """매 루프 (update 뒤): 쌓인 구독 메시지를 모두 처리 (spin_once 는 콜백 하나씩, 더 없으면 멈춤) 후 브리지 에러를 올린다."""
+    for _ in range(200):
+        before = sum(b.n_cb for b in bridges)
+        rclpy.spin_once(node, timeout_sec=0.0)
+        if sum(b.n_cb for b in bridges) == before:
+            break
+    for b in bridges:
+        b.check()
+
+
 class ArmBridge:
     """팔 ROS 2 인터페이스 (실물 UR 드라이버와 같은 토픽·형식, ros2_iface.yaml arm 머리말).
     - 물리 스텝마다 (PHYSICS_POST_STEP 콜백) /clock 과 /joint_states 를 같은 sim time stamp 로 발행
@@ -145,7 +170,7 @@ class ArmBridge:
     - /joint_command 는 spin() (매 루프) 에서 받아 바로 팔 drive 목표로 (zero-order hold). 잘못된 명령은 에러
     콜백 안 예외는 저장해 두고 check() 에서 다시 올린다."""
 
-    def __init__(self, s, cfg, rclpy):
+    def __init__(self, s, cfg, node):
         import numpy as np
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
         from rosgraph_msgs.msg import Clock
@@ -161,13 +186,12 @@ class ArmBridge:
         lo, hi = (x.numpy()[0][self.arm_i] for x in s.robot.get_dof_limits())
         self.lo, self.hi = lo.astype(float), hi.astype(float)
         a = cfg["arm"]
-        self.node = rclpy.create_node(cfg["node_name"])
+        self.node = node
         self.pub_clock = self.node.create_publisher(Clock, a["clock_topic"], 10)
         self.pub_js = self.node.create_publisher(JointState, a["joint_states_topic"], 10)
         self.sub_cmd = self.node.create_subscription(JointState, a["joint_command_topic"], self._on_command, 10)
-        self._rclpy = rclpy
         self.error = None
-        self.n_js, self.n_cmd, self._n_cb = 0, 0, 0
+        self.n_js, self.n_cmd, self.n_cb = 0, 0, 0
         self.last_cmd = None              # (sim t, q [rad]) 마지막으로 적용한 명령
         self._cb = SimulationManager.register_callback(self._post_step, event=SimulationEvent.PHYSICS_POST_STEP)
 
@@ -179,11 +203,7 @@ class ArmBridge:
 
     def _post_step(self, dt, context):
         try:
-            t = self._sm.get_simulation_time()
-            sec = int(t)
-            nsec = int(round((t - sec) * 1e9))
-            if nsec >= 1_000_000_000:
-                sec, nsec = sec + 1, nsec - 1_000_000_000
+            sec, nsec = sim_stamp(self._sm.get_simulation_time())
             c = self._Clock()
             c.clock.sec, c.clock.nanosec = sec, nsec
             self.pub_clock.publish(c)
@@ -202,7 +222,7 @@ class ArmBridge:
 
     def _on_command(self, msg):
         np = self._np
-        self._n_cb += 1
+        self.n_cb += 1
         try:
             names, pos = list(msg.name), list(msg.position)
             if len(names) != len(pos):
@@ -222,15 +242,6 @@ class ArmBridge:
         except Exception as e:  # noqa: BLE001
             self.error = self.error or e
 
-    def spin(self):
-        """매 루프 (update 뒤) 호출: 쌓인 명령을 모두 처리 (spin_once 는 콜백 하나씩, 더 없으면 멈춤)."""
-        for _ in range(100):
-            before = self._n_cb
-            self._rclpy.spin_once(self.node, timeout_sec=0.0)
-            if self._n_cb == before:
-                break
-        self.check()
-
     def check(self):
         if self.error is not None:
             e, self.error = self.error, None
@@ -242,4 +253,84 @@ class ArmBridge:
         if self._cb is not None:
             SimulationManager.deregister_callback(self._cb)
             self._cb = None
-        self.node.destroy_node()
+
+
+class GripperBridge:
+    """sim 그리퍼 브리지 (실물 rh_gripper_node 의 sim 버전, ros2_iface.yaml gripper 머리말).
+    - /gripper/command (Float64 raw) → goal latch → RobotDrive.set_gripper_goal (GripperProfile 이 물리 스텝마다 목표값 이동)
+    - 물리 스텝 뒤 sim time 이 1/publish_hz 배수일 때 /gripper/joint_states (present raw) 와 /gripper/target (goal raw) 을 같은 stamp 로"""
+
+    def __init__(self, s, cfg, node):
+        from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
+        from sensor_msgs.msg import JointState
+        from std_msgs.msg import Float64
+
+        import test_scene as ts
+
+        g = cfg["gripper"]
+        self.s, self._sm, self._JointState = s, SimulationManager, JointState
+        self.name = str(g["joint_name"])
+        self.hz = float(g["publish_hz"])
+        self.upper, self.raw_max = ts.GRIPPER_UPPER, ts.GRIPPER_RAW_MAX
+        self.grip_i = int(s.drive.grip_i)
+        self.pub_present = node.create_publisher(JointState, g["joint_states_topic"], 10)
+        self.pub_target = node.create_publisher(JointState, g["target_topic"], 10)
+        self.sub_cmd = node.create_subscription(Float64, g["command_topic"], self._on_command, 10)
+        if abs(s.drive.gripper.goal) > 1e-9:
+            raise RuntimeError(f"그리퍼가 열림(0)으로 시작하지 않음: goal {s.drive.gripper.goal} rad")
+        self.goal_raw = 0.0                   # 실물 노드: 시작 시 Goal Position 0 (열림)
+        self.error = None
+        self.n_pub, self.n_cmd, self.n_cb = 0, 0, 0
+        self._last_k = None
+        self._cb = SimulationManager.register_callback(self._post_step, event=SimulationEvent.PHYSICS_POST_STEP)
+
+    def present_raw(self):
+        v = self.s.robot._physics_articulation_view
+        if v is None:
+            raise RuntimeError("articulation tensor view 없음 (재생 전?)")
+        q = float(v.get_dof_positions().numpy()[0][self.grip_i])
+        return min(max(q * self.raw_max / self.upper, 0.0), self.raw_max)      # 실물 노드처럼 0~1150
+
+    def _post_step(self, dt, context):
+        try:
+            t = self._sm.get_simulation_time()
+            k = round(t * self.hz)
+            if abs(t - k / self.hz) > 1e-6 or k == self._last_k:      # 1/publish_hz 배수 시각에만 (카메라 stamp 와 같은 스텝)
+                return
+            self._last_k = k
+            sec, nsec = sim_stamp(t)
+            for pub, val in ((self.pub_present, self.present_raw()), (self.pub_target, self.goal_raw)):
+                m = self._JointState()
+                m.header.stamp.sec, m.header.stamp.nanosec = sec, nsec
+                m.name = [self.name]
+                m.position = [float(val)]
+                pub.publish(m)
+            self.n_pub += 1
+        except Exception as e:  # noqa: BLE001
+            self.error = self.error or e
+
+    def _on_command(self, msg):
+        import math
+
+        self.n_cb += 1
+        try:
+            v = float(msg.data)
+            if not math.isfinite(v) or not 0.0 <= v <= self.raw_max:
+                raise ValueError(f"/gripper/command 는 0 ~ {self.raw_max:g} (raw): {v}")
+            self.s.drive.set_gripper_goal(v * self.upper / self.raw_max)
+            self.goal_raw = v
+            self.n_cmd += 1
+        except Exception as e:  # noqa: BLE001
+            self.error = self.error or e
+
+    def check(self):
+        if self.error is not None:
+            e, self.error = self.error, None
+            raise RuntimeError(f"ROS 2 그리퍼 브리지 에러: {e}") from e
+
+    def close(self):
+        from isaacsim.core.simulation_manager import SimulationManager
+
+        if self._cb is not None:
+            SimulationManager.deregister_callback(self._cb)
+            self._cb = None

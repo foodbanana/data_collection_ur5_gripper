@@ -3,9 +3,10 @@
 # sim_ros2.py  (docs/PLAN.md 3단계)
 #
 # sim ROS 2 인터페이스 실행: 드론 파지 씬(drone_scene) + 실물과 같은 ROS 2 토픽. 실제 시간 속도로 돈다 (텔레옵).
-#   발행: /clock, /joint_states (팔 6 관절, 물리 스텝마다 120 Hz), /cam/{wrist,third_view}/color/image_raw·camera_info (30 Hz)
-#   구독: /joint_command (팔 6 관절 목표 [rad])
-#   (그리퍼 브리지·/base/imu·리셋·보호 정지는 3-3 ~ 3-7 에서 추가)
+#   발행: /clock, /joint_states (팔 6 관절, 물리 스텝마다 120 Hz), /cam/{wrist,third_view}/color/image_raw·camera_info (30 Hz),
+#         /gripper/joint_states (present raw)·/gripper/target (goal raw) (30 Hz, 같은 stamp)
+#   구독: /joint_command (팔 6 관절 목표 [rad]), /gripper/command (raw 0 / 1150)
+#   (/base/imu·리셋·보호 정지는 3-5 ~ 3-7 에서 추가)
 #   토픽·주기·렌더 설정: isaacsim/config/ros2_iface.yaml. stamp 는 모두 sim time
 #
 # 실행 (ROS 2 를 source 한 터미널):
@@ -61,7 +62,7 @@ def main():
     from isaacsim import SimulationApp
 
     app = SimulationApp(ri.app_config(cfg, args.headless))
-    ok, arm, rclpy = False, None, None
+    ok, rclpy, node, bridges = False, None, None, []
     try:
         import drone_scene as ds
         from isaacsim.core.rendering_manager import RenderingManager, ViewportManager
@@ -78,20 +79,24 @@ def main():
                            init_pose=args.init_pose, extra_setup=setup, flight=args.flight,
                            position_source=args.position_source, report_dir=args.report_dir, realtime=not args.headless)
         ri.add_camera_publishers(s, cfg)
-        arm = ri.ArmBridge(s, cfg, rclpy)
+        node = rclpy.create_node(cfg["node_name"])
+        arm = ri.ArmBridge(s, cfg, node)
+        grip = ri.GripperBridge(s, cfg, node)
+        bridges = [arm, grip]
         ds.run(s, 0.5)                                       # 카메라 렌더가 한 번 돈 뒤 렌더 설정 확인
         render = ri.check_render_settings(cfg)
         if not args.headless:
             ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
         print(f"[sim_ros2] 준비: 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
-              f"토픽 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} (발행) {cfg['arm']['joint_command_topic']} (구독), "
+              f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']}, "
+              f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "
               f"카메라 {[cfg['cameras'][n]['topic'] for n in ri.CAMERA_NAMES]}", flush=True)
 
         t0, wall0 = s.flight.t, time.monotonic()
         t_status, w_status, n_status = t0, wall0, 0
         while ds._running():
             ds.step(s)
-            arm.spin()
+            ri.spin(rclpy, node, bridges)
             ahead = (s.flight.t - t0) - (time.monotonic() - wall0)
             if ahead > 0:
                 time.sleep(ahead)                           # 실제 시간 속도 (텔레옵)
@@ -99,7 +104,8 @@ def main():
                 w = time.monotonic()
                 cmd = "없음" if arm.last_cmd is None else f"{np.round(arm.last_cmd[1], 3).tolist()} (t {arm.last_cmd[0]:.2f})"
                 print(f"[sim_ros2] t {s.flight.t:7.1f} s, 최근 {STATUS_SEC:g} s RTF {(s.flight.t - t_status) / (w - w_status):.3f}, "
-                      f"/joint_states {arm.n_js - n_status} 개, /joint_command 누적 {arm.n_cmd} 개, 마지막 명령 {cmd}", flush=True)
+                      f"/joint_states {arm.n_js - n_status} 개, /joint_command 누적 {arm.n_cmd} 개, 마지막 명령 {cmd}, "
+                      f"그리퍼 present {grip.present_raw():.0f} target {grip.goal_raw:.0f} (명령 누적 {grip.n_cmd})", flush=True)
                 t_status, w_status, n_status = s.flight.t, w, arm.n_js
             if args.duration is not None and s.flight.t - t0 >= args.duration:
                 break
@@ -112,8 +118,10 @@ def main():
         print(f"[ERROR] {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
     finally:
-        if arm is not None:
-            arm.close()
+        for b in bridges:
+            b.close()
+        if node is not None:
+            node.destroy_node()
         if rclpy is not None and rclpy.ok():
             rclpy.shutdown()
         app.close(exit_code=0 if ok else 1)

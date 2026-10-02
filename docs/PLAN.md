@@ -893,13 +893,26 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 시험 클라이언트 주의: 한 rclpy 노드로 `/joint_states`+`/clock` (초당 240 개) 을 받으며 명령도 보내면 처리가 밀려 도착 시각이 늦게 기록된다
   (가짜 지연 220 ms). 3-8 검사는 stamp 기준으로 잰다
 
+**3-3 결과 (2026-10-02)** — `ros2_iface.GripperBridge` (실물 `rh_gripper_node` 의 sim 버전), 설정 `ros2_iface.yaml` `gripper`.
+실물 형식은 README.md·1DOF_gripper_data_collection.md 기준 (실물 노드 소스는 이 PC 에 없음)
+- `/gripper/command` (std_msgs/Float64, raw) → goal latch → `GripperProfile`. 0~1150 밖·유한하지 않은 값은 에러 (실물 노드는 clamp, sim 은 조용한 fallback 금지)
+- `/gripper/joint_states` (present raw, 0~1150 clamp = 실물 노드와 같음)·`/gripper/target` (goal raw), `name ['rh_p12_rn']`, **sim 30.00 Hz, 두 토픽 stamp 모두 같음**,
+  stamp 는 모두 1/30 s 배수 (카메라와 같은 물리 스텝). 시작 시 열림 (goal 0 확인, 아니면 에러)
+- 빈손 닫기: present 1135.5 에서 멈춤 (손가락 접촉 ≈ 1136), 2.23 s (profile 속도 계산 2.2 s), target 1150. 열기: present 1.5 (0.08°), target 0
+- **ROS 로 드론 잡기** (grasp_demo `commands_success.csv` 를 `/joint_command`·`/gripper/command` 로 재생, 기하 제어기 드론):
+  **present 289 에서 멈춤 (≈ 16.3°, grasp_demo 파지 각도와 같음), target 1150** → 실물과 같은 파지 신호
+- `grasp_demo.py` 가 `commands_<케이스>.csv` (제어 주기마다 팔 관절 목표 + 그리퍼 goal raw) 를 남긴다 (ROS 재생 시험, 4단계 가짜 에피소드)
+- 확인할 것 (3-8): **잡은 뒤 RTF 0.85~0.88** (기하 제어기 드론이 잡힌 채 계속 날려 해 접촉 계산이 무거움). 실제 시나리오(PX4, 잡은 뒤 모터 정지)로 다시 잰다
+- 참고: 시험 클라이언트가 밀렸다가 명령을 몰아 보내면 sim 수신 큐(깊이 10)에서 앞의 것이 밀려남 (992 개 중 603 개 적용). sim 은 루프마다 마지막 명령만 쓰므로
+  제어 영향 없음, 데이터셋 action 은 녹화 쪽이 따로 기록. 텔레옵 장치는 일정 주기로 보낼 것. 3-8 에서 일정 주기로 다시 확인
+
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
 - [ ] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz)
 - [ ] 모든 header.stamp 가 sim time (카메라와 joint 가 같은 시계)
 - [ ] stage1 방식(`imgmsg_to_cv2(bgr8)`)으로 읽은 sim 카메라 영상의 색이 바뀌지 않음
 - [ ] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림
-- [ ] 드론을 잡았을 때 present 가 중간에서 멈추고 target 은 1150 (실물과 같은 파지 신호)
+- [x] 드론을 잡았을 때 present 가 중간에서 멈추고 target 은 1150 (실물과 같은 파지 신호) — 3-3, present 289 / target 1150
 
 ---
 

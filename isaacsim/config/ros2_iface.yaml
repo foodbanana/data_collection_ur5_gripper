@@ -26,6 +26,20 @@ render:
   anti_aliasing: 3                # SimulationApp anti_aliasing: 3 DLSS, 4 DLAA
   dlss_exec_mode: 0               # /rtx/post/dlss/execMode: 0 Performance, 1 Balanced, 2 Quality, 3 Auto
 
+# 그리퍼 (3-3). 실물 rh_gripper_node 와 같게 (README.md, 1DOF_gripper_data_collection.md):
+#   /gripper/command  std_msgs/Float64, raw 0(열림) ~ 1150(닫힘). 받은 값을 goal 로 유지(latch) → GripperProfile (실물 Profile Velocity 흉내, 1-5)
+#     실물 노드는 0~1150 밖을 clamp 하지만, sim 은 범위 밖·유한하지 않은 값을 에러로 (텔레옵은 0/1150 만 보냄, 조용한 fallback 금지)
+#   /gripper/joint_states, /gripper/target  sensor_msgs/JointState, name ['rh_p12_rn'], position [raw]. publish_hz 로 같은 tick·같은 stamp
+#     present raw = rh_r1_joint [rad] × raw_max / upper, 0~raw_max clamp (실물 노드와 같음). target = 마지막 goal raw
+#     발행 시각은 sim time 의 1/publish_hz 배수 (카메라 30 Hz stamp 와 같은 물리 스텝)
+#   시작 시 열림(0) (build_scene 이 그리퍼를 0 으로 리셋)
+gripper:
+  command_topic: /gripper/command
+  joint_states_topic: /gripper/joint_states
+  target_topic: /gripper/target
+  joint_name: rh_p12_rn
+  publish_hz: 30.0
+
 cameras:
   tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz
   # frame_id: realsense-ros 규칙 <카메라>_color_optical_frame. 실물 wrapper 값은 실물 PC 에서 확인 필요 (PLAN 3단계)
