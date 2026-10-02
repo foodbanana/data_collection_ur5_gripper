@@ -776,12 +776,33 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **목표**: 실물과 같은 토픽이 sim time 으로 나옴
 
+**공식 방식 조사 (2026-10-02, Isaac Sim 5.1~6.1 문서·예제)**
+- ROS 2 연결은 OmniGraph 노드(Publish Clock, Publish/Subscribe Joint State → Articulation Controller, Camera Helper)와
+  같은 프로세스의 rclpy 두 가지. 공식 Reference Architecture 는 **혼합**(센서 = OmniGraph, 로직 = rclpy)을 권한다
+- **6.0 부터 카메라 주기는 카메라 prim 의 `omni:sensor:tickRate`(Hz, `OmniSensorAPI`)** 로 정한다 (multi-tick rendering, 기본 켬).
+  Camera Helper 의 `frameSkipCount` 는 deprecated (렌더한 뒤 버림). tickRate 는 렌더 자체를 그 주기로만 한다
+- 시계 3개(물리 dt, 루프 dt, 렌더러)는 `SimulationManager.setup_simulation(dt)` + `RenderingManager.set_dt(dt)` 로 맞춘다.
+  stamp 는 `IsaacReadSimulationTime` / `SimulationManager.get_simulation_time()` (timeline 시간 금지)
+- `ros2 topic hz` 는 기본이 wall time (RTF 0.5 면 120 Hz 가 60 Hz 로 보임). sim 기준은 `--use-sim-time`
+- rclpy 로 이미지를 보내면 GPU→CPU 복사와 publish 가 sim 스레드를 프레임당 몇 ms 붙잡는다 (`camera_rclpy_async.py` 예제 설명)
+- `isaacsim.ros2.sim_control`(표준 simulation_interfaces: Reset, SetEntityState 등)은 PX4 disarm·재이륙·부드러운 홈 복귀가 없어 쓰지 않는다.
+  `isaacsim.ros2.control`(ros2_control 내장)은 텔레옵이 `/joint_command` 만 보내므로 필요 없다
+- 이 PC: 시스템 ROS 2 Jazzy, Python 3.12 rclpy, Isaac Sim 내장 Jazzy 라이브러리도 있음
+
+**결정 (2026-10-02)**
+1. **카메라 = OmniGraph Camera Helper, 나머지 = rclpy** (공식 혼합 방식. 보호 정지를 위해 `/joint_command` 를 가로채야 함)
+2. `/base/imu` 는 상수로 발행 (stage1 에서 채우지 않음. 8단계에서 발행하는 쪽만 교체)
+3. 리셋 서비스는 직접 만든다 (`std_srvs/Trigger`)
+4. 보호 정지 기준: UR 문서 값을 찾아 쓰고, 공개되지 않은 값은 임시값 (아래 "보호 정지")
+5. `/joint_states` 120 Hz (물리와 같음, 실물 CB3 드라이버 125 Hz), 카메라 tickRate 30
+6. RTF < 1 이면 먼저 렌더러 설정·tickRate 로 줄이고, 안 되면 물리 substep 구조 변경을 따로 보고 (PX4 lockstep·drive 가 물리 스텝마다 돌도록 바꿔야 해 큰 작업)
+
 **작업**
 - **먼저 real-time factor 측정**: 카메라 2대 렌더링(640x480) + 물리를 켠 상태에서 RTF 와 카메라 발행 주기 측정.
-  25 Hz 이상 + 텔레옵 조작감이 실제 병목일 가능성이 크므로 3단계 초반에 확인
-- `/clock`, `/joint_states` 발행, `/joint_command` 구독 (스크립트에서 생성)
-  - 새 로봇 prim 기준 경로: Publish Joint State `targetPrim` = articulation root prim (**씬 override 후에는 로봇 최상위 prim**, USD 원본의 robot_mount 아님), Articulation Controller `robotPath` = 로봇 최상위 prim
-- 그리퍼 명령 토픽은 팔과 분리 (예: `/gripper_joint_command`), 대상은 `rh_r1_joint` 하나
+  25 Hz 이상 + 텔레옵 조작감이 실제 병목일 가능성이 크므로 3단계 초반에 확인. tickRate 0(매 스텝) / 30, PX4 켬/끔 비교
+- `/clock`, `/joint_states` 발행, `/joint_command` 구독 (rclpy)
+  - `/joint_command` 는 이름으로 팔 6관절을 찾아 drive 목표로 넣는다. 모르는 이름·길이 불일치는 에러 (조용한 fallback 금지)
+- 그리퍼 명령 토픽은 팔과 분리 (`/gripper/command`), 대상은 `rh_r1_joint` 하나
 - **sim 그리퍼 브리지 노드** (실물 `rh_gripper_node` 의 sim 버전)
   - 속도는 **`robot_drive.GripperProfile`(목표값 이동, 1-5)을 그대로 쓴다**. 관절 속도 제한은 쓰지 않음
   - 구독: `/gripper/command` (raw 0~1150, 열기/닫기)
@@ -790,18 +811,39 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     (USD 속성을 직접 읽거나 쓰면 degree 이므로 추가 변환 필요)
   - 시작 시 열림(0) 초기화
   - 토픽 값은 실물과 같은 raw 스케일 유지. 0~1 정규화는 stage1 에서만 한다
-- 카메라 color 발행: `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw` (640x480, frame_id 포함)
-- 베이스 IMU: 베이스(현재는 고정) 링크에 IMU prim 추가 → `/base/imu` (`sensor_msgs/Imu`, sim time) 발행.
-  고정 베이스에서는 상수값이므로, IMU prim 이 번거로우면 stage1 에서 상수로 채우는 것으로 대체 가능 (둘 중 하나로 통일하고 meta 에 기록)
-- **보호 정지 흉내** (1-5 "알려진 위험: 높은 K" 1번): 관절 토크·접촉력 기준 초과 시 팔 목표를 현재 위치에 고정, 에피소드에 `protective_stop` 표시.
-  기준값은 UR5 문서 확인 후 확정
+- 카메라 color 발행 (Camera Helper): `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw` (640x480, frame_id 포함)
+  - 카메라 prim 에 `OmniSensorAPI` + `omni:sensor:tickRate` 30 (씬 레이어에서, 로봇 USD 원본 수정 없음)
+  - **realsense-ros wrapper 출력 형식을 흉내낸다** (녹화·stage1 은 토픽 메시지만 본다): `sensor_msgs/Image` `rgb8`, `.../color/camera_info`(1-7 intrinsics, 왜곡 0),
+    frame_id `<카메라>_color_optical_frame`, QoS 는 실물 wrapper 와 같게 (실물 PC 에서 `ros2 topic info -v` 로 확인 필요)
+  - pyrealsense2 / realsense-ros 를 sim 에 쓰지 않는 이유: 실제 USB 장치에서 프레임을 받는 드라이버라 sim 에는 장치가 없고,
+    노출·노이즈 같은 실물 특성은 카메라 센서·펌웨어에서 생기므로 통과시켜도 이미지가 그대로다. 이미지 차이는 9단계에서 다룬다
+- 베이스 IMU: `/base/imu` (`sensor_msgs/Imu`, sim time) 를 상수로 발행 (고정 베이스: 각속도 0, 선가속도 +9.81 z). 8단계에서 실제 IMU 로 교체
+- **보호 정지 흉내** (1-5 "알려진 위험: 높은 K" 1번): 기준 초과 시 팔 목표를 현재 위치에 고정 (UR 보호 정지 = Cat 2 정지, 감속 후 정지 유지),
+  `/protective_stop` 발행, 에피소드에 `protective_stop` 표시. 해제는 리셋 서비스로
+  - **UR 문서에서 찾은 것** (UR5/CB3 User Manual, UR "Understanding Protective Stops" 2023):
+    - General Limits 의 Force 는 100~250 N, Power 는 80~1000 W 사이로 설정. 한계(공차 없이)를 넘으면 안전 시스템이 Stop Category 0.
+      컨트롤러는 "한계 − 공차" 안에서 움직이도록 속도를 줄인다 (예: 속도 공차 −150 mm/s)
+    - Recovery 모드 한계: 관절 30 °/s, TCP 250 mm/s, TCP 힘 100 N, 운동량 10 kg·m/s, 파워 80 W
+    - 충돌로 인한 보호 정지 (C153/C159 경로 이탈, C157/C158 관절 충돌 감지): 실제 전류가 목표 전류에서 갑자기 벗어나고 위치 오차가 빠르게 커질 때.
+      **토크 창(window)은 목표 전류를 중심으로 하고, 크기는 힘 한계 × 거리** (UR 예: 힘 한계 150 N, 베이스-팔꿈치 0.5 m → 베이스 토크 창 75 Nm)
+  - **찾지 못한 것**: CB3 기본 preset(Default 등)의 숫자 (매뉴얼에 "GUI 에 표시된다"고만 있음), 경로 이탈 판정의 위치 오차 숫자, 토크 창의 정확한 계산식.
+    실물 PolyScope Installation → Safety → General Limits 에서 확인해 바꾼다
+  - **sim 임시값** (임의값 포함, 정상 텔레옵·파지에서 측정 후 조정):
+    | 항목 | 임시값 | 근거 |
+    |------|--------|------|
+    | 관절 외력 토크 \|τ_drive − τ_예상(중력·관성)\| | 관절별 150 N × (관절 축 ↔ TCP 거리) | UR 토크 창 예시 (힘 한계 150 N) |
+    | 팔 링크(손가락 제외) 접촉력 | 150 N | 위와 같은 힘 한계 |
+    | 목표 ↔ 실제 관절 위치 오차 | 3° (임의) | UR 숫자 미공개. 정상 추종 오차 측정 후 조정 |
+    | 관절 속도 | 180 °/s | UR5 관절 최대 속도 (URDF `velocity` π rad/s 와 같음, 넘으면 Cat 0) |
 - 에피소드 리셋 서비스: 로봇 홈 자세, 드론 재배치(랜덤 시드 기록)
   - **홈 자세 복귀는 목표를 한 번에 바꾸지 않고 부드러운 궤적으로 이동** (큰 스텝은 오버슈트와 손목 흔들림 유발, 1-5 A 시험)
 
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
 - [ ] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz)
-- [ ] 모든 header.stamp 가 sim time
+- [ ] 모든 header.stamp 가 sim time (카메라와 joint 가 같은 시계)
+- [ ] stage1 방식(`imgmsg_to_cv2(bgr8)`)으로 읽은 sim 카메라 영상의 색이 바뀌지 않음
+- [ ] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림
 - [ ] 드론을 잡았을 때 present 가 중간에서 멈추고 target 은 1150 (실물과 같은 파지 신호)
 
 ---
