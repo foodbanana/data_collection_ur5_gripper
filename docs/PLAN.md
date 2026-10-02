@@ -879,6 +879,20 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - CPU 경고 `CPU performance profile is set to powersave` 는 잘못된 경보: `intel_pstate` 의 governor 이름이 powersave 일 뿐,
   EPP·전원 프로필은 performance, 부하 중 P코어 5.3 GHz(최대). 바꾸지 않는다
 
+**3-2 결과 (2026-10-02)** — 실행 `isaacsim/scripts/sim_ros2.py` (드론 파지 씬 + ROS 2, 실제 시간 속도, GUI 는 메인 뷰포트 하나·프로펠러 회전 켬),
+팔 인터페이스 `ros2_iface.ArmBridge`, 설정 `ros2_iface.yaml` `arm`
+- `/clock`, `/joint_states` 를 물리 스텝마다 (PHYSICS_POST_STEP) 같은 sim time stamp 로 발행: **sim 기준 120.0 Hz**, stamp 간격 8.3 ms, `/clock` 단조 증가
+  - `/joint_states` = 실물 UR 드라이버와 같게 팔 6 관절 (이름 `shoulder_pan_joint` … `wrist_3_joint`), position·velocity·effort.
+    effort 는 실물이 관절 전류 [A], sim 은 관절 토크 [Nm] (PhysX projected joint force) — stage1 은 effort 를 쓰지 않음
+  - 관절 값은 articulation tensor view 에서 직접 읽음 (실험용 API 오버헤드, 3-1)
+- **카메라 stamp 와 joint stamp 가 같은 시계**: 카메라 343 장 중 339 장의 stamp 가 `/joint_states` stamp 와 정확히 같음 (같은 물리 스텝).
+  나머지 4 장은 받는 쪽이 구독을 시작한 처음 0.14 s 에 joint 메시지를 못 받은 구간
+- `/joint_command` (팔 6 관절 [rad]) 를 매 루프 받아 바로 drive 목표로. 계단 명령 응답: 움직이기 시작 wall 16~26 ms, 50% 24~35 ms, 90% 약 70 ms (drive 응답)
+  - 잘못된 명령 (관절 이름이 팔 6 관절과 다름, 길이 불일치, 유한하지 않음, 관절 한계 밖) → 에러로 중단 (시험: 그리퍼 이름을 섞어 보냄 → 종료 코드 1)
+- RTF (헤드리스) 기하 0.99, PX4 0.97~0.98
+- 시험 클라이언트 주의: 한 rclpy 노드로 `/joint_states`+`/clock` (초당 240 개) 을 받으며 명령도 보내면 처리가 밀려 도착 시각이 늦게 기록된다
+  (가짜 지연 220 ms). 3-8 검사는 stamp 기준으로 잰다
+
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
 - [ ] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz)
@@ -1157,6 +1171,12 @@ source /opt/ros/jazzy/setup.bash
 ~/isaacsim/python.sh isaacsim/scripts/measure_rtf.py --loop-hz 30                             # GUI (메인 뷰포트)
 #   옵션: --flight geometric|px4, --tick-rate 0|30, --cameras off, --camera-windows (GUI), --prop-spin on, --profile (cProfile → profile.txt),
 #         --init-pose q1..q6, --arm-motion, --save-images, --dlss-mode 0|1|2, --anti-aliasing 3|4 (렌더 비교, 기본은 ros2_iface.yaml render)
+
+# sim ROS 2 인터페이스 (실제 시간 속도). GUI: 메인 뷰포트 하나 + 프로펠러 회전 (손목·third view 는 rqt_image_view 등으로)
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60          # --flight geometric, --init-pose q1..q6, --prop-spin on|off
+ros2 run rqt_image_view rqt_image_view                                              # 다른 터미널: 카메라 보기
+ros2 topic hz --use-sim-time /joint_states                                          # sim 기준 주기 (기본은 wall 기준)
 
 # 토픽 도착 시각·stamp 기록 (시스템 python3)
 python3 isaacsim/scripts/topic_rate.py --out rate.json --duration 30 /cam/wrist/color/image_raw:sensor_msgs/msg/Image

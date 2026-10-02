@@ -5,6 +5,18 @@
 # =============================================================
 
 ros_distro: jazzy                 # python.sh 실행 전에 source /opt/ros/<distro>/setup.bash. 다르면 에러
+node_name: isaac_sim              # sim 안 rclpy 노드
+loop_hz: 30.0                     # 앱 루프(렌더) 주기 = 카메라 주기. 물리 120 Hz → update 한 번에 물리 4 스텝 (3-1, docs/sim_performance.md)
+
+# 팔 (3-2). 실물 UR 드라이버와 같게: /joint_states = 팔 6 관절 (이름 shoulder_pan_joint … wrist_3_joint), position·velocity·effort
+#   sim 은 물리 스텝마다 발행 (120 Hz, 실물 125 Hz). stamp = sim time (SimulationManager.get_simulation_time, 카메라와 같은 시계)
+#   effort: 실물 드라이버는 관절 전류 [A], sim 은 관절에 걸린 토크 [Nm] (PhysX projected joint force). stage1 은 effort 를 쓰지 않음
+#   /joint_command: 팔 6 관절 이름·position [rad] (텔레옵, sensor_msgs/JointState, QoS 기본 RELIABLE).
+#     이름이 팔 6 관절과 다르거나, 길이가 다르거나, 유한하지 않거나, 관절 한계 밖이면 에러로 중단 (조용한 fallback 금지)
+arm:
+  clock_topic: /clock
+  joint_states_topic: /joint_states
+  joint_command_topic: /joint_command
 
 # 카메라 렌더 (VLA 학습 이미지). Isaac Sim 기본값에 맡기지 않고 명시 (docs/sim_performance.md 7장, 2026-10-02 사용자 결정)
 #   RTX 실시간 렌더러는 DLSS(3)·DLAA(4)만 지원. DLSS Performance 는 640x480 을 절반 해상도로 렌더해 키움 —
