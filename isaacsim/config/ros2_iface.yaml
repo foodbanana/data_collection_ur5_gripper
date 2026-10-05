@@ -62,18 +62,13 @@ protective_stop:
 
 # 에피소드 리셋 서비스 (3-6, sim_reset.py). std_srvs/Trigger, 끝날 때까지 sim 을 실제 시간 속도로 돌린 뒤 응답 (message = JSON)
 #   실패하면 success=False + 이유 (sim 은 계속). 다음 리셋이 성공할 때까지 팔·그리퍼 명령을 무시한다 (다시 호출해 재시도)
-#   순서: 팔·그리퍼 명령 무시 → 보호 정지 해제 → (드론 kill 상태면 이륙 지점으로 순간이동) → 그리퍼 열기 → 팔 홈 복귀 (최소 jerk, 보간기로)
-#         (kill 된 드론이 손가락 사이에 끼면 그리퍼가 안 열려서 드론을 먼저 치움)
-#         → 드론: 날고 있으면 새 호버 위치로 이동, kill 상태였으면 PX4 를 새로 띄워 재이륙 (EKF 가 낙하·충돌로 망가짐 = 실물 재부팅)
-#         → 리셋 중 쌓인 명령은 버림 → 명령 받기 재개
+#   항상 같은 경로 (순간이동, 2026-10-05 사용자 결정): 명령 무시 → 보호 정지 해제 → 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작
+#     → 팔·그리퍼 홈·열림으로 순간이동 → 재이륙 → 새 호버 위치 (약 30 s). 기하 제어기 드론은 새 위치로 순간이동 후 다시 켬
 #   새 호버 위치 = 씬 drone_pos + 균등분포 ±drone_offset (x, y, z 각각), 시드 = --seed + 리셋 횟수 (응답·로그에 기록)
 reset:
   service: /sim/reset
-  drone_offset: 0.05              # [m]
-  arm_max_speed: 1.0              # [rad/s] 홈 복귀 궤적의 최고 관절 속도. 시간 = 최대 관절 변화 / 이 값 × 1.875 (최소 jerk 최고/평균 속도 비), 최소 1 s
-                                  #   0.5 면 grasp 자세(wrist_3 3.3 rad)에서 12.5 s (2026-10-05) → 1.0
-  gripper_open_timeout: 4.0       # [s] 열림 (present < 20 raw) 기다림
-  drone_timeout: 60.0             # [s] 날고 있는 드론이 새 호버 위치 도착까지 (재이륙은 scene px4 connect_timeout·leg_timeout)
+  drone_offset: 0.05              # [m]. sim_ros2 --reset-offset 으로 바꿀 수 있음 (0 = 항상 기준 위치)
+  kill_timeout: 3.0               # [s] 날고 있는 PX4 드론 kill 뒤 disarm 확인까지
 
 cameras:
   tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz

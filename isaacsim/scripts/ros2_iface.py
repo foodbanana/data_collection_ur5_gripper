@@ -205,7 +205,7 @@ class ArmBridge:
         self.interp_T = float(a["command_interp_time"])
         self.cmd_per_loop = []            # 루프(spin)마다 받은 /joint_command 수 (명령이 고르게 오는지)
         self.seg = None                   # 보간 구간 (q_start, q_goal, t_start). None = 보간 안 함 (목표 그대로)
-        self.hold = False                 # True 면 /joint_command 무시 (리셋 중. 리셋은 follow() 로 팔을 움직임)
+        self.hold = False                 # True 면 /joint_command 무시 (리셋 중. 리셋은 팔을 순간이동한 뒤 set_now())
         self._q_now = None                # 지난 물리 스텝에 넣은 관절 목표
         self._cb_pre = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
         self._q_prev = self._view().get_dof_positions().numpy()[0][self.arm_i].astype(float)   # 속도 = 관절각 차분
@@ -309,21 +309,12 @@ class ArmBridge:
             SimulationManager.deregister_callback(self._cb_pre)
             self._cb_pre = None
 
-    def follow(self, q_goal):
-        """밖에서 (리셋) 다음 목표를 줄 때: 명령과 같은 보간 (지금 목표 → q_goal, command_interp_time 동안). hold 와 무관."""
-        t = self._sm.get_simulation_time()
-        if self.seg is not None:
-            q_start = self._target_at(t)
-        elif self._q_now is not None:
-            q_start = self._q_now
-        else:
-            q_start = self._view().get_dof_position_targets().numpy()[0][self.arm_i].astype(float)
-        self.seg = (np.asarray(q_start, dtype=float), np.asarray(q_goal, dtype=float), t)
-
     def set_now(self, q):
-        """밖에서 (리셋 등) 팔 목표를 바꿨을 때 보간 기준을 맞춘다."""
+        """밖에서 (리셋의 순간이동) 팔 자세·목표를 바꿨을 때: 보간 기준과 속도 차분 기준을 새 자세로
+        (안 맞추면 다음 스텝 /joint_states velocity 에 순간이동 거리 / dt 가 나감)."""
         self.seg = None
         self._q_now = np.asarray(q, dtype=float)
+        self._q_prev = np.asarray(q, dtype=float).copy()
 
 
 class GripperBridge:

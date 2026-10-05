@@ -7,7 +7,7 @@
 #   A. 기하 제어기 드론 (드론 위치가 일정 → 명령 재생이 항상 같음)
 #      1 토픽 주기  2 같은 시계  3 stage1 방식 이미지 읽기  4 팔 명령 응답  5 이미지 지연  6 파지 신호  7 보호 정지
 #   B. PX4 드론 (실제 사용 조건)
-#      8 리셋 (goto 2 회 + 잡은 뒤 kill → PX4 재시작 1 회)  9 RTF
+#      8 리셋 3 회 (대기 / 잡은 뒤 kill / 보호 정지 뒤, 모두 순간이동 + PX4 재시작)  9 RTF
 #   받는 쪽은 별도 스레드 executor (처리가 밀려 도착 시각이 늦게 찍히는 문제를 피함, 판정은 stamp 기준)
 #   기준 명령: isaacsim/config/ros2_check/commands_success.csv (만든 방법은 같은 폴더 README.md). 계단·테이블 충돌 명령은 여기서 만든다
 #
@@ -345,6 +345,8 @@ def part_a(ros, R):
            f"present {pres[-1]:.1f} (기준 {lo:g}~{hi:g}, 마지막 1 s 변화 {np.ptp(pres):.1f}), target {targ[-1]:.0f}, "
            f"잡은 채 RTF {rtf_held:.3f} (기록)")
     ok_r, res = ros.reset()
+    if not ok_r:
+        raise RuntimeError(f"A 리셋 실패: {res}")
     t_h = ros.play(table_rows())
     ros.wait_sim(1.0)
     with ros.lock:
@@ -368,7 +370,7 @@ def check_after_reset(ros, ok, res):
         ps = ros.ps[-1][1] if ros.ps else None
     err = float(np.degrees(np.abs(q - HOME)).max())
     good = ok and err <= CRIT["home_deg"] and pres <= CRIT["open_raw"] and ps is False
-    return good, f"{res.get('drone')} {res.get('duration_s')} s, 드론 오차 {res.get('drone_err_mm')} mm, 팔 홈 {err:.3f}°, 그리퍼 {pres:.1f}, 보호 정지 {ps}" \
+    return good, f"{res.get('duration_s')} s, 드론 오차 {res.get('drone_err_mm')} mm, 팔 홈 {err:.3f}°, 그리퍼 {pres:.1f}, 보호 정지 {ps}" \
         + ("" if ok else f", 실패 {res.get('error')}")
 
 
@@ -376,12 +378,15 @@ def part_b(ros, R):
     R.log("== B. PX4 드론")
     ros.wait_sim(2.0)
     rows, ok_all = [], True
-    for k in range(2):
+
+    def do_reset(tag):
+        nonlocal ok_all
         ok, res = ros.reset()
         good, d = check_after_reset(ros, ok, res)
-        good &= res.get("drone") == "goto"
         ok_all &= good
-        rows.append(f"goto {k + 1}: {d}")
+        rows.append(f"{tag}: {d}")
+
+    do_reset("대기")
     ros.play(grasp_rows())
     ros.wait_sim(1.0)
     with ros.lock:
@@ -390,12 +395,14 @@ def part_b(ros, R):
     if kill.returncode != 0:
         raise RuntimeError(f"drone_cmd kill 실패: {kill.stderr}")
     ros.wait_sim(3.0)
-    ok, res = ros.reset()
-    good, d = check_after_reset(ros, ok, res)
-    good &= res.get("drone") == "teleport_restart_takeoff"
-    ok_all &= good
-    rows.append(f"잡기 재생 (present {present:.0f}) → kill → {d}")
-    R.item("8 리셋 (goto 2 회 + kill → PX4 재시작 1 회)", ok_all, " | ".join(rows))
+    do_reset(f"잡기 재생 (present {present:.0f}) → kill")
+    t_h = ros.play(table_rows())
+    ros.wait_sim(1.0)
+    with ros.lock:
+        hit = any(v for s_, v in ros.ps if s_ is not None and s_ >= t_h)
+    ok_all &= hit
+    do_reset(f"테이블 충돌 (보호 정지 {hit})")
+    R.item("8 리셋 3 회 (대기 / 잡은 뒤 kill / 보호 정지 뒤, 모두 순간이동 + PX4 재시작)", ok_all, " | ".join(rows))
     # 9 RTF (가만히 20 s, /clock 을 받은 wall 시각 기준)
     t0 = ros.now()
     ros.wait_sim(20.0)

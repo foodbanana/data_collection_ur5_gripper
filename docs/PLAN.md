@@ -925,32 +925,23 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - `replay_commands.py`: 명령 CSV (grasp_demo `commands_<케이스>.csv` 등) 를 sim time 기준으로 `/joint_command`·`/gripper/command` 재생 (텔레옵 대신)
 
 **3-6 결과 (2026-10-05)** — `/sim/reset` (std_srvs/Trigger), `isaacsim/scripts/sim_reset.py`, 설정 `ros2_iface.yaml` `reset`
-- 서비스 콜백 안에서 sim 을 실제 시간 속도로 돌리며 리셋하고 끝나면 응답 (message = JSON: 시드, 새 드론 위치, 드론 처리, 걸린 sim 시간).
-  리셋 중 팔·그리퍼 명령은 무시하고, 리셋 중 쌓인 명령도 버린다 (명령 무시를 콜백 뒤 spin 이 쌓인 것을 꺼낸 다음에 풂)
-- 순서: 보호 정지 해제 → (드론 kill 상태면 이륙 지점으로 순간이동 + **PX4 새로 띄움**) → 그리퍼 열기 → 팔 홈 복귀 (최소 jerk, 최고 1.0 rad/s, ArmBridge 보간기로)
-  → 드론: **날고 있으면 새 호버 위치로 이동 명령만**, kill 상태였으면 `px4_takeoff` 재이륙. 새 호버 위치 = 씬 drone_pos ± 5 cm (시드 = `--seed` + 리셋 횟수)
-  - `sim_ros2.py --reset-offset <m>`: 랜덤 범위를 실행할 때 바꿈 (0 = 항상 기준 위치. PX4 는 그래도 호버 흔들림 1~3 cm, 위치까지 고정하려면 `--flight geometric`).
-    리셋 결과 = 에피소드 시작 상태 (팔 홈, 그리퍼 열림, 드론은 팔 위 호버). 처음 테이블에서 이륙하는 것은 PX4 부팅 과정일 뿐
+- 서비스 콜백 안에서 sim 을 실제 시간 속도로 돌리며 리셋하고 끝나면 응답 (message = JSON: 시드, 새 드론 위치, 걸린 sim 시간).
+  리셋 결과 = **에피소드 시작 상태** (팔 홈, 그리퍼 열림, 드론은 팔 위 호버). 처음 테이블에서 이륙하는 것은 PX4 부팅 과정일 뿐
+- **항상 같은 경로 (순간이동, 사용자 결정)**: 명령 무시 → 보호 정지 해제 → 드론 kill → 이륙 지점으로 순간이동 + **PX4 재시작**
+  → **팔·그리퍼를 홈·열림으로 순간이동** (`RobotDrive.reset_pose`) → 재이륙 → 새 호버 위치. **약 24 s**, 드론 위치 오차 6~9 mm (새 PX4 라 호버가 더 정확)
+  - 매 에피소드 PX4 가 같은 깨끗한 상태로 시작 (EKF·센서 편향·제어기 적분값). 리셋은 데이터에 안 들어가므로 실물처럼 움직일 필요 없음
+  - 새 호버 위치 = 씬 drone_pos ± 5 cm (시드 = `--seed` + 리셋 횟수). `sim_ros2.py --reset-offset <m>` (0 = 항상 기준 위치.
+    PX4 는 그래도 호버 흔들림, 위치까지 고정하려면 `--flight geometric`, 기하 제어기 드론은 새 위치로 순간이동 후 다시 켬)
+  - 팔 순간이동 뒤 속도 차분 기준(ArmBridge·보호 정지)도 새 자세로 맞춤: 안 맞추면 순간이동 거리 / dt 가 관절 속도로 잡혀 (22871 °/s) 보호 정지가 걸림
+- 리셋 중 팔·그리퍼 명령은 무시하고, 리셋 중 쌓인 명령도 버린다 (명령 무시를 콜백 뒤 spin 이 쌓인 것을 꺼낸 다음에 풂)
 - **리셋이 실패하면** `success=False` + 이유 (PX4 메시지 포함) 를 응답하고 **sim 은 계속**. 다음 리셋이 성공할 때까지 팔·그리퍼 명령 무시, 다시 호출해 재시도
-  (처음엔 sim 을 멈췄으나 GUI 텔레옵 중 PX4 까지 다시 띄워야 해 바꿈)
-- **kill 상태 드론 = PX4 재시작 (실물의 재부팅)**. 거친 과정:
-  1. 처음: 순간이동 뒤 EKF 가 실제 위치로 수렴하길 기다림 (드론이 테이블로 떨어질 때 4 s 에 약 5 cm, 10 s 에 약 1 cm) → 재이륙 성공
-  2. GUI 에서 실패: 못 잡은 드론을 공중에서 kill → **팔 위로 떨어짐** (upper_arm 접촉 141 N) → EKF 추정이 최대 6.5 m 틀어졌다 약 25 s 에 수 mm 로 돌아오지만
-     **"Preflight Fail: High Accelerometer Bias" 로 60 s 넘게 arm 거부** (충격으로 가속도계 편향을 크게 잘못 추정). 헤드리스로 3 회 재현
-  3. 해결: 순간이동 직후 `DroneFlight.restart_px4()` (PX4 프로세스·가상 센서·명령 링크를 처음처럼, 로그는 `px4_<시각>_r<n>`). 팔이 홈으로 가는 동안 부팅
-  - `DroneFlight.teleport()`: 순간이동 + 속도 0 + 가상 센서 차분 기준(`_prev_pose`, IMU 이전 속도) 지움 (안 지우면 가짜 속도·가속도가 PX4 로 감)
-- **보호 정지 뒤 리셋**: 정지가 테이블을 누른 자세에서 걸리면 접촉(255 N)이 남아 해제하자마자 다시 걸림 → **리셋 동안 접촉력 기준만 끔** (오차·속도 기준은 켬)
-- 확인 (PX4, 헤드리스):
-  | 시험 | 직전 상황 | 드론 처리 | 걸린 sim 시간 | 드론 위치 오차 |
-  |---|---|---|---|---|
-  | 5 회 연속 1 | 대기 | goto | 6.9 s | 15 mm |
-  | 5 회 연속 2 | grasp 재생 → 잡은 채 kill | 순간이동 → PX4 재시작 → 재이륙 (팔 홈 6.2 s) | 28.0 s | 18 mm |
-  | 5 회 연속 3 | 테이블 충돌 보호 정지 | goto | 7.5 s | 23 mm |
-  | 5 회 연속 4·5 | 대기 | goto | 6.5·7.6 s | 30·3 mm |
-  | 낙하 3 회 | 못 잡은 드론 공중 kill → 팔 위로 낙하 | 순간이동 → PX4 재시작 → 재이륙 | 28.0~29.7 s | 18~19 mm |
-  팔 홈 오차 0.033° (drive 중력 처짐). 드론 위치 오차는 PX4 호버 흔들림 범위 (기준 50 mm)
-- 3-8 에서 찾음: kill 된 드론이 빈손으로 닫힌 손가락 사이에 끼면 그리퍼가 안 열려 리셋 실패 ("그리퍼 열림 가 4 s 안에 안 됨", 끼어 있는 동안 RTF 0.69)
-  → kill 상태 드론을 **먼저 순간이동으로 치운 뒤** 그리퍼를 연다
+- 처음 방식 (같은 날 바꿈): 날고 있는 드론은 이동 명령만 (약 7 s), kill 상태만 순간이동, 팔은 최소 jerk 궤적. 갈래마다 예외가 생겨 한 경로로 바꿈:
+  1. 순간이동 뒤 EKF 수렴만 기다림 → 드론이 **팔 위로 떨어지면** EKF 가 가속도계 편향을 크게 잘못 잡아 "Preflight Fail: High Accelerometer Bias" 로
+     60 s 넘게 arm 거부 (GUI 에서 발견, 헤드리스 3 회 재현) → PX4 재시작 (실물의 재부팅)
+  2. 보호 정지가 테이블을 누른 자세에서 걸리면 접촉이 남아 정지를 풀자마자 다시 걸림 → (그때) 리셋 동안 접촉 기준 끔 → 팔 순간이동으로 필요 없어짐
+  3. kill 된 드론이 빈손으로 닫힌 손가락 사이에 끼면 그리퍼가 안 열림 (check_ros2 에서 발견) → 드론을 먼저 치움 → 한 경로로 필요 없어짐
+- `DroneFlight.teleport()` (순간이동 + 속도 0 + 가상 센서 차분 기준 지움), `DroneFlight.restart_px4()` / `PX4Bridge.restart()` / `PX4Commander.reset_link()`
+- 확인: check_ros2 8 번 (대기 / 잡은 뒤 kill / 보호 정지 뒤 3 회 × 2 번 실행, PX4 드론을 실제로 잡은 채 kill 한 경우 포함) 모두 성공
 - 남은 주의: 공중에서 kill 한 드론이 팔 위로 떨어지면 접촉력이 보호 정지 기준(150 N) 가까이 감 (141 N)
 - 5단계 주의: 리셋 뒤 텔레옵 장치는 로봇의 지금 자세(홈)에서 시작해야 한다. 리셋 전 자세의 명령을 그대로 보내면 리셋 직후 팔이 그 자세로 33 ms 만에 뛴다
 
@@ -964,13 +955,13 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 | 5 | 이미지 지연 | 팔이 움직이기 시작한 stamp = 이미지가 바뀐 첫 stamp (**0 프레임**): 이미지는 stamp 시각의 물리 상태 |
 | 6 | 파지 신호 (기하 제어기, 명령 재생) | present 297 / target 1150 |
 | 7 | 보호 정지 | 재생 중 false, 테이블 충돌 2.8 s 에 true, 리셋 뒤 false |
-| 8 | 리셋 (PX4) | goto 6.9·7.4 s, 빈손 kill → PX4 재시작 29.7 s, 매번 팔 홈 0.033°·그리퍼 열림·보호 정지 false |
+| 8 | 리셋 3 회 (PX4: 대기 / 잡은 뒤 kill / 보호 정지 뒤) | 모두 순간이동 + PX4 재시작 약 24 s, 드론 오차 6~9 mm, 팔 홈 0.033°·그리퍼 열림·보호 정지 false |
 | 9 | RTF (헤드리스, PX4, 카메라 2 대, 대기) | 0.96 |
 - 기준 명령: `isaacsim/config/ros2_check/commands_success.csv` (grasp_demo 기하 제어기 success 명령, 만든 방법은 같은 폴더 README). 계단·테이블 충돌 명령은 스크립트가 만든다
 - **잡은 채 RTF 가 낮다** (따로 잼): PX4 드론을 잡은 채 모터 켬 0.75, **모터 끔 (실제 수집 조건) 0.69**, 기하 제어기 드론이 잡힌 채 버팀 0.67.
   손가락·드론 접촉 계산이 무거움. stamp 정합성은 문제없고 텔레옵 조작감만 영향 (잡은 뒤 들고 옮기면 약 30 % 느림).
   PhysX 설정은 지금 안 바꿈 (사용자 결정) → 5단계 텔레옵에서 불편하면 원인(드론·손가락 충돌 형상, solver)을 찾는다
-- B 의 grasp 재생은 빗나감 (리셋이 드론 위치를 ±5 cm 랜덤으로 바꾸므로 고정 명령 재생으로는 안 잡힘). 리셋 kill 경로 확인에는 상관없음
+- B 의 grasp 재생은 잡힐 때도 빗나갈 때도 있음 (리셋이 드론 위치를 ±5 cm 랜덤으로 바꾸므로 고정 명령 재생). 어느 쪽이든 리셋 확인에는 상관없음
 
 **완료 기준**
 - [x] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준) — 3-1, `docs/sim_performance.md` (대기 0.96~0.97, 잡은 채 0.69)
@@ -1257,7 +1248,7 @@ source /opt/ros/jazzy/setup.bash
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60          # --flight geometric, --init-pose q1..q6, --prop-spin on|off,
                                                                                     # --protective-stop on|measure, --reset-offset 0, --seed N
-ros2 service call /sim/reset std_srvs/srv/Trigger                                   # 에피소드 리셋 (팔 홈, 그리퍼 열림, 드론 팔 위 호버 ± offset)
+ros2 service call /sim/reset std_srvs/srv/Trigger                                   # 에피소드 리셋 (순간이동, 약 24 s: 팔 홈, 그리퍼 열림, 새 PX4 로 드론 팔 위 호버 ± offset)
 python3 isaacsim/scripts/replay_commands.py <commands.csv>                          # 명령 CSV 재생 (grasp_demo commands_<케이스>.csv 등)
 python3 isaacsim/scripts/drone_cmd.py kill                                          # 드론 모터 정지 (잡은 뒤)
 ros2 run rqt_image_view rqt_image_view                                              # 다른 터미널: 카메라 보기
