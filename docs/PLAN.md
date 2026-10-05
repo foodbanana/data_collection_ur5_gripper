@@ -984,7 +984,31 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 
 **목표**: sim 에피소드 → 병합된 v2.1 데이터셋이 자동으로 나옴
 
-**작업**
+**확정 계획 (2026-10-05 사용자 결정)**
+| 단계 | 내용 |
+|------|------|
+| 4-0 | `config/cameras.yaml` (역할 ↔ 실물 시리얼·sim 설정) + 공용 로더 `camera_config.py`, 옛 sim smoke bag 삭제, 이 PC 에 conda `lerobot_v2` (Python 3.10, lerobot 0.3.3) |
+| 4-1 | `record_toggle.py`: 새 토픽 (`/joint_command`, `/cam/...`, sim 전용 `/protective_stop`·`/clock`), 카메라 RELIABLE, `--sim` (r → `/sim/reset` → 성공 응답 뒤 녹화 시작), bag 폴더에 `episode.json` |
+| 4-2 | `/sim/reset` 응답 JSON 에 에피소드 정보 추가 (드론 제어기·위치 정보 방식·설정 파일, 렌더 설정, 그리퍼 max_force, 카메라 prim, `cam_tilt`, git commit, PX4 로그 경로) |
+| 4-3 | stage1: `/cam/...` 고정 표, `--arm-action command\|next_state` (필수), 그리퍼 /1150, `--base-imu const`, 이미지 나이 검사 (66 ms), 메타데이터 (`episode.json`, 보호 정지) |
+| 4-4 | stage2 v2.1 (`wrist`·`third_view`, `observation.base_imu`), 병합 (`_discarded`·보호 정지 에피소드 제외), `inspect_parquet.py` 기준 |
+| 4-5 | 가짜 에피소드 자동 생성 (리셋 → 녹화 → 명령 재생 → kill → 녹화 끝) → stage1 → 병합 → 검수 |
+| 4-6 | 문서 (PLAN·README·CLAUDE.md, 다른 문서의 낡은 부분, 실물 카메라 런치 토픽 변경 안내) |
+
+- **성공/실패 판정은 사람이 한다** (자동 판정 없음): 녹화는 r 토글 (r ~ r = 에피소드 1 개), 실패한 에피소드는 `d` 로 `bags/_discarded/` 로 버린다. 남은 것 = 성공 (sim·실물 같음)
+- **보호 정지가 걸린 에피소드**는 `meta.json` 에 항상 기록하고 병합에서 기본 제외 (옵션을 줄 때만 포함)
+- **앞뒤 정지 구간 자르기**는 병합의 명시 옵션 (기본 끔). 검수 스크립트가 에피소드별 앞뒤 정지 길이를 출력 → 실제 텔레옵 데이터를 보고 결정.
+  r 을 누른 뒤 텔레옵 장치를 잡기까지 팔이 멈춘 프레임이 쌓이면 정책이 "시작하면 가만히 있기" 를 배울 수 있다
+- **예전 실물 데이터 (옛 토픽 `/d435i`·`/d456`, freedrive, `head` 키) 는 다시 변환하지 않는다** (고장 난 팔의 가짜 데이터, 새 팔로 교체 예정).
+  stage1 은 새 토픽만 받는다. v3.0 변환 스크립트는 손대지 않는다 (학습은 v2.1)
+- **실물 카메라 (지금)**: wrist = D435i (843112074130), third_view = D456 (252122301126). 두 번째 D435i 가 오면 `cameras.yaml` 의 third_view 만 바꾼다.
+  실물 런치(`realsense_dual_camera`, 실물 PC 에만 있음)가 `/cam/wrist/...`·`/cam/third_view/...` 로 발행하도록 실물 PC 에서 고친다
+- **sim third view 카메라는 나중에**: 모양은 D435i 메시, 화각은 D456 가정값 (가로 약 90°, 임시). 실물 구성이 정해지면 모양·intrinsics·위치를 같이 바꾼다
+  (6단계 수집 전에. `realsense2_description` 에는 D455 메시만 있고 D456 은 없음)
+- lerobot 환경: conda `lerobot_v2` (실물 PC 기록과 같게 Python 3.10 + `pip install "lerobot==0.3.3"`). conda 는 `~/miniconda3`, base 자동 활성화 끔
+  (켜져 있으면 `~/isaacsim/python.sh`·ROS 의 python 과 섞일 수 있음)
+
+**작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
     (`ros2 topic info -v /d435i/d435i/color/image_raw`, 실물 30 Hz 카메라가 20~25 Hz 로 떨어지는 원인일 수 있음)

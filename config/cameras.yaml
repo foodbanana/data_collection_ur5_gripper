@@ -1,0 +1,21 @@
+# =============================================================
+# cameras.yaml — 카메라 역할 ↔ 장치 연결 (docs/PLAN.md 0-2, 4-0)
+#
+# **카메라 시리얼 → 역할 연결은 이 파일 한 곳에서만 한다** (CLAUDE.md). 토픽 이름 = 역할 (sim = 실물):
+#   /cam/<역할>/color/image_raw  →  데이터셋 observation.images.<역할>
+# 읽는 곳: record_toggle.py (녹화 토픽), lerobot_stage1_extract_bag.py (토픽 → 키, meta.json 에 역할 → 장치 기록)
+#   공용 로더 camera_config.py. 역할·토픽이 없으면 에러 (조용한 fallback 금지)
+# 실물 카메라를 바꾸면 real.model / real.serial 만 고친다 (예: 두 번째 D435i 가 오면 third_view)
+# =============================================================
+
+topic: "/cam/{role}/color/image_raw"          # sensor_msgs/Image, 640x480 rgb8, 30 Hz
+info_topic: "/cam/{role}/color/camera_info"   # sensor_msgs/CameraInfo (녹화만, stage1 은 쓰지 않음)
+resolution: [640, 480]                        # [width, height]
+
+roles:
+  wrist:                          # 손목 (그리퍼 옆, 공구 축과 나란히)
+    real: {model: D435i, serial: "843112074130"}
+    sim: {config: isaacsim/config/wrist_camera.yaml}        # Camera prim 경로는 sim 이 에피소드 정보로 알려 준다 (4-2)
+  third_view:                     # 외부 (로봇 base 근처에서 파지 구역을 올려다봄)
+    real: {model: D456, serial: "252122301126"}             # 2026-10-05: 두 번째 D435i 가 오기 전까지 D456
+    sim: {config: isaacsim/config/third_view_camera.yaml}   # 화각은 D456 가정값 (임시). 실물 구성이 정해지면 모양·intrinsics 를 같이 바꾼다
