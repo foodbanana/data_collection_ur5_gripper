@@ -9,6 +9,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
 sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
+sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
 
 ## 경로 규칙
 
@@ -48,6 +49,7 @@ sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트
 ## 토픽 (sim = 실물)
 
 `/clock`, `/joint_states`, `/joint_command`, `/gripper/command`, `/gripper/joint_states`(present raw), `/gripper/target`(goal raw 0/1150),
+sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`. 주기·타입은 `docs/sim_ros2_interface.md`.
 `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw`, `/base/imu`(8단계부터. 고정 베이스에서는 sim·실물 모두 발행 안 하고 stage1 `--base-imu const`).
 자세한 표는 `docs/PLAN.md` 부록 B.
 
@@ -84,6 +86,10 @@ sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트
 - **PX4 SITL** (`--flight px4`, `docs/drone_flight.md` 13장): `~/PX4-Autopilot` v1.16.0, pymavlink 은 `isaacsim/.pydeps/` (git 제외, `~/isaacsim` 에 설치 안 함).
   **가상 센서에 주는 속도는 자세·위치 차분**: 그리퍼 접촉이 걸리면 PhysX 가 보고하는 강체 각속도가 실제 자세 변화와 다름 (잡힌 드론: 보고 29 °/s, 실제 0.5 °/s)
 - PX4 를 띄운 스크립트는 `PR_SET_PDEATHSIG` 로 같이 끝난다 (`simulation_app.close()` 는 atexit 을 건너뜀). 같은 instance PX4 가 남아 있으면 시작 전에 에러
+- **sim ROS 2 실행은 `isaacsim/scripts/sim_ros2.py`** (씬 + 토픽 + `/sim/reset`). 검사 `python3 isaacsim/scripts/check_ros2.py` → 9/9 PASS (약 8 분).
+  `/sim/reset` 은 항상 순간이동 + PX4 재시작 (약 24 s, 매 에피소드 같은 깨끗한 PX4). 리셋 실패면 sim 은 계속, 다음 성공까지 명령 무시.
+  보호 정지 흉내 (`protective_stop.py`): 접촉력 150 N (손가락은 환경과의 접촉만), 위치 오차 5°, 관절 속도 200 °/s
+- **팔을 순간이동하면 속도 차분 기준(ArmBridge `set_now`, 보호 정지 `resync`)도 맞출 것**. 안 하면 순간이동 거리 / dt 가 관절 속도로 잡힘
 - **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).
   카메라는 OmniGraph Camera Helper, 주기는 카메라 prim `omni:sensor:tickRate` (6.0 부터, `frameSkipCount` deprecated). 앱 루프 30 Hz (= 카메라), 물리 120 Hz.
   카메라 받는 쪽은 RELIABLE (best effort 면 640x480 이미지가 통째로 버려짐)

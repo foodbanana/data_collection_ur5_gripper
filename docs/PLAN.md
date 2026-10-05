@@ -776,6 +776,13 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **목표**: 실물과 같은 토픽이 sim time 으로 나옴
 
+> **완료 (2026-10-05)**. 완료 기준 5 개 모두 충족, 자동 검사 `check_ros2.py` 9/9 PASS. 정리 문서: **`docs/sim_ros2_interface.md`** (토픽·주기·구조도)
+> - `sim_ros2.py` 하나로 씬 + ROS 2 토픽 (`/clock`·`/joint_states` 120 Hz, 카메라·그리퍼·`/protective_stop` 30 Hz, 모두 sim time, 같은 물리 스텝 stamp)
+> - 팔 명령 선형 보간 (`docs/arm_command_interpolation.md`), sim 그리퍼 브리지 (실물 rh_gripper_node 형식), 보호 정지 흉내, `/sim/reset` (항상 순간이동 + PX4 재시작, 약 24 s)
+> - RTF 대기 0.96, **드론을 잡은 채 0.69** (5단계에서 불편하면 원인 확인), 카메라 DLSS Performance 명시 (`docs/sim_performance.md`)
+> - `/base/imu` 는 8단계부터 (고정 베이스 데이터는 stage1 `--base-imu const`)
+> - 4단계로 넘길 것: 녹화 카메라 RELIABLE, stage1 이미지 나이 검사, `/sim/reset` 연동, `/protective_stop`·렌더 설정을 에피소드 메타데이터에, 카메라 토픽 `/cam/...` 통일
+
 **공식 방식 조사 (2026-10-02, Isaac Sim 5.1~6.1 문서·예제)**
 - ROS 2 연결은 OmniGraph 노드(Publish Clock, Publish/Subscribe Joint State → Articulation Controller, Camera Helper)와
   같은 프로세스의 rclpy 두 가지. 공식 Reference Architecture 는 **혼합**(센서 = OmniGraph, 로직 = rclpy)을 권한다
@@ -1120,17 +1127,24 @@ robot_mount ─ base_link ─ ... ─ wrist_3_link ─ flange ─ tool0
 
 ## 부록 B: 토픽 인터페이스 (sim = 실물)
 
-| 토픽 | 방향 | 내용 |
-|------|------|------|
-| `/clock` | sim → ROS | sim time |
-| `/joint_states` | sim → ROS | 팔 6관절 (+ 그리퍼 조인트) |
-| `/joint_command` | teleop → sim | 팔 관절 목표 (**팔 action**) |
-| `/gripper/command` | teleop → 브리지 | raw 0 또는 1150 (열기/닫기) |
-| `/gripper/joint_states` | 브리지 → ROS | 그리퍼 present, raw → stage1 에서 /1150 (**state[6]**) |
-| `/gripper/target` | 브리지 → ROS | 실행된 goal, raw 0/1150 → stage1 에서 /1150 (**action[6]**) |
-| `/cam/wrist/color/image_raw` | 카메라 → ROS | `observation.images.wrist` |
-| `/cam/third_view/color/image_raw` | 카메라 → ROS | `observation.images.third_view` |
-| `/base/imu` | IMU → ROS | **8단계부터** (고정 베이스에서는 발행 안 함, stage1 `--base-imu const`). `sensor_msgs/Imu` → stage1 구간 평균 → `observation.base_imu` |
+자세한 표 (타입·주기·QoS·stamp·sim 과 실물 차이)와 구조도는 **`docs/sim_ros2_interface.md`**. 주기는 sim 3단계 기준 (sim time).
+
+| 토픽 | 방향 | 주기 | 내용 |
+|------|------|------|------|
+| `/clock` | sim → ROS | 120 Hz | sim time |
+| `/joint_states` | sim → ROS | 120 Hz (실물 125 Hz) | 팔 6관절 position·velocity·effort (실물 effort = 전류 A, sim = 토크 Nm) |
+| `/joint_command` | teleop → sim | 텔레옵 주기 (일정하게) | 팔 관절 목표 (**팔 action**). sim 은 물리 스텝마다 선형 보간 (33 ms) |
+| `/gripper/command` | teleop → 브리지 | 이벤트 | raw 0 또는 1150 (열기/닫기), std_msgs/Float64 |
+| `/gripper/joint_states` | 브리지 → ROS | 30 Hz | 그리퍼 present, raw → stage1 에서 /1150 (**state[6]**) |
+| `/gripper/target` | 브리지 → ROS | 30 Hz (present 와 같은 stamp) | 실행된 goal, raw 0/1150 → stage1 에서 /1150 (**action[6]**) |
+| `/cam/wrist/color/image_raw` (+ `camera_info`) | 카메라 → ROS | 30 Hz | `observation.images.wrist` (640x480 rgb8). 받는 쪽은 RELIABLE |
+| `/cam/third_view/color/image_raw` (+ `camera_info`) | 카메라 → ROS | 30 Hz | `observation.images.third_view` |
+| `/protective_stop` | sim → ROS | 30 Hz | 보호 정지 흉내 (sim 전용, std_msgs/Bool). 에피소드 메타데이터 (4단계) |
+| `/base/imu` | IMU → ROS | **8단계부터** | 고정 베이스에서는 발행 안 함, stage1 `--base-imu const`. `sensor_msgs/Imu` → stage1 구간 평균 → `observation.base_imu` |
+
+| 서비스 | 내용 |
+|--------|------|
+| `/sim/reset` (std_srvs/Trigger, sim 전용) | 에피소드 리셋: 드론 kill → 순간이동 + PX4 재시작 → 팔·그리퍼 홈·열림 순간이동 → 재이륙 → 새 호버 위치 (약 24 s), 응답 JSON |
 
 ## 부록 C: Claude Code 사용 방법
 

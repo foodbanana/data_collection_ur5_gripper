@@ -431,6 +431,23 @@ python3 inspect_parquet.py \
 
 ---
 
+## Isaac Sim 파이프라인 (브랜치 `isaacsim_v6.1.0`)
+
+같은 데이터를 Isaac Sim 6.1.0 에서도 모은다. sim 은 실물과 같은 ROS 2 토픽을 내므로 녹화·변환은 같은 코드를 쓴다 (4단계에서 연동).
+sim 코드는 모두 `isaacsim/` 아래, 계획·결과는 `docs/PLAN.md`, 토픽·구조는 `docs/sim_ros2_interface.md`.
+
+```bash
+cd ~/data_collection_ur5_gripper
+source /opt/ros/jazzy/setup.bash
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py          # 씬 (UR5 + 그리퍼 + 카메라 2대 + PX4 드론) + ROS 2 토픽
+ros2 service call /sim/reset std_srvs/srv/Trigger          # 에피소드 리셋 (다른 터미널)
+python3 isaacsim/scripts/check_ros2.py                     # 자동 검사 → 9/9 PASS
+```
+
+단계별 실행 명령은 `docs/PLAN.md` 부록 D.
+
+---
+
 ## 다음 단계 (아직 안 만듦)
 
 - 실제 UR5 연결 상태에서 전 구간 검증 (지금까지는 `fake_joint_states.py` + 실물 그리퍼·카메라로 검증)
