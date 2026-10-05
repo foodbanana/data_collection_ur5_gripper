@@ -1099,6 +1099,22 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   정지 앞 0.08 s / 뒤 1.32 s. 병합 옵션: 팔 action 이 다른 에피소드 → 중단, 보호 정지 표시한 복사본 → 제외, `--trim-idle both` → 551 프레임
 - 남은 것: 에피소드 여러 개 병합과 진짜 보호 정지 bag 은 4-5 에서
 
+**4-5 결과 (2026-10-05)** — `python3 isaacsim/scripts/make_fake_episodes.py` (시스템 python3, 약 6 분) → **3/3 PASS**
+- sim 을 헤드리스로 직접 띄우고 (기하 제어기 드론, `--reset-offset 0`: 고정 명령 재생이 매번 잡히게), record_toggle 의 함수로 에피소드 5 개를 자동 녹화:
+  성공 3 (리셋 → 녹화 → `commands_success.csv` 재생 → 드론 kill → 3 s → 종료), 보호 정지 1 (테이블 충돌 명령), 버림 1 (녹화 뒤 `_discarded/` 로)
+  → 남은 bag 4 개 stage1 → 매니페스트 병합 (conda `lerobot_v2`) → `inspect_dataset_v21.py --load`
+- 완료 기준:
+  1. 여러 에피소드가 v2.1 데이터셋 하나로: 에피소드 3 개·1740 프레임 (581·579·580). 보호 정지 에피소드는 `meta.json` 에 기록 (녹화 2.68 s·프레임 67 에서 발생) 되고 병합에서 제외,
+     버린 에피소드는 `_discarded/` 에 있고 변환하지 않아 들어가지 않음
+  2. `meta/info.json`: `codebase_version` v2.1, 카메라 키 `observation.images.wrist`·`observation.images.third_view`, `observation.base_imu` [6]
+  3. 검수 5/5: 그리퍼 action {0.0, 1.0}, state 0.000~0.257, 이상치 0, 세 에피소드 모두 파지 신호 (닫는 중 state 최대 0.252~0.257), LeRobotDataset 로드 (길이 1740, 이미지 (3, 480, 640))
+- 에피소드별: 고른 메시지 나이 최대 카메라·그리퍼 31.7 ms, kill 프레임 524, `/joint_command` 간격 40 ms 넘은 것 44~64 번 (재생 스크립트, 4-1), 정지 앞 0.08~0.12 s / 뒤 약 9.1 s
+  (잡은 뒤 가만히 들고 있는 구간. 기하 제어기 드론은 kill 뒤에도 그리퍼 값이 거의 안 변함)
+- 중간 파일 이미지를 눈으로 확인: `wrist/` = 손목 시점 (드론 아랫면), `third_view/` = 외부 시점 (팔이 드론을 잡은 모습), 색 정상
+- 리포트·로그 `isaacsim/reports/fake_episodes_<시각>/`, 데이터셋 `lerobot_dataset_v21/local/fake_<시각>/`. 옵션 `--success N --pstop N --discard N --use-running-sim`
+
+**완료 기준 확인**: 아래 세 항목 모두 4-5 에서 충족 (2026-10-05)
+
 **작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
@@ -1118,9 +1134,9 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 에피소드 병합 스크립트 (`_discarded` 제외), 앞뒤 정지 구간 트리밍
 
 **완료 기준**
-- [ ] 스크립트로 움직인 가짜 에피소드 여러 개가 하나의 v2.1 데이터셋으로 병합됨
-- [ ] `meta/info.json` 의 `codebase_version` = `v2.1`, 카메라 키 2개, `observation.base_imu` (6,) 포함
-- [ ] 검수 통과: action 그리퍼 값 종류 = {0.0, 1.0}, state 그리퍼 0~1 이내, 이상치 0, 파지 신호(action=1 인데 state 가 중간에서 멈춤)
+- [x] 스크립트로 움직인 가짜 에피소드 여러 개가 하나의 v2.1 데이터셋으로 병합됨 — 4-5
+- [x] `meta/info.json` 의 `codebase_version` = `v2.1`, 카메라 키 2개, `observation.base_imu` (6,) 포함 — 4-5
+- [x] 검수 통과: action 그리퍼 값 종류 = {0.0, 1.0}, state 그리퍼 0~1 이내, 이상치 0, 파지 신호(action=1 인데 state 가 중간에서 멈춤) — 4-5
 
 > 1~4단계는 텔레오퍼레이션 장치 없이 진행한다. 키보드나 스크립트로 `/joint_command` 를 보낸다.
 
