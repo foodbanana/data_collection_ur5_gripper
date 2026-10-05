@@ -1059,6 +1059,26 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
     예: sim 이 도는 동안 녹화한 bag 을 `ros2 bag play` — bag 에 `/clock`·그리퍼 토픽·`/joint_command` 가 들어 있어 옛 시각·옛 명령이 섞인다.
     **sim 을 띄운 채 sim bag 을 재생하지 말 것** (로봇이 옛 `/joint_command` 대로 움직인다)
 
+**4-3 결과 (2026-10-05)** — `lerobot_stage1_extract_bag.py <bag> --arm-action command|next_state --base-imu const|topic` (둘 다 필수)
+- 입력 = record_toggle 로 녹화한 bag (`episode.json` 필수, sim 은 4-2 이후 녹화분). 카메라 토픽은 `cameras.yaml` → `wrist/`·`third_view/`
+- 팔 action `command` = `/joint_command` 의 프레임 직전 최신 명령 (stamp 0 이면 에러). **첫 명령 이전 구간은 에피소드에서 뺀다** (사용자 결정: 값을 지어내지 않고,
+  시작 직후 가만히 있는 구간도 빠짐. 버린 프레임 수는 `meta.json` `dropped_frames_at_start`). `next_state` = 기존 방식
+- 그리퍼 /1150 (present 가 0~1150 밖이거나 target 이 0·1150 이 아니면 에러), `base_imu.npy` (N, 6): `const` = [0, 0, 0, 0, 0, 9.81]
+  (bag 에 `/base/imu` 가 있으면 에러), `topic` = 구간 평균 (**IMU 데이터가 없어 돌려 보지 못함**, 8단계에서 확인)
+- **메시지 나이 검사** (`--max-age`, 기본 66 ms): 격자 시각 직전 최신 메시지가 이보다 오래됐으면 에러. 카메라뿐 아니라 팔·그리퍼 상태에도 적용
+- `meta.json`: 옵션, 카메라 역할 → 장치 (sim = prim·intrinsics, 실물 = 모델·시리얼), 고른 메시지 나이 최댓값, `/joint_command` 간격 통계
+  (중앙값·최댓값·40 ms 넘은 횟수), 보호 정지 (발생 여부·sim 시각·프레임. Bool 에 header 가 없어 bag 도착 시각을 `/clock` 으로 sim time 환산), 드론 kill 시각·프레임, `episode.json` 전체
+- 출력 폴더가 이미 있으면 에러 (`--overwrite` 로 지우고 다시)
+- 확인 (PX4 드론 bag 1 개: 리셋 → 녹화 → grasp 재생 → kill): 572 프레임 (첫 명령 이전 0.96 s = 23 프레임 뺌), float32, 그리퍼 state 0.000~0.262·action {0, 1},
+  action 이 state 보다 1 프레임 앞섬 (명령 → 움직임), 고른 메시지 나이 최대 카메라·그리퍼 31.7 ms·팔 8.3 ms, kill 프레임 524, 보호 정지 없음.
+  에러 확인: 필수 인자 없음, 4-2 이전 bag (sim 정보 없음), `--base-imu topic` 인데 토픽 없음, `--max-age 0.02`, 출력 폴더 있음
+- **[찾은 것] 녹화 시작 직후 메시지가 빠질 수 있다**: 이 bag 은 녹화 시작 뒤 0.03~0.4 s 구간의 카메라 2 대 이미지 10 장 (367 ms) 과 `/joint_states` 8 개가 없다
+  (녹화기가 뜨는 0.7 s 동안 받지 못하고 그 뒤 한꺼번에 받음). 같은 조건으로 다시 재 보니 18 번 중 0 번 (기하 12, PX4 6) → **드물다 (원인 확인 못 함, 지금까지 약 27 번 중 1 번)**
+  - 이 bag 에서는 첫 명령 (녹화 0.96 s 뒤) 이전이라 에피소드 밖. 에피소드 안에 걸리면 나이 검사가 에러로 멈춘다 (조용히 옛 이미지를 쓰지 않음)
+  - 그런 bag 을 살리는 명시 옵션 `--skip-start <s>` (녹화 시작 뒤 그만큼 뺌, `meta.json` 에 기록). 확인: `next_state` 로 변환하면 프레임 1 에서 에러 (이미지 73 ms 전),
+    `--skip-start 0.5` 면 통과
+- 남은 것: `convert_ros2bag_lerobot.sh` 는 stage1 필수 인자를 아직 안 넘긴다 (4-4 에서)
+
 **작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
