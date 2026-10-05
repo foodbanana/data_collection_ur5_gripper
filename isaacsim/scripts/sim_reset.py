@@ -16,6 +16,10 @@
 #   (kill 된 드론이 손가락 사이에 끼어 그리퍼가 안 열림, 보호 정지 뒤 테이블 접촉이 남음, 팔 위로 떨어진 드론의 EKF 가속도계 편향이 망가져
 #    60 s 넘게 arm 거부) → 한 경로로. PX4 재시작은 실물의 재부팅과 같음
 # 실패하면 success=False + 이유를 응답하고 sim 은 계속 돈다. 다음 리셋이 성공할 때까지 팔·그리퍼 명령을 무시 (안전, 재시도 가능)
+#
+# 드론 모터 정지 서비스 /sim/drone_kill (std_srvs/Trigger, PLAN 4-1): 잡은 뒤 드론 모터를 끈다 (실물 시나리오: 잡는다 → 모터 정지 → 버틴다).
+#   녹화 도구(record_toggle.py --sim)의 k 키가 부른다. 제어기와 무관하게 DroneFlight.release() (PX4 = kill, 기하 = ω 0).
+#   응답 message = JSON (sim 시각). 이미 꺼져 있으면 success=False. 다시 켜는 것은 /sim/reset
 # =============================================================
 
 import json
@@ -26,10 +30,11 @@ import numpy as np
 class EpisodeReset:
     def __init__(self, s, cfg, node, arm, grip, stop, step, seed=0, realtime=True):
         """step: sim 을 한 루프 돌리는 함수 (sim_ros2 의 실제 시간 맞춤 포함). arm/grip/stop: ArmBridge/GripperBridge/ProtectiveStop."""
+        from isaacsim.core.simulation_manager import SimulationManager
         from std_srvs.srv import Trigger
 
         c = cfg["reset"]
-        for k in ("service", "drone_offset", "kill_timeout"):
+        for k in ("service", "kill_service", "drone_offset", "kill_timeout"):
             if k not in c:
                 raise KeyError(f"{cfg['path']}: 'reset.{k}' 항목이 없습니다")
         self.c, self.s, self.arm, self.grip, self.stop, self.step = c, s, arm, grip, stop, step
@@ -37,7 +42,9 @@ class EpisodeReset:
         self.count = 0
         self.home = np.asarray(s.home, dtype=float)
         self.nominal = np.asarray(s.scene_cfg["drone_pos"], dtype=float)
+        self.now = SimulationManager.get_simulation_time    # sim time (/clock 과 같은 시계). flight.t 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
         self.srv = node.create_service(Trigger, c["service"], self._on_reset)
+        self.kill_srv = node.create_service(Trigger, c["kill_service"], self._on_kill)
         self.n_cb = 0
         self.last = None
         self.release_pending = False      # True 면 메인 루프가 다음 spin 뒤 명령 무시를 푼다 (리셋 중 쌓인 명령을 버리려고)
@@ -99,7 +106,7 @@ class EpisodeReset:
     # ── 서비스 ──
     def _on_reset(self, request, response):
         self.n_cb += 1
-        t0 = self.s.flight.t
+        t0 = self.now()
         seed = self.seed0 + self.count
         self.count += 1
         rng = np.random.default_rng(seed)
@@ -115,12 +122,12 @@ class EpisodeReset:
             dist = self._drone_up(goal)
             if self.stop.stopped:
                 raise RuntimeError(f"리셋 중 보호 정지: {self.stop.reason}")
-            res.update(ok=True, arm_err_deg=round(err, 3), drone_err_mm=round(dist * 1000, 1), duration_s=round(self.s.flight.t - t0, 2),
+            res.update(ok=True, arm_err_deg=round(err, 3), drone_err_mm=round(dist * 1000, 1), duration_s=round(self.now() - t0, 2),
                        drone_pos=np.round(self.s.flight._body_pose()[0], 4).tolist())
             response.success = True
         except Exception as e:  # noqa: BLE001
             f = self.s.flight
-            res.update(ok=False, error=str(e), duration_s=round(self.s.flight.t - t0, 2),
+            res.update(ok=False, error=str(e), duration_s=round(self.now() - t0, 2),
                        px4_messages=[m for _, _, m in f.cmd.messages[-5:]] if f.backend == "px4" else None)
             response.success = False
         finally:
@@ -130,6 +137,22 @@ class EpisodeReset:
         response.message = json.dumps(res, ensure_ascii=False)
         self.last = res
         print(f"[sim_reset] {response.message}", flush=True)
+        return response
+
+    def _drone_on(self):
+        f = self.s.flight
+        return bool(f.px4.armed) if f.backend == "px4" else bool(f.armed)
+
+    def _on_kill(self, request, response):
+        res = {"t": round(self.now(), 3), "backend": self.s.flight.backend}
+        if self._drone_on():
+            self.s.flight.release()
+            response.success = True
+        else:
+            res["error"] = "드론 모터가 이미 꺼져 있음"
+            response.success = False
+        response.message = json.dumps(res, ensure_ascii=False)
+        print(f"[sim_reset] drone_kill {response.message}", flush=True)
         return response
 
     def release(self):

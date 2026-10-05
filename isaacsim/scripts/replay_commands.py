@@ -71,6 +71,8 @@ def main():
     for r in rows:
         spin_until(t0 + float(r["t"]))
         m = JointState()
+        # stamp = 보낸 순간의 sim time (stage1 이 header.stamp 로 팔 action 을 맞춘다. 텔레옵 장치도 같은 시계로 stamp 를 넣어야 함)
+        m.header.stamp.sec, m.header.stamp.nanosec = int(clk[0]), min(int(round((clk[0] - int(clk[0])) * 1e9)), 999999999)
         m.name = ARM
         m.position = [float(r[j]) for j in ARM]
         p_arm.publish(m)

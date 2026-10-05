@@ -87,7 +87,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 |------|------|------|-----------|------|----------|
 | `/clock` | rosgraph_msgs/Clock | sim → | 120 Hz (물리 스텝마다) | sim time | — |
 | `/joint_states` | sensor_msgs/JointState | sim → | 120 Hz (물리 스텝마다) | 팔 6 관절 (`shoulder_pan_joint` … `wrist_3_joint`), position [rad]·velocity [rad/s] (관절각 차분)·effort [Nm] | `observation.state[0:6]` |
-| `/joint_command` | sensor_msgs/JointState | → sim | 텔레옵 주기 (일정하게, 예 60 Hz) | 팔 6 관절 목표 position [rad]. 이름·개수·유한값·관절 한계가 틀리면 sim 이 에러로 중단 | `action[0:6]` |
+| `/joint_command` | sensor_msgs/JointState | → sim | 텔레옵 주기 (일정하게, 예 60 Hz) | 팔 6 관절 목표 position [rad]. 이름·개수·유한값·관절 한계가 틀리면 sim 이 에러로 중단. **`header.stamp` = 보낸 순간의 sim time (보내는 쪽이 넣음, stage1 이 이 stamp 로 맞춤)** | `action[0:6]` |
 | `/gripper/command` | std_msgs/Float64 | → sim | 이벤트 (바뀔 때) | raw 0 (열림) ~ 1150 (닫힘). 범위 밖이면 에러 | — |
 | `/gripper/joint_states` | sensor_msgs/JointState | sim → | 30 Hz | `name ['rh_p12_rn']`, position = present raw (0~1150) | `observation.state[6]` (/1150) |
 | `/gripper/target` | sensor_msgs/JointState | sim → | 30 Hz (present 와 같은 stamp) | position = 실행된 goal raw (0 / 1150) | `action[6]` (/1150) |
@@ -107,6 +107,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | 서비스 | 타입 | 동작 | 걸리는 시간 |
 |--------|------|------|-------------|
 | `/sim/reset` | std_srvs/Trigger | 에피소드 리셋 = 에피소드 시작 상태로: 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작 → 팔·그리퍼 홈·열림 순간이동 → 재이륙 → 새 호버 위치 (기준 위치 ± 5 cm, 시드 기록). 응답 message = JSON. 실패하면 `success=False` (sim 은 계속, 다음 성공까지 명령 무시) | 약 24 s (sim) |
+| `/sim/drone_kill` | std_srvs/Trigger | 드론 모터 정지 (잡은 뒤. PX4 = kill, 기하 제어기 = 로터 ω 0). 응답 message = JSON (sim 시각). 이미 꺼져 있으면 `success=False`. 다시 켜는 것은 `/sim/reset`. `record_toggle.py --sim` 의 `k` 키가 부르고 시각을 `episode.json` 에 기록 | 즉시 |
 
 ### sim 안 링크 (ROS 2 아님)
 

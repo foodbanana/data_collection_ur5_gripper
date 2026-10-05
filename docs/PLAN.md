@@ -959,7 +959,7 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 | 2 | 같은 시계 | 카메라·그리퍼 stamp 가 모두 `/joint_states` stamp 와 일치 (안 맞는 것 0) |
 | 3 | stage1 방식 이미지 읽기 | `rgb8` 640x480, `imgmsg_to_cv2(bgr8)` = 채널 뒤집기 (색 안 바뀜), frame_id `third_view_camera_color_optical_frame` |
 | 4 | 팔 명령 응답 (계단 0.03 rad) | 움직이기 시작 33 ms, 50 % 50~58 ms, 오버슈트 0 % (0.2 rad 을 한 번에 주면 위치 오차 5° 초과로 보호 정지 = 설계대로) |
-| 5 | 이미지 지연 | 팔이 움직이기 시작한 stamp = 이미지가 바뀐 첫 stamp (**0 프레임**): 이미지는 stamp 시각의 물리 상태 |
+| 5 | 이미지 지연 | 팔이 움직이기 시작한 stamp = 이미지가 바뀐 첫 stamp (**0 프레임**): 이미지는 stamp 시각의 물리 상태. 8 번 실행 중 6 번 0 프레임, 2 번 1 프레임 (기준 ≤ 1): 변화 판정 기준 = max(정지 때 연속 이미지 차이 최댓값 × 3, 0.5) 라, 정지 때 차이가 큰 실행 (0.22·0.25, 보통 0.09~0.12) 은 기준이 0.66·0.75 로 올라 막 움직이기 시작한 첫 프레임의 작은 변화를 놓치고 다음 프레임에서 잡는다 (검사 민감도, 2026-10-05) |
 | 6 | 파지 신호 (기하 제어기, 명령 재생) | present 297 / target 1150 |
 | 7 | 보호 정지 | 재생 중 false, 테이블 충돌 2.8 s 에 true, 리셋 뒤 false |
 | 8 | 리셋 3 회 (PX4: 대기 / 잡은 뒤 kill / 보호 정지 뒤) | 모두 순간이동 + PX4 재시작 약 24 s, 드론 오차 6~9 mm, 팔 홈 0.033°·그리퍼 열림·보호 정지 false |
@@ -991,11 +991,16 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 | 4-1 | `record_toggle.py`: 새 토픽 (`/joint_command`, `/cam/...`, sim 전용 `/protective_stop`·`/clock`), 카메라 RELIABLE, `--sim` (r → `/sim/reset` → 성공 응답 뒤 녹화 시작), bag 폴더에 `episode.json` |
 | 4-2 | `/sim/reset` 응답 JSON 에 에피소드 정보 추가 (드론 제어기·위치 정보 방식·설정 파일, 렌더 설정, 그리퍼 max_force, 카메라 prim, `cam_tilt`, git commit, PX4 로그 경로) |
 | 4-3 | stage1: `/cam/...` 고정 표, `--arm-action command\|next_state` (필수), 그리퍼 /1150, `--base-imu const`, 이미지 나이 검사 (66 ms), 메타데이터 (`episode.json`, 보호 정지) |
-| 4-4 | stage2 v2.1 (`wrist`·`third_view`, `observation.base_imu`), 병합 (`_discarded`·보호 정지 에피소드 제외), `inspect_parquet.py` 기준 |
+| 4-4 | stage2 v2.1 (`wrist`·`third_view`, `observation.base_imu`), 병합 (`_discarded`·보호 정지 에피소드 제외), `inspect_parquet.py` 기준, 에피소드별 `/joint_command` 간격 통계 (중앙값·최댓값·40 ms 넘은 횟수: 텔레옵 명령이 끊긴 에피소드 찾기) |
 | 4-5 | 가짜 에피소드 자동 생성 (리셋 → 녹화 → 명령 재생 → kill → 녹화 끝) → stage1 → 병합 → 검수 |
 | 4-6 | 문서 (PLAN·README·CLAUDE.md, 다른 문서의 낡은 부분, 실물 카메라 런치 토픽 변경 안내) |
 
 - **성공/실패 판정은 사람이 한다** (자동 판정 없음): 녹화는 r 토글 (r ~ r = 에피소드 1 개), 실패한 에피소드는 `d` 로 `bags/_discarded/` 로 버린다. 남은 것 = 성공 (sim·실물 같음)
+- **`/joint_command` 의 `header.stamp` 는 보내는 쪽이 넣는다** (sim 텔레옵 = sim time (`use_sim_time`), 실물 = PC 시각. 다른 토픽과 같은 규칙).
+  stage1 은 이 stamp 로 팔 action 을 맞추고, stamp 가 0 이면 에러. 4-1 에서 재생 스크립트가 stamp 를 안 넣어 전부 0 으로 녹화된 것을 찾음
+  → `replay_commands.py` 가 보낸 순간의 sim time 을 넣게 고침. **5단계 텔레옵 노드 요구사항**
+- **드론 모터 정지는 녹화 도구의 `k` 키** (`--sim`, 서비스 `/sim/drone_kill`, 시각을 `episode.json` 에 기록). 텔레옵 중에는 다른 터미널에 명령을 칠 수 없어서.
+  정책의 action 은 아니지만 언제 끄느냐에 따라 그 뒤 이미지·관절 상태가 달라지므로 수집할 때 일관되게 한다. 텔레옵 장치 버튼으로 옮길지는 5단계에서. 자동 kill 은 안 함 (판정은 사람)
 - **보호 정지가 걸린 에피소드**는 `meta.json` 에 항상 기록하고 병합에서 기본 제외 (옵션을 줄 때만 포함)
 - **앞뒤 정지 구간 자르기**는 병합의 명시 옵션 (기본 끔). 검수 스크립트가 에피소드별 앞뒤 정지 길이를 출력 → 실제 텔레옵 데이터를 보고 결정.
   r 을 누른 뒤 텔레옵 장치를 잡기까지 팔이 멈춘 프레임이 쌓이면 정책이 "시작하면 가만히 있기" 를 배울 수 있다
@@ -1007,6 +1012,30 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   (6단계 수집 전에. `realsense2_description` 에는 D455 메시만 있고 D456 은 없음)
 - lerobot 환경: conda `lerobot_v2` (실물 PC 기록과 같게 Python 3.10 + `pip install "lerobot==0.3.3"`). conda 는 `~/miniconda3`, base 자동 활성화 끔
   (켜져 있으면 `~/isaacsim/python.sh`·ROS 의 python 과 섞일 수 있음)
+
+**4-0 결과 (2026-10-05)**: `config/cameras.yaml` + `camera_config.py`, 옛 sim smoke bag 삭제, conda `lerobot_v2` (Python 3.10.21, lerobot 0.3.3, `CODEBASE_VERSION` v2.1)
+
+**4-1 결과 (2026-10-05)** — `record_toggle.py` (`./6_record_bag.sh <작업명> --sim`), sim 서비스 `/sim/drone_kill`
+- 토픽: 상태 (`/joint_states`, `/gripper/joint_states`, `/gripper/target`, 카메라 `image_raw`·`camera_info`) + 명령 (`/joint_command`, `/gripper/command`),
+  `--sim` 이면 `/protective_stop`·`/clock`. 카메라 토픽은 `cameras.yaml`
+- 녹화 전 검사: 상태 토픽에 발행자가 없거나 카메라 발행자가 RELIABLE 이 아니면 녹화를 시작하지 않음. 카메라는 QoS override 로 RELIABLE 수신
+- `--sim`: `r` → `/sim/reset` → 성공 응답 뒤 녹화 시작 (실패·서비스 없음이면 녹화 안 함), `k` → 드론 모터 정지. bag 폴더에 `episode.json`
+  (모드, 토픽, 카메라 역할 → 장치, 리셋 응답 (시드·드론 위치), kill 시각, 녹화 길이)
+- 확인 (GUI 에서 사용자가 r·d·q, 헤드리스에서 같은 함수로 리셋 → 녹화 → 명령 재생 → kill → 종료): bag 5 개 (25~42 s, 기하·PX4) 모두
+  카메라 2 대 장수 같음·30.00 Hz·끊김 0, `/joint_states` 120.00 Hz, 그리퍼 30.00 Hz, stamp 0 인 메시지 없음. 빗나간 에피소드 (present 1133) 는 `d` 로 `_discarded/` 로
+- **[고침] 기하 제어기 드론에서 리셋 응답 `duration_s` 가 음수** (−95 s 등): 기하 제어기를 다시 켜면 드론 내부 시계 (`flight.t`) 가 0 으로 돌아가는데 리셋이 그 시계로 쟀다
+  → sim time 으로 (기하 2.03 s, PX4 23.87 s). `t_start` 도 sim time
+- **[알아 둘 것] 재생 스크립트 (`replay_commands.py`) 는 명령을 고르게 보내지 못한다**: 60 Hz 명령 (간격 16.67 ms) 992 개 중 **간격이 40 ms 를 넘은 것이 38~64 번 (4~6 %)**,
+  최대 41.7 ms (= `/clock` 5 칸, 정상 2 칸. 한 명령이 25 ms 늦게 나가고 다음 것이 바로 따라감). 빠진 명령은 없음 (992 개 모두 녹화)
+  - 원인: 이 스크립트는 `/clock` 을 받아 "sim 시각이 다음 줄 시각을 넘으면 보냄" 으로 동작. sim 은 물리 4 스텝을 한꺼번에 계산해 `/clock` 4 개가 실제 시간 33 ms 마다 뭉쳐 오고,
+    한 노드가 `/clock` (120 Hz)·그리퍼 토픽 2 개를 받으며 보내기도 해서 가끔 한 묶음 밀린다. sim 쪽 문제가 아님
+  - 데이터 정합성: stamp 는 실제로 보낸 순간이라 늦은 명령은 늦은 stamp 로 기록된다 → 데이터셋 action (프레임 직전 최신 명령) = sim 이 실제로 받은 명령.
+    파지 결과도 같음 (present 282~291, target 1150)
+  - 학습 영향: 재생 에피소드는 파이프라인 확인용 가짜 데이터라 학습에 안 쓴다. 실제 텔레옵 노드 (5단계) 는 `/clock` 을 기다리지 않고 자기 타이머로 일정하게 (50 Hz 이상) 보낸다.
+    텔레옵 데이터에서 같은 일이 생기면 오차 = 팔 속도 × 늦은 시간 (30 °/s 에서 25 ms = 0.75°). 성능을 실제로 떨어뜨리는 것은 명령 주기가 25 Hz 보다 느리거나 자주 끊길 때
+    (같은 action 이 반복되는 계단) → 4-4 검수 스크립트가 에피소드별 `/joint_command` 간격 통계를 출력해 찾는다
+- **bag 용량**: 30 s 에피소드 하나 약 1.5 GB (압축 없는 640x480 이미지 2 대, 약 55 MB/s). 디스크 여유 156 GB → 약 100 개.
+  **그대로 둔다 (2026-10-05 사용자 결정): 압축·자동 삭제 없이 bag 은 사용자가 직접 지운다**
 
 **작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동

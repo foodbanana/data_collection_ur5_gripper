@@ -1,37 +1,47 @@
 #!/usr/bin/env python3
-# rosbag2 녹화 토글 (r 키로 시작/종료)
+# rosbag2 녹화 토글 (r 키로 시작/종료). sim·실물 공용 (docs/PLAN.md 4-1)
 #   r (대기 중) : <YYYYMMDD_HHMMSS>_<작업명> 으로 새 bag 녹화 시작
+#                 --sim 이면 먼저 /sim/reset (에피소드 리셋, 약 24 s) 을 부르고 성공 응답이 온 뒤 녹화 시작
 #   r (녹화 중) : 현재 bag을 SIGINT로 안전 종료 → 대기 상태 복귀
-#   d (대기 중) : 방금 저장한 에피소드를 bags/_discarded/ 로 이동 (y 로 확인, 삭제는 안 함)
+#   k (--sim)   : 드론 모터 정지 /sim/drone_kill (잡은 뒤. 시각을 episode.json 에 기록). 다시 켜는 것은 다음 r 의 리셋
+#   d (대기 중) : 방금 저장한 에피소드를 bags/_discarded/ 로 이동 (y 로 확인, 삭제는 안 함). 실패한 에피소드는 이렇게 버린다
 #   q           : 종료 (녹화 중이면 안전 종료 후 종료)
 #   r~r 구간 1개 = bag 1개 = 에피소드 1개
 #
-# 사용: python3 record_toggle.py [작업명]     (보통 6_record_bag.sh 를 통해 실행)
-# 저장: <이 파일이 있는 폴더>/bags/<이름>/
+# 사용: python3 record_toggle.py [작업명] [--sim]     (보통 6_record_bag.sh 를 통해 실행)
+# 저장: <이 파일이 있는 폴더>/bags/<이름>/  (+ episode.json: 녹화 정보, 카메라 역할 → 장치, sim 은 리셋 응답)
+#
+# 녹화 시작 전에 상태 토픽 (팔·그리퍼·카메라) 에 발행자가 있는지 확인하고, 없으면 녹화하지 않는다 (조용히 빈 bag 을 만들지 않음).
+# 카메라는 RELIABLE 로 받는다: best effort 면 640x480 이미지가 UDP 조각 손실로 통째로 버려진다 (docs/sim_performance.md 5장)
 
 import os
 import sys
 import tty
+import json
 import time
 import shutil
 import signal
 import select
 import termios
+import argparse
+import tempfile
 import subprocess
 from datetime import datetime
 
+from camera_config import load_cameras
+
 # ── 녹화할 토픽 ──
-#   로봇팔 상태 / 그리퍼 상태(present) / 그리퍼 목표(goal) / 그리퍼 명령 / 카메라 color 2대
-#   ※ 그리퍼 action 소스는 /gripper/target (30Hz 상시 발행), /gripper/command는 참고용
-#   ※ 로봇팔 대신 fake_joint_states.py 를 켜두면 /joint_states 도 채워짐.
-TOPICS = [
-    '/joint_states',
-    '/gripper/joint_states',
-    '/gripper/target',
-    '/gripper/command',
-    '/d435i/d435i/color/image_raw',
-    '/d456/d456/color/image_raw',
-]
+#   상태 토픽 (STATE): 항상 발행되고 있어야 한다. 녹화 시작 전에 발행자를 확인
+#   명령 토픽 (COMMAND): 텔레옵 장치가 발행. 녹화 중에 나타나도 ros2 bag record 가 찾아서 받는다
+#     /joint_command = 팔 action, /gripper/target = 그리퍼 action (30Hz 상시 발행), /gripper/command 는 참고용
+#   카메라 토픽은 config/cameras.yaml (역할 → /cam/<역할>/color/image_raw, camera_info)
+STATE_TOPICS = ['/joint_states', '/gripper/joint_states', '/gripper/target']
+COMMAND_TOPICS = ['/joint_command', '/gripper/command']
+SIM_STATE_TOPICS = ['/protective_stop', '/clock']     # sim 전용 (보호 정지 흉내, sim time)
+
+SIM_RESET_SERVICE = '/sim/reset'
+SIM_KILL_SERVICE = '/sim/drone_kill'
+SIM_RESET_TIMEOUT = 120.0   # [s, 실제 시간] 리셋은 약 24 s (sim). 이 시간 안에 응답이 없으면 에러
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BAG_DIR = os.path.join(SCRIPT_DIR, 'bags')
@@ -51,12 +61,105 @@ def say(*args, **kwargs):
         pass
 
 
+class RosLink:
+    """녹화 전 토픽 확인과 sim 리셋 호출 (rclpy). 녹화 자체는 ros2 bag record 프로세스가 한다."""
+
+    def __init__(self, sim, cameras):
+        import rclpy
+        from rclpy.signals import SignalHandlerOptions
+        from std_srvs.srv import Trigger
+
+        self.rclpy, self.sim, self.cameras = rclpy, sim, cameras
+        # 신호 처리는 이 스크립트가 한다 (Ctrl+C → bag 안전 종료)
+        rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+        self.node = rclpy.create_node('record_toggle')
+        self.reset_cli = self.node.create_client(Trigger, SIM_RESET_SERVICE) if sim else None
+        self.kill_cli = self.node.create_client(Trigger, SIM_KILL_SERVICE) if sim else None
+        self.Trigger = Trigger
+        self.image_topics = [r['topic'] for r in cameras['roles'].values()]
+        self.info_topics = [r['info_topic'] for r in cameras['roles'].values()]
+
+    @property
+    def state_topics(self):
+        return STATE_TOPICS + self.image_topics + self.info_topics + (SIM_STATE_TOPICS if self.sim else [])
+
+    @property
+    def topics(self):
+        return self.state_topics + COMMAND_TOPICS
+
+    def spin(self, sec):
+        self.rclpy.spin_once(self.node, timeout_sec=sec)
+
+    def check_topics(self, wait=2.0):
+        """상태 토픽마다 발행자가 있는지, 카메라 발행자가 RELIABLE 인지 확인. → 문제 목록 (비면 정상)"""
+        from rclpy.qos import ReliabilityPolicy
+
+        t_end = time.monotonic() + wait          # 노드를 만든 직후에는 발견(discovery)이 덜 끝났을 수 있다
+        while True:
+            problems = []
+            for t in self.state_topics:
+                pubs = self.node.get_publishers_info_by_topic(t)
+                if not pubs:
+                    problems.append(f"{t}: 발행자 없음")
+                elif t in self.image_topics and any(p.qos_profile.reliability != ReliabilityPolicy.RELIABLE for p in pubs):
+                    problems.append(f"{t}: 발행자가 RELIABLE 이 아님 (best effort 로는 이미지가 통째로 버려짐. 카메라 드라이버 QoS 를 RELIABLE 로)")
+            if not problems or time.monotonic() > t_end:
+                return problems
+            self.spin(0.1)
+
+    def _call(self, cli, name, timeout, on_tick=None):
+        """Trigger 서비스를 부르고 응답을 기다린다. → (성공 여부, 응답 JSON dict 또는 오류 문자열)"""
+        if not cli.wait_for_service(timeout_sec=2.0):
+            return False, f"{name} 서비스가 없음 (sim_ros2.py 가 떠 있는지 확인)"
+        fut = cli.call_async(self.Trigger.Request())
+        t0 = time.monotonic()
+        while not fut.done():
+            self.spin(0.1)
+            el = time.monotonic() - t0
+            if on_tick is not None:
+                on_tick(el)
+            if el > timeout:
+                return False, f"{name} 응답이 {timeout:g} s 안에 없음"
+        res = fut.result()
+        try:
+            info = json.loads(res.message)
+        except json.JSONDecodeError:
+            return False, f"{name} 응답이 JSON 이 아님: {res.message!r}"
+        if not res.success:
+            return False, f"{name} 실패: {info.get('error', res.message)}"
+        return True, info
+
+    def sim_reset(self, on_tick=None):
+        """에피소드 리셋 (약 24 s). 응답 = 시드, 새 드론 위치 등"""
+        return self._call(self.reset_cli, SIM_RESET_SERVICE, SIM_RESET_TIMEOUT, on_tick)
+
+    def drone_kill(self):
+        """드론 모터 정지. 응답 = sim 시각"""
+        return self._call(self.kill_cli, SIM_KILL_SERVICE, 5.0)
+
+    def close(self):
+        self.node.destroy_node()
+        self.rclpy.shutdown()
+
+
+def write_qos_overrides(image_topics):
+    """카메라 이미지를 RELIABLE 로 받게 하는 ros2 bag record QoS override 파일. → 경로"""
+    f = tempfile.NamedTemporaryFile('w', prefix='record_toggle_qos_', suffix='.yaml', delete=False)
+    for t in image_topics:
+        f.write(f"{t}:\n  history: keep_last\n  depth: 10\n  reliability: reliable\n  durability: volatile\n")
+    f.close()
+    return f.name
+
+
 class BagRecorder:
-    def __init__(self, task_name):
+    def __init__(self, task_name, link):
         self.task_name = task_name
+        self.link = link
+        self.qos_path = write_qos_overrides(link.image_topics)
         self.proc = None
         self.out_dir = None
         self.t_start = None
+        self.info = None             # 녹화 중인 에피소드의 episode.json 내용
         self.episode_count = 0
         self.last_saved = None       # 이번 세션에서 방금 저장한 에피소드 경로 ('d' 대상)
         self.last_elapsed = None
@@ -65,22 +168,41 @@ class BagRecorder:
     def recording(self):
         return self.proc is not None
 
-    def start(self):
+    def start(self, reset_info=None):
+        """녹화 시작. 상태 토픽에 문제가 있으면 시작하지 않고 False. reset_info: sim 리셋 응답 (episode.json 에 기록)"""
+        problems = self.link.check_topics()
+        if problems:
+            say("\n[ERROR] 녹화를 시작하지 않음 — 토픽 문제:")
+            for p in problems:
+                say(f"          {p}")
+            say(IDLE_MSG)
+            return False
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         ep_name = f"{stamp}_{self.task_name}" if self.task_name else stamp
         self.out_dir = os.path.join(BAG_DIR, ep_name)
+        cams = self.link.cameras
+        mode = 'sim' if self.link.sim else 'real'
+        self.info = {
+            'episode': ep_name, 'mode': mode, 'task_name': self.task_name, 'recorded_at': datetime.now().isoformat(timespec='seconds'),
+            'topics': self.link.topics, 'camera_reliability': 'reliable',
+            'cameras': {role: {'topic': r['topic'], **r[mode]} for role, r in cams['roles'].items()},
+            'sim_reset': reset_info,
+            'drone_kill': [],            # 녹화 중 k 키로 드론 모터를 끈 시각 (sim time)
+        }
 
         cmd = ['ros2', 'bag', 'record',
                '-o', self.out_dir,
                '--disable-keyboard-controls',
-               '--topics', *TOPICS]
+               '--qos-profile-overrides-path', self.qos_path,
+               '--topics', *self.link.topics]
         # 별도 세션으로 띄움: 터미널의 Ctrl+C가 자식에게 직접 가지 않게 해서
         # SIGINT가 정확히 한 번만(우리가 보낼 때만) 전달되도록 함.
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                                      start_new_session=True)
         self.t_start = time.monotonic()
-        say(f"\n[REC ●] 녹화 시작: {self.out_dir}")
+        say(f"\a\n[REC ●] 녹화 시작: {self.out_dir}")
         say("        'r' 로 녹화 종료")
+        return True
 
     def stop(self):
         """SIGINT로 안전 종료. 버퍼 flush + metadata.yaml 마무리까지 기다림 (SIGKILL 금지)."""
@@ -111,6 +233,9 @@ class BagRecorder:
     def _finish(self):
         elapsed = time.monotonic() - self.t_start
         if os.path.isfile(os.path.join(self.out_dir, 'metadata.yaml')):
+            self.info['wall_duration_s'] = round(elapsed, 2)
+            with open(os.path.join(self.out_dir, 'episode.json'), 'w') as f:
+                json.dump(self.info, f, ensure_ascii=False, indent=2)
             self.episode_count += 1
             self.last_saved = self.out_dir
             self.last_elapsed = elapsed
@@ -121,6 +246,7 @@ class BagRecorder:
         self.proc = None
         self.out_dir = None
         self.t_start = None
+        self.info = None
         say(IDLE_MSG)
 
     def discard_last(self):
@@ -139,13 +265,46 @@ class BagRecorder:
         say(f"            (되살리려면 이 폴더를 {BAG_DIR}/ 로 다시 옮기면 됨) "
             f"— 이번 세션 에피소드 {self.episode_count}개")
 
+    def kill_drone(self):
+        """--sim: 드론 모터 정지. 녹화 중이면 시각을 episode.json 에 남긴다."""
+        ok, info = self.link.drone_kill()
+        if not ok:
+            say(f"\n[ERROR] {info}")
+            return
+        say(f"\n[KILL] 드론 모터 정지 (sim t {info.get('t')} s). 다시 켜려면 녹화를 끝내고 'r' (리셋)")
+        if self.recording:
+            self.info['drone_kill'].append(info)
 
-def print_help(task_name):
+    def close(self):
+        try:
+            os.unlink(self.qos_path)
+        except OSError:
+            pass
+
+
+def reset_then_record(recorder, link):
+    """--sim: /sim/reset → 성공하면 녹화 시작. 리셋 동안 sim 은 팔·그리퍼 명령을 무시한다."""
+    say(f"\n[RESET] {SIM_RESET_SERVICE} 호출 (약 24 s: 팔 홈, 그리퍼 열림, 드론 재이륙). 끝나면 녹화가 바로 시작됩니다")
+    ok, info = link.sim_reset(on_tick=lambda el: say(f"\r[RESET] {el:5.1f} s ", end='', flush=True))
+    if not ok:
+        say(f"\n[ERROR] {info}")
+        say("        녹화를 시작하지 않음. sim 터미널 로그를 확인하고 'r' 로 다시 시도")
+        say(IDLE_MSG)
+        return False
+    say(f"\n[RESET] 완료: 시드 {info.get('seed')}, 드론 {info.get('drone_pos')}, sim {info.get('duration_s')} s")
+    return recorder.start(reset_info=info)
+
+
+def print_help(task_name, link):
     say()
     say("=== rosbag2 녹화 토글 ===")
+    say(f"  모드     : {'sim (r → /sim/reset → 녹화)' if link.sim else '실물'}")
     say(f"  작업명   : {task_name if task_name else '(없음)'}")
     say(f"  저장 위치: {BAG_DIR}/<YYYYMMDD_HHMMSS>{'_' + task_name if task_name else ''}/")
+    say(f"  토픽     : {' '.join(link.topics)}")
     say("  'r' : 녹화 시작 / 녹화 종료 (토글)")
+    if link.sim:
+        say("  'k' : 드론 모터 정지 (잡은 뒤)")
     say("  'd' : 방금 저장한 에피소드 버리기 → bags/_discarded/ 로 이동 ('y' 로 확인)")
     say("  'q' : 종료 (녹화 중이면 안전 종료 후 종료)")
     say("=========================")
@@ -170,7 +329,11 @@ def _raise_interrupt(signum, frame):
 
 
 def main():
-    task_name = sys.argv[1] if len(sys.argv) > 1 else ''
+    ap = argparse.ArgumentParser(description='rosbag2 녹화 토글 (r 시작/종료, d 버리기, q 종료)')
+    ap.add_argument('task_name', nargs='?', default='', help='bag 이름 뒤에 붙는 작업명')
+    ap.add_argument('--sim', action='store_true', help='Isaac Sim: r 을 누르면 /sim/reset 뒤 녹화 시작, sim 전용 토픽도 녹화')
+    args = ap.parse_args()
+    task_name = args.task_name
 
     if shutil.which('ros2') is None:
         say("[ERROR] ros2 명령을 찾을 수 없음. ROS 환경을 source 하거나 6_record_bag.sh 로 실행하세요.")
@@ -180,8 +343,9 @@ def main():
         sys.exit(1)
 
     os.makedirs(BAG_DIR, exist_ok=True)
-    recorder = BagRecorder(task_name)
-    print_help(task_name)
+    link = RosLink(args.sim, load_cameras())
+    recorder = BagRecorder(task_name, link)
+    print_help(task_name, link)
 
     # 터미널 창 닫힘(SIGHUP) / kill(SIGTERM) 시에도 bag을 안전 종료하도록
     signal.signal(signal.SIGTERM, _raise_interrupt)
@@ -220,11 +384,16 @@ def main():
             elif ch in ('r', 'R', 'ㄱ'):   # 'ㄱ'/'ㅂ'/'ㅇ'/'ㅛ' = 한글 입력 상태에서의 r/q/d/y
                 if recorder.recording:
                     recorder.stop()
+                elif args.sim:
+                    reset_then_record(recorder, link)
                 else:
                     recorder.start()
-                # 키를 꾹 눌러 생긴 반복 입력 / 종료 대기 중 눌린 키는 버림
+                # 키를 꾹 눌러 생긴 반복 입력 / 종료·리셋 대기 중 눌린 키는 버림
                 termios.tcflush(fd, termios.TCIFLUSH)
                 last_status = time.monotonic()   # 경과시간 표시는 recorder 시작 로그가 지나간 1초 뒤부터
+            elif ch in ('k', 'K', 'ㅏ') and args.sim:   # 실물 드론은 조종자가 끈다 (실물 모드에는 k 없음)
+                recorder.kill_drone()
+                termios.tcflush(fd, termios.TCIFLUSH)
             elif ch is not None:
                 say(f"\n지원하지 않는 키: {repr(ch)}")
 
@@ -242,6 +411,8 @@ def main():
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
         if recorder.recording:
             recorder.stop()
+        recorder.close()
+        link.close()
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_attr)
         except termios.error:
