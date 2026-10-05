@@ -1029,6 +1029,14 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 **대안: SpaceMouse / PICO**
 - 카테시안 명령 → IK(차분 IK 등, 타깃 프레임 `rh_p12_rn_tcp`) → `/joint_command` 변환 노드 추가. 인터페이스는 동일
 
+**sim 에서 확인할 것 (3단계에서 넘어옴, `docs/sim_ros2_interface.md`)**
+- **드론을 잡은 채 RTF 0.69** (3-8, PX4 모터 끔): 텔레옵으로 잡은 뒤 들고 옮길 때 조작감 확인. 불편하면 원인
+  (드론·손가락 충돌 형상 convex 수, solver 반복)을 측정한 뒤 결정 (`docs/sim_performance.md` 6장 끝). PhysX 설정을 바꾸면 파지 회귀 시험 다시
+- `/joint_command` 는 **일정한 주기**로 보낼 것 (sim 은 루프 30 Hz 마다 최신 명령을 33 ms 선형 보간, `docs/arm_command_interpolation.md`)
+- **리셋(`/sim/reset`) 뒤 텔레옵은 로봇의 지금 자세(홈)에서 시작**: 리셋 전 자세의 명령을 보내면 팔이 33 ms 만에 그 자세로 뜀 (위 안전 장치와 같은 규칙)
+- 보호 정지 기준 (접촉력 150 N, 위치 오차 5°, 관절 속도 200 °/s) 이 실제 텔레옵 동작에서 오탐 없는지 (3-7 은 명령 재생으로만 확인)
+- 보간 시간 33 ms 를 실물 UR servoJ lookahead (실물 텔레옵 설정을 정할 때) 와 반응 지연이 비슷하도록 다시 맞출지
+
 **완료 기준**
 - [ ] 고정 드론 파지 에피소드를 연속으로 녹화 가능
 - [ ] 명령과 실제 관절 사이 지연·오차가 허용 범위
