@@ -3,7 +3,7 @@
 # sim_reset.py  (docs/PLAN.md 3-6)
 #
 # 에피소드 리셋 서비스 /sim/reset (std_srvs/Trigger). 서비스 콜백 안에서 sim 을 실제 시간 속도로 계속 돌리며 리셋하고 끝나면 응답한다
-# (응답 message = JSON: 시드, 새 드론 호버 위치, 걸린 sim 시간). 리셋 결과 = 에피소드 시작 상태 (팔 홈, 그리퍼 열림, 드론은 팔 위 호버).
+# (응답 message = JSON: 시드, 새 드론 호버 위치 (world 와 로봇 base 기준), 걸린 sim 시간, PX4 로그 폴더, "sim" = 에피소드 메타데이터용 고정 정보 (4-2)). 리셋 결과 = 에피소드 시작 상태 (팔 홈, 그리퍼 열림, 드론은 팔 위 호버).
 #
 # **항상 같은 경로 (순간이동)** (2026-10-05 사용자 결정):
 #   1. 팔·그리퍼 명령 무시, 보호 정지 해제
@@ -41,12 +41,15 @@ class EpisodeReset:
         self.seed0, self.realtime = int(seed), bool(realtime)
         self.count = 0
         self.home = np.asarray(s.home, dtype=float)
-        self.nominal = np.asarray(s.scene_cfg["drone_pos"], dtype=float)
+        self.nominal = np.asarray(s.drone_pos, dtype=float).copy()      # 리셋 기준 위치 = 시작할 때의 드론 위치 (--drone-pos 또는 씬 설정 drone_pos)
+        # 로봇 base (최상위 prim = robot_mount, world 와 축이 같고 테이블 상판 높이만큼 위). 메타데이터 위치값은 base 기준 (CLAUDE.md)
+        self.base = np.array([0.0, 0.0, float(s.scene_cfg["table"]["top_z"])])
         self.now = SimulationManager.get_simulation_time    # sim time (/clock 과 같은 시계). flight.t 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
         self.srv = node.create_service(Trigger, c["service"], self._on_reset)
         self.kill_srv = node.create_service(Trigger, c["kill_service"], self._on_kill)
         self.n_cb = 0
         self.last = None
+        self.sim_info = None              # 에피소드 메타데이터용 고정 정보 (sim_ros2.episode_info). 리셋 응답의 "sim" 에 넣는다 (PLAN 4-2)
         self.release_pending = False      # True 면 메인 루프가 다음 spin 뒤 명령 무시를 푼다 (리셋 중 쌓인 명령을 버리려고)
         self.failed = False               # 마지막 리셋 실패 → 다음 리셋 성공까지 명령 무시
 
@@ -122,8 +125,11 @@ class EpisodeReset:
             dist = self._drone_up(goal)
             if self.stop.stopped:
                 raise RuntimeError(f"리셋 중 보호 정지: {self.stop.reason}")
+            f = self.s.flight
             res.update(ok=True, arm_err_deg=round(err, 3), drone_err_mm=round(dist * 1000, 1), duration_s=round(self.now() - t0, 2),
-                       drone_pos=np.round(self.s.flight._body_pose()[0], 4).tolist())
+                       drone_pos=np.round(f._body_pose()[0], 4).tolist(), t_end=round(self.now(), 3),
+                       drone_goal_base=np.round(goal - self.base, 4).tolist(), drone_pos_base=np.round(f._body_pose()[0] - self.base, 4).tolist(),
+                       px4_log=f.px4.launcher.run_dir if f.backend == "px4" else None, sim=self.sim_info)
             response.success = True
         except Exception as e:  # noqa: BLE001
             f = self.s.flight

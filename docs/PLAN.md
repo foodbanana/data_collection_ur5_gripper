@@ -1037,6 +1037,28 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - **bag 용량**: 30 s 에피소드 하나 약 1.5 GB (압축 없는 640x480 이미지 2 대, 약 55 MB/s). 디스크 여유 156 GB → 약 100 개.
   **그대로 둔다 (2026-10-05 사용자 결정): 압축·자동 삭제 없이 bag 은 사용자가 직접 지운다**
 
+**4-2 결과 (2026-10-05)** — `/sim/reset` 응답 JSON 에 에피소드 정보 (`sim_ros2.episode_info` → `sim_reset.py`). record_toggle 이 `episode.json` 의 `sim_reset` 에 그대로 저장
+- 리셋마다 바뀌는 것: `seed`, `drone_goal`·`drone_pos` (world) + **`drone_goal_base`·`drone_pos_base` (로봇 base 기준, 0-3)**, `t_start`·`t_end` (sim time), `duration_s`, `px4_log` (그 에피소드의 PX4 로그 폴더)
+- 고정 정보 `sim`: git (commit·branch·수정 여부), 물리·루프 주기, 렌더 (DLSS Performance), 로봇 (설정 파일, base 위치, 홈 자세, 명령 보간 시간),
+  그리퍼 (`max_force_nm` 2.28, 목표값 이동 속도, 손가락 마찰), 드론 (설정 파일, 제어기, 비행 모드, 위치 정보 방식, 기준 위치, 시드),
+  카메라 (tickRate, 역할별 prim 경로·설정 파일·intrinsics, 손목 `cam_tilt_deg` 0, third view 위치·look_at), 보호 정지 (모드·기준 3 개)
+- 로봇 base = 로봇 최상위 prim (world 와 축이 같고 z 만 테이블 상판 0.762 m 위)
+- **[고침] 리셋 기준 위치가 `--drone-pos` 를 무시하던 것**: 리셋은 항상 씬 설정 `drone_pos` 를 기준으로 했다 → 시작할 때의 드론 위치 (`--drone-pos` 또는 씬 설정) 를 기준으로
+- 회귀 (`check_ros2.py`, 4-2 수정 뒤 같은 코드로 4 번):
+
+  | 실행 | 결과 | 6 번 파지 신호 |
+  |---|---|---|
+  | 1 차 전체 | **8/9** | **FAIL**: 마지막 1 s present 변화 296, 잡은 채 RTF −0.277 (= 검사 쪽이 받은 `/clock` 이 뒤로 감). sim 로그는 정상 |
+  | 2 차 A 부분만 | 7/7 | PASS: present 294.6, 변화 0.0 |
+  | 3 차 전체 | 9/9 | PASS: present 293.8, 변화 0.1 |
+  | 4 차 전체 | 9/9 | PASS: present 296.4, 변화 0.0 |
+
+  - **[남은 문제] 1 차 실패의 원인은 확인하지 못했다.** 3·4 차는 다른 sim·bag 재생·녹화 도구가 없는 것을 확인하고 돌렸고 다시 나오지 않았다.
+    4-2 수정은 리셋 응답에 항목을 더한 것뿐이라 6 번과 직접 관련이 없다. 다시 나오면 검사 스크립트가 받은 `/clock`·그리퍼 데이터를 저장해 추적한다
+  - 증상은 **같은 토픽을 발행하는 다른 프로세스가 있을 때**의 모습과 같다 (추정, 그 시각에 무엇이 떠 있었는지는 확인 못 함).
+    예: sim 이 도는 동안 녹화한 bag 을 `ros2 bag play` — bag 에 `/clock`·그리퍼 토픽·`/joint_command` 가 들어 있어 옛 시각·옛 명령이 섞인다.
+    **sim 을 띄운 채 sim bag 을 재생하지 말 것** (로봇이 옛 `/joint_command` 대로 움직인다)
+
 **작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인

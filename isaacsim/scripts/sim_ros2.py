@@ -25,6 +25,7 @@
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 
@@ -60,6 +61,51 @@ def parse():
     if args.prop_spin is None:
         args.prop_spin = "off" if args.headless else "on"
     return args
+
+
+def _git_state():
+    """레포 commit 과 수정 여부 (에피소드 메타데이터: 어떤 코드·설정으로 모은 데이터인지)."""
+    repo = os.path.dirname(ts.SIM_ROOT)
+    def git(*a):
+        r = subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"git {' '.join(a)} 실패: {r.stderr.strip()}")
+        return r.stdout.strip()
+    return {"commit": git("rev-parse", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(git("status", "--porcelain", "--untracked-files=no"))}
+
+
+def episode_info(s, cfg, args, render, stop_mode):
+    """에피소드 메타데이터용 고정 정보 (PLAN 4-2). /sim/reset 응답의 "sim" → record_toggle 의 episode.json → stage1 meta.json.
+    경로는 레포 기준, 위치는 world [m] (로봇 base 는 robot_base_world)."""
+    repo = os.path.dirname(ts.SIM_ROOT)
+    rel = lambda p: os.path.relpath(os.path.abspath(p), repo)
+    g = s.drive_cfg["gripper"]
+    (gname, gc), = g.items()
+    c = s.drive_cfg["contact"]
+    ps_c = cfg["protective_stop"]
+    f = s.flight
+    return {
+        "git": _git_state(),
+        "physics_hz": round(1.0 / ts.PHYSICS_DT), "loop_hz": float(cfg["loop_hz"]),
+        "render": render,
+        "robot": {"config": rel(s.robot_cfg["path"]), "base_world": [0.0, 0.0, float(s.scene_cfg["table"]["top_z"])],
+                  "home_pose": [float(x) for x in s.home], "command_interp_time": float(cfg["arm"]["command_interp_time"])},
+        "gripper": {"joint": gname, "max_force_nm": float(gc["max_force"]), "profile_velocity": float(gc["profile_velocity"]),
+                    "finger_friction": [float(c["finger_material"]["static_friction"]), float(c["finger_material"]["dynamic_friction"])]},
+        "drone": {"config": rel(s.drone_cfg["path"]), "backend": f.backend, "mode": f.ref.mode,
+                  "position_source": f.position_source if f.backend == "px4" else None,
+                  "nominal_pos": [float(x) for x in s.drone_pos],            # 리셋 기준 위치 (--drone-pos 또는 씬 설정). 리셋마다 ± reset.drone_offset
+                  "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on"},
+        "cameras": {"tick_rate": float(cfg["cameras"]["tick_rate"]),
+                    "wrist": {"prim": str(s.wrist_cam), "config": rel(ts.WRIST_CAMERA_CONFIG), "cam_tilt_deg": 0.0,
+                              "intrinsics": s.cam_cfg["intrinsics"]},
+                    "third_view": {"prim": str(s.third_cam), "config": rel(ts._abs(s.scene_cfg["third_view_camera_config"])),
+                                   "position": [float(x) for x in s.tv_cfg["position"]], "look_at": [float(x) for x in s.tv_cfg["look_at"]],
+                                   "intrinsics": s.tv_cfg["intrinsics"]}},
+        "protective_stop": {"mode": stop_mode, "contact_force_n": float(ps_c["contact_force_n"]),
+                            "tracking_error_deg": float(ps_c["tracking_error_deg"]), "joint_speed_dps": float(ps_c["joint_speed_dps"])},
+    }
 
 
 def main():
@@ -113,6 +159,7 @@ def main():
         bridges = [arm, grip, stop, reset]
         ds.run(s, 0.5)                                       # 카메라 렌더가 한 번 돈 뒤 렌더 설정 확인
         render = ri.check_render_settings(cfg)
+        reset.sim_info = episode_info(s, cfg, args, render, args.protective_stop)
         if not args.headless:
             ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
         print(f"[sim_ros2] 준비: 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
