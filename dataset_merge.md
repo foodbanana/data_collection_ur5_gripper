@@ -58,7 +58,9 @@ merge_<이름>.txt
 
 
 - 넣을 것만 적고, 뺄 것은 삭제하거나 `#`으로 주석 처리
-- clamp 수정(2026-09-21 17:22) **이전** bag은 그리퍼 42억 이상치 위험이 있으므로 제외
+- 중간 산출물은 **지금 stage1 (schema_version 2: wrist/third_view, 그리퍼 0~1, base_imu)** 로 만든 것만. 옛 형식은 사전검사에서 중단
+- `bags/_discarded/` 로 버린 에피소드는 stage1 을 돌리지 않으므로 중간 산출물이 없다 (병합에 들어가지 않음)
+- 매니페스트 없이 `bag_lerobot_intermediate/` 아래 전부를 병합하려면 `--all`
 
 ### 2. 병합 실행
 
@@ -79,16 +81,23 @@ python lerobot_merge_episodes_v21.py
 | 인자 | 기본값 | 설명 |
 |---|---|---|
 | `--manifest` | `merge_ur5_gripper_drone.txt` | 병합 대상 목록 파일 |
+| `--all` | - | 매니페스트 대신 중간 파일 폴더 아래 전부 |
 | `--repo-id` | `foodbanana/ur5_gripper_drone` | 결과 데이터셋 이름 |
 | `--intermediate-dir` | `bag_lerobot_intermediate` | 중간 파일 폴더 |
 | `--task` | `pick up the drone` | 언어 명령 (모든 에피소드 공통) |
-| `--fps` | meta.json 값(25) | 보통 생략 |
 | `--root` | (자동) | 출력 폴더 직접 지정 시 |
+| `--include-protective-stop` | 끔 | 보호 정지가 걸린 에피소드 (sim) 도 넣는다. 기본은 제외하고 출력·`merge_manifest.json` 에 남김 |
+| `--trim-idle start\|end\|both` | 안 자름 | 앞 / 뒤 / 양쪽 정지 구간을 자른다. 정지 = action 과 state 가 모두 첫 / 마지막 프레임 값에서 그대로인 구간 |
+| `--trim-margin` | `0.5` | [s] 자를 때 남길 정지 구간 |
+| `--idle-eps-deg` | `0.1` | [deg] 팔이 이만큼 안 변하면 정지로 본다 |
+
+정지 구간을 자를지는 검수 표의 "정지 앞/뒤 [s]" 를 보고 정한다 (녹화 시작 뒤 가만히 있는 프레임이 많이 쌓이면 정책이 "시작하면 가만히 있기" 를 배울 수 있다).
+`--arm-action command` 로 변환한 에피소드는 stage1 이 이미 첫 명령 이전 구간을 뺐다.
 
 **실행 흐름**
 
-Phase 1 사전검사 : 프레임수·차원·해상도·fps 일치 + 그리퍼 42억/음수/이진({0,1150}) 검사
-→ 하나라도 실패하면 즉시 중단 (디스크에 아무것도 안 씀)
+Phase 1 사전검사 : 프레임수·차원·해상도·fps·**팔 action 종류 (command / next_state)**·base_imu 방식 일치 + 유한값·팔 ±2π·그리퍼 state 0~1·action 이진({0, 1}) 검사
+→ 하나라도 실패하면 즉시 중단 (디스크에 아무것도 안 씀). 보호 정지 에피소드는 [제외] 로 표시하고 계속
 Phase 2 빌드 : create 1회 + 에피소드마다 add_frame → save_episode (mp4 av1 인코딩)
 Phase 3 기록 : meta/merge_manifest.json 에 어떤 폴더가 어떤 episode_index로 갔는지 기록
 
@@ -100,33 +109,19 @@ Phase 3 기록 : meta/merge_manifest.json 에 어떤 폴더가 어떤 episode_in
 `<이름>` 을 실제 데이터셋 이름으로 바꿔서 실행.
 
 ```bash
-# (1) 총계 확인
-python3 -c "import json; d=json.load(open('lerobot_dataset_v21/foodbanana/<이름>/meta/info.json')); print('episodes:',d['total_episodes'],'frames:',d['total_frames'],'ver:',d['codebase_version'])"
-
-# (2) LeRobot 로드 테스트 (제일 중요: openpi가 읽을 수 있는지 + mp4 디코딩 확인)
-python3 -c "
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-ds = LeRobotDataset('foodbanana/<이름>', root='lerobot_dataset_v21/foodbanana/<이름>')
-print('length:', len(ds), 'num_episodes:', ds.num_episodes)
-s = ds[0]
-print('state:', s['observation.state'].shape, 'action:', s['action'].shape)
-print('head:', s['observation.images.head'].shape, 'third:', s['observation.images.third_view'].shape)
-print('LOAD OK')
-"
-
-# (3) 용량 확인
-du -sh lerobot_dataset_v21/foodbanana/<이름>/
-
-# (4) 그리퍼 검수 (선택)
-python3 inspect_parquet.py lerobot_dataset_v21/foodbanana/<이름>/data/chunk-000/episode_000000.parquet
+env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<이름> --load     # PASS / FAIL, 종료 코드
+du -sh lerobot_dataset_v21/foodbanana/<이름>/                                                    # 용량
+env -u PYTHONPATH python inspect_parquet.py lerobot_dataset_v21/foodbanana/<이름>/data/chunk-000/episode_000000.parquet   # (선택) 에피소드 하나
 ```
 
-**정상 기준**
+**정상 기준** (`inspect_dataset_v21.py` 가 항목별로 판정)
 
-- episodes / frames 가 매니페스트 합과 일치
-- `ver: v2.1`
-- `LOAD OK`, state·action `[7]`, 이미지 `[3, 480, 640]` (CHW)
-- 그리퍼 action `{0, 1150}`, state 42억·음수 0개
+- 1 형식: `codebase_version` v2.1, fps 25, `observation.state` [7], `action` [7], `observation.base_imu` [6], `observation.images.wrist`·`third_view` [480, 640, 3]
+- 2 에피소드·프레임 수가 `info.json`·parquet·mp4 에서 일치
+- 3 값 범위: 유한값, 팔 ±2π, 그리퍼 state 0~1, 그리퍼 action `{0.0, 1.0}`
+- 4 파지 신호: 모든 에피소드에서 닫기 명령 중 그리퍼 state 최댓값 < 0.95 (물체에 막혀 멈춤)
+- 5 `--load`: LeRobotDataset 으로 열림 (openpi 가 읽을 수 있는지 + mp4 디코딩), 이미지 `(3, 480, 640)` (CHW)
+- 에피소드별 표: 앞·뒤 정지 [s], `/joint_command` 간격 (중앙값·최댓값·40 ms 넘은 횟수)
 
 ## 트러블슈팅
 
@@ -136,8 +131,10 @@ python3 inspect_parquet.py lerobot_dataset_v21/foodbanana/<이름>/data/chunk-00
 | `can't open file ...py` | 실행 위치 틀림 | `cd ~/data_collection_ur5_gripper` |
 | `[중단] 매니페스트 파일 없음` | 파일명 오타 | `--manifest` 값 확인 |
 | `[중단] 출력 폴더가 이미 있고...` | 같은 이름 데이터셋 존재 | 아래처럼 지우고 재실행 or `--repo-id` 변경 |
-| `[중단] ... 42억 이상치` | clamp 수정 전 오염 bag | 해당 에피소드를 매니페스트에서 제외 |
-| `[중단] 그리퍼 action 이진 아님` | 그리퍼 데이터 이상 | 해당 bag 재수집 or 제외 |
+| `[중단] 중간 파일 형식이 schema_version …` | 옛 stage1 출력 | 지금 `lerobot_stage1_extract_bag.py` 로 다시 변환 |
+| `[중단] arm_action 가 앞 에피소드와 다름` | freedrive (`next_state`) 와 텔레옵 (`command`) 에피소드를 섞음 | 매니페스트를 나눠 따로 병합 |
+| `[중단] 그리퍼 action 이 이진 … 아님` | 그리퍼 데이터 이상 | 해당 bag 재수집 or 제외 |
+| `ModuleNotFoundError` (rclpy 등이 섞임) | ROS 를 source 한 터미널 | `env -u PYTHONPATH python …` 로 실행 |
 
 **출력 폴더가 이미 있을 때 (재병합)**
 
@@ -153,5 +150,4 @@ rm -rf ~/data_collection_ur5_gripper/lerobot_dataset_v21/foodbanana/<이름>
   서버로 옮겨 openpi 학습에 사용한다 (repo_id 로 참조).
 - 데이터셋 폴더·중간 산출물은 용량이 크므로 git에 커밋하지 않는다 (`.gitignore` 처리).
   git에는 스크립트(`lerobot_merge_episodes_v21.py`)·매니페스트(`merge_*.txt`)·이 문서만 올린다.
-- v3.0 은 보관용이며 병합 우선순위 낮음. 필요 시 같은 방식을 v30 스크립트에 적용하거나
-  lerobot 0.6.1 의 aggregate 기능 사용.
+- v3.0 은 만들지 않는다 (학습은 v2.1. `lerobot_stage2_build_dataset_v30.py` 는 옛 중간 파일 형식 전용).

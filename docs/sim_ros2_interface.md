@@ -76,7 +76,8 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 
 - 화살표 위 글자 = 토픽(또는 링크) 이름, 메시지 타입, 주기. 주기는 **sim 시간 기준** (실제 시간 기준은 RTF 만큼 느림)
 - 왼쪽 위 텔레옵 장치는 5단계에서 만든다. 지금은 `replay_commands.py` 가 명령 CSV 를 `/joint_command`·`/gripper/command` 로 재생한다
-- `record_toggle.py` 의 `/sim/reset` 호출 연동과 새 토픽 녹화는 4단계 작업
+- 녹화 도구 (`./6_record_bag.sh <작업명> --sim` = `record_toggle.py`, 4단계): `r` → `/sim/reset` → 성공 응답 뒤 녹화 시작, `k` → `/sim/drone_kill`,
+  리셋 응답 (시드·드론 위치·에피소드 메타데이터) 을 bag 폴더의 `episode.json` 에 저장. 카메라는 RELIABLE 로 받는다. 자세한 것은 **`docs/data_recording.md`**
 - PX4 쪽 링크는 ROS 2 가 아니라 MAVLink (sim 내부). 드론의 위치 정보는 실내 모션캡처를 가정 (`docs/drone_flight.md` 13장)
 
 ---
@@ -126,7 +127,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | `/joint_states` effort | 관절 전류 [A] (UR 드라이버) | 관절 토크 [Nm] (PhysX projected joint force) | stage1 은 effort 를 안 씀 |
 | `/joint_states` 주기 | 125 Hz | 120 Hz (물리 스텝) | stage1 이 25 Hz 로 리샘플 |
 | `/gripper/command` 범위 밖 | 노드가 0~1150 으로 clamp | 에러로 중단 | 텔레옵은 0 / 1150 만 보냄 |
-| 카메라 토픽 이름 | `/d435i/d435i/...`, `/d456/d456/...` (지금 실물 스크립트) | `/cam/wrist/...`, `/cam/third_view/...` | 4단계에서 실물·stage1 을 `/cam/...` 로 맞춤 |
+| 카메라 토픽 이름 | `/cam/wrist/...`, `/cam/third_view/...` 로 발행해야 함 (실물 PC 의 카메라 런치를 고쳐야 한다, `5_cameras.sh` 안내. 옛 이름은 `/d435i/d435i/...`, `/d456/d456/...`) | `/cam/wrist/...`, `/cam/third_view/...` | 녹화·stage1 은 `/cam/...` 만 받는다 (4단계) |
 | 카메라 렌더 | RealSense 원래 해상도 | DLSS Performance (절반 해상도 렌더 후 업스케일, DLAA 대비 평균 차이 1/255 이하) | `docs/sim_performance.md` 7장 |
 | camera_info fy | 618.956 (fx 618.551) | fy = fx (렌더러가 정사각 픽셀만) | stage1 은 camera_info 를 안 씀 |
 | 팔 명령 → 움직임 | servoJ (lookahead 로 부드럽게) | 선형 보간 33 ms + drive (50 % 도달 약 50 ms) | `docs/arm_command_interpolation.md` |
@@ -164,6 +165,8 @@ python3 isaacsim/scripts/check_ros2.py                                         #
 | 문서 | 내용 |
 |------|------|
 | `docs/PLAN.md` 3단계 | 단계별 결과 (3-0 ~ 3-8), 결정과 그 이유 |
+| `docs/data_recording.md` | **녹화** (녹화 도구 명령·키, 녹화 토픽·주기 표, 구조도, `episode.json`, 녹화 뒤 변환·병합·검수) |
+| `docs/PLAN.md` 4단계, `README.md`, `dataset_merge.md` | 변환·병합·검수 옵션, 4-0 ~ 4-5 결과, 남은 문제 |
 | `docs/sim_performance.md` | RTF 측정·최적화, 카메라 QoS, DLSS 비교 |
 | `docs/arm_command_interpolation.md` | 팔 명령 보간 (30 Hz 계단 문제, 다른 프로젝트 조사), PhysX 관절 속도, rclpy spin |
 | `docs/drone_flight.md` | 드론 비행 (Pegasus 방식, PX4 SITL 연결·센서) |

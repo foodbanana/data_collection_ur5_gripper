@@ -837,7 +837,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
       **토크 창(window)은 목표 전류를 중심으로 하고, 크기는 힘 한계 × 거리** (UR 예: 힘 한계 150 N, 베이스-팔꿈치 0.5 m → 베이스 토크 창 75 Nm)
   - **찾지 못한 것**: CB3 기본 preset(Default 등)의 숫자 (매뉴얼에 "GUI 에 표시된다"고만 있음), 경로 이탈 판정의 위치 오차 숫자, 토크 창의 정확한 계산식.
     실물 PolyScope Installation → Safety → General Limits 에서 확인해 바꾼다
-  - **sim 임시값** (임의값 포함, 정상 텔레옵·파지에서 측정 후 조정):
+  - **sim 임시값 (처음 계획. 확정값은 아래 3-7: 접촉력 150 N (손가락은 환경과의 접촉만), 위치 오차 5°, 관절 속도 200 °/s. 관절 외력 토크 기준은 쓰지 않음)**:
     | 항목 | 임시값 | 근거 |
     |------|--------|------|
     | 관절 외력 토크 \|τ_drive − τ_예상(중력·관성)\| | 관절별 150 N × (관절 축 ↔ TCP 거리) | UR 토크 창 예시 (힘 한계 150 N) |
@@ -984,6 +984,14 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 
 **목표**: sim 에피소드 → 병합된 v2.1 데이터셋이 자동으로 나옴
 
+> **완료 (2026-10-05)**. 완료 기준 3 개 모두 충족 (`make_fake_episodes.py` 3/3 PASS). 정리 문서: **`docs/data_recording.md`** (녹화 토픽·주기·구조도·명령),
+> 변환·병합 옵션: `README.md`·`dataset_merge.md`, 명령 모음: 부록 D
+> - 녹화 `record_toggle.py [--sim]` (새 토픽, 녹화 전 발행자 확인, 카메라 RELIABLE, r → `/sim/reset` → 녹화, k → `/sim/drone_kill`, `episode.json`)
+> - stage1 (`--arm-action`·`--base-imu` 필수, 그리퍼 0~1, 메시지 나이 검사 66 ms, 첫 명령 이전 구간 제외) → 병합 (보호 정지 제외, 정지 구간 자르기는 옵션) → 검수 `inspect_dataset_v21.py`
+> - 성공/실패 판정은 사람 (`d` 로 버림). conda `lerobot_v2` (lerobot 0.3.3). v3.0 변환은 뺌
+> - **남은 문제** (아래 "4단계에서 남은 문제"): 녹화 시작 직후 메시지 누락 (약 30 번 중 1 번, 원인 확인 못 함), `check_ros2` 6 번 1 회 실패 (원인 확인 못 함),
+>   실물 PC 에서는 새 파이프라인을 아직 돌려 보지 못함
+
 **확정 계획 (2026-10-05 사용자 결정)**
 | 단계 | 내용 |
 |------|------|
@@ -1115,7 +1123,7 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 
 **완료 기준 확인**: 아래 세 항목 모두 4-5 에서 충족 (2026-10-05)
 
-**작업 (처음 계획)**
+**작업 (처음 계획, 결과는 위 4-0 ~ 4-5. `fake_gripper_cameras_sim.py` 는 고치지 않고 지움: sim_ros2.py 가 진짜 토픽을 냄)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
     (`ros2 topic info -v /d435i/d435i/color/image_raw`, 실물 30 Hz 카메라가 20~25 Hz 로 떨어지는 원인일 수 있음)
@@ -1138,6 +1146,18 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - [x] `meta/info.json` 의 `codebase_version` = `v2.1`, 카메라 키 2개, `observation.base_imu` (6,) 포함 — 4-5
 - [x] 검수 통과: action 그리퍼 값 종류 = {0.0, 1.0}, state 그리퍼 0~1 이내, 이상치 0, 파지 신호(action=1 인데 state 가 중간에서 멈춤) — 4-5
 
+**4단계에서 남은 문제 (2026-10-05)**
+| # | 문제 | 빈도·상태 | 영향·대응 |
+|---|------|-----------|-----------|
+| A1 | **녹화 시작 직후 메시지 누락** (4-3): 녹화기가 뜨는 첫 0.4 s 쯤 카메라 이미지 10 장·`/joint_states` 8 개가 없는 bag | 약 30 번 중 1 번. **원인 확인 못 함** (후보: 녹화기가 토픽 11 개를 구독하는 순간의 지연) | stage1 이 나이 검사로 멈춤 (잘못된 프레임은 안 들어감). `--skip-start 0.5` 로 살림. 텔레옵이 녹화 전부터 명령을 보내면 그 에피소드가 에러로 걸린다 → 5단계에서 자주 보이면 원인 추적 |
+| A2 | **`check_ros2` 6 번 1 회 실패** (4-2): 검사가 받은 `/clock` 이 뒤로 감 | 4 번 중 1 번, 이후 3 번 연속 통과. **원인 확인 못 함** | 검사 스크립트 쪽 측정 문제로 추정. 다시 나오면 검사가 받은 데이터를 저장해 추적 |
+| B1 | 재생 스크립트가 명령을 고르게 못 보냄 (4-1): 60 Hz 명령의 4~6 % 가 25 ms 늦음 | 원인 앎 (`/clock` 을 받아 보내는 방식) | 학습 데이터에 안 씀. 텔레옵 데이터는 검수 표의 `/joint_command` 간격으로 확인 |
+| B2 | stage1 이 bag 전체를 메모리에 올림 (30 s 에피소드 약 1.5 GB) | 기존 방식 | 에피소드가 몇 분으로 길어지면 메모리 부족 가능 → 그때 순차 읽기로 |
+| B3 | 5 번 이미지 지연 검사 민감도: 8 번 중 2 번이 1 프레임 | 기준 안 (3-8 표) | 검사가 첫 프레임 변화 값을 리포트에 남기게 하면 확인 가능 |
+| C1 | **실물 PC 에서 새 파이프라인을 돌려 보지 못함**: record_toggle 실물 모드, stage1 `mode: real` 경로, 실물 카메라 런치의 `/cam/...` 토픽·RELIABLE QoS | 실물 장치가 이 PC 에 없음 | 새 팔이 오기 전이라도 `fake_joint_states.py` + 실물 그리퍼·카메라로 녹화 → 변환 (`--arm-action next_state`) 을 한 번 돌려 볼 것 |
+| C2 | 실물 카메라 프레임 드롭 (30 Hz 설정에서 20~25 Hz) 과 나이 검사 66 ms | 실물 데이터 없음 | 프레임이 연달아 빠지면 stage1 이 에러. 원인 후보: 자동 노출 (`auto_exposure_priority`), QoS, USB 대역폭. 실물에서 `ros2 topic hz`·`ros2 topic info -v` 로 확인 뒤 기준 조정 |
+| C3 | `--base-imu topic` (구간 평균), PX4 드론 에피소드 여러 개의 병합 | 못 돌려 봄 (IMU 데이터 없음 / 고정 명령 재생이 PX4 드론을 매번 잡지 못함. PX4 bag 1 개는 변환·검수함) | 8단계 / 5단계 텔레옵 데이터로 |
+
 > 1~4단계는 텔레오퍼레이션 장치 없이 진행한다. 키보드나 스크립트로 `/joint_command` 를 보낸다.
 
 ---
@@ -1159,6 +1179,14 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 
 **대안: SpaceMouse / PICO**
 - 카테시안 명령 → IK(차분 IK 등, 타깃 프레임 `rh_p12_rn_tcp`) → `/joint_command` 변환 노드 추가. 인터페이스는 동일
+
+**텔레옵 노드 요구사항 (4단계에서 정해짐)**
+- `/joint_command` 의 `header.stamp` 를 넣는다 (sim = sim time (`use_sim_time`), 실물 = PC 시각). stage1 이 이 stamp 로 팔 action 을 맞추고 0 이면 에러
+- 50 Hz 이상으로 **일정하게** 보낸다. 데이터셋 (25 Hz) 보다 느리거나 자주 끊기면 같은 action 이 반복되는 계단이 된다
+  (검수 `inspect_dataset_v21.py` 의 `/joint_command` 간격 통계로 확인)
+- 녹화는 `./6_record_bag.sh <작업명> --sim`: `r` → 리셋 (약 24 s) → 녹화. **첫 명령 이전 구간은 stage1 이 뺀다** → 장치를 잡고 움직이기 시작하면 에피소드가 시작됨.
+  녹화 전부터 명령을 계속 보내는 장치라면 녹화 시작 직후 구간이 그대로 들어가므로 4단계 남은 문제 A1 (녹화 시작 직후 메시지 누락) 에 걸릴 수 있다
+- 드론 모터 정지는 녹화 도구의 `k` 키 (`/sim/drone_kill`). 텔레옵 장치 버튼으로 옮길지 여기서 정한다. 언제 끄는지를 에피소드마다 일관되게
 
 **sim 에서 확인할 것 (3단계에서 넘어옴, `docs/sim_ros2_interface.md`)**
 - **드론을 잡은 채 RTF 0.69** (3-8, PX4 모터 끔): 텔레옵으로 잡은 뒤 들고 옮길 때 조작감 확인. 불편하면 원인
@@ -1272,18 +1300,19 @@ robot_mount ─ base_link ─ ... ─ wrist_3_link ─ flange ─ tool0
 |------|------|------|------|
 | `/clock` | sim → ROS | 120 Hz | sim time |
 | `/joint_states` | sim → ROS | 120 Hz (실물 125 Hz) | 팔 6관절 position·velocity·effort (실물 effort = 전류 A, sim = 토크 Nm) |
-| `/joint_command` | teleop → sim | 텔레옵 주기 (일정하게) | 팔 관절 목표 (**팔 action**). sim 은 물리 스텝마다 선형 보간 (33 ms) |
+| `/joint_command` | teleop → sim | 텔레옵 주기 (일정하게) | 팔 관절 목표 (**팔 action**). `header.stamp` 는 보내는 쪽이 넣는다 (stage1 이 이 stamp 로 맞춤). sim 은 물리 스텝마다 선형 보간 (33 ms) |
 | `/gripper/command` | teleop → 브리지 | 이벤트 | raw 0 또는 1150 (열기/닫기), std_msgs/Float64 |
 | `/gripper/joint_states` | 브리지 → ROS | 30 Hz | 그리퍼 present, raw → stage1 에서 /1150 (**state[6]**) |
 | `/gripper/target` | 브리지 → ROS | 30 Hz (present 와 같은 stamp) | 실행된 goal, raw 0/1150 → stage1 에서 /1150 (**action[6]**) |
 | `/cam/wrist/color/image_raw` (+ `camera_info`) | 카메라 → ROS | 30 Hz | `observation.images.wrist` (640x480 rgb8). 받는 쪽은 RELIABLE |
 | `/cam/third_view/color/image_raw` (+ `camera_info`) | 카메라 → ROS | 30 Hz | `observation.images.third_view` |
-| `/protective_stop` | sim → ROS | 30 Hz | 보호 정지 흉내 (sim 전용, std_msgs/Bool). 에피소드 메타데이터 (4단계) |
+| `/protective_stop` | sim → ROS | 30 Hz | 보호 정지 흉내 (sim 전용, std_msgs/Bool). stage1 `meta.json` 에 발생 여부·시각, 병합에서 기본 제외 |
 | `/base/imu` | IMU → ROS | **8단계부터** | 고정 베이스에서는 발행 안 함, stage1 `--base-imu const`. `sensor_msgs/Imu` → stage1 구간 평균 → `observation.base_imu` |
 
 | 서비스 | 내용 |
 |--------|------|
-| `/sim/reset` (std_srvs/Trigger, sim 전용) | 에피소드 리셋: 드론 kill → 순간이동 + PX4 재시작 → 팔·그리퍼 홈·열림 순간이동 → 재이륙 → 새 호버 위치 (약 24 s), 응답 JSON |
+| `/sim/reset` (std_srvs/Trigger, sim 전용) | 에피소드 리셋: 드론 kill → 순간이동 + PX4 재시작 → 팔·그리퍼 홈·열림 순간이동 → 재이륙 → 새 호버 위치 (약 24 s), 응답 JSON (시드·드론 위치·에피소드 메타데이터) |
+| `/sim/drone_kill` (std_srvs/Trigger, sim 전용) | 드론 모터 정지 (잡은 뒤, 녹화 도구의 `k` 키). 다시 켜는 것은 `/sim/reset` |
 
 ## 부록 C: Claude Code 사용 방법
 
@@ -1386,7 +1415,7 @@ python3 isaacsim/scripts/drone_cmd.py hold          # land | kill (kill 은 언�
 # PX4 비행 로그 분석 (isaacsim/reports/px4_<시각>/log/*/*.ulg): pyulog (레포 밖 venv 에 설치해서)
 ```
 
-### 3단계: sim ROS 2 인터페이스 (진행 중)
+### 3단계: sim ROS 2 인터페이스
 ```bash
 # 모든 sim ROS 2 실행 전에 (python.sh 안 rclpy 가 시스템 Jazzy 를 쓰게)
 source /opt/ros/jazzy/setup.bash
@@ -1412,6 +1441,35 @@ ros2 topic hz --use-sim-time /joint_states                                      
 python3 isaacsim/scripts/topic_rate.py --out rate.json --duration 30 /cam/wrist/color/image_raw:sensor_msgs/msg/Image
 ```
 
-### 4단계 이후
+### 4단계: 녹화·변환·병합·검수
+```bash
+source /opt/ros/jazzy/setup.bash
+
+# 녹화 (sim): 터미널 1 = sim, 터미널 2 = 녹화 도구
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py                                   # PX4 드론, 리셋마다 드론 위치 ±5 cm
+./6_record_bag.sh <작업명> --sim                                                    # r = 리셋 (약 24 s) 뒤 녹화 / 다시 r = 종료, k = 드론 모터 정지,
+                                                                                    # d = 방금 에피소드 버리기 (→ bags/_discarded/), q = 종료
+python3 isaacsim/scripts/replay_commands.py isaacsim/config/ros2_check/commands_success.csv   # (텔레옵 대신) 터미널 3: [REC ●] 뒤에 명령 재생
+
+# 변환: bag 마다 stage1 (시스템 python3 + ROS). sim·텔레옵 = command, 고정 베이스 = const
+python3 lerobot_stage1_extract_bag.py bags/<bag이름> --arm-action command --base-imu const   # → bag_lerobot_intermediate/<bag이름>/
+#   --overwrite (출력 폴더가 있으면 다시), --max-age 0.066 (메시지 나이 한계 [s]), --skip-start 0.5 (녹화 시작 직후 누락된 bag 살리기)
+
+# 병합·검수 (conda lerobot_v2, ROS 를 source 한 터미널이면 env -u PYTHONPATH)
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate lerobot_v2
+env -u PYTHONPATH python lerobot_merge_episodes_v21.py --manifest merge_<이름>.txt --repo-id foodbanana/<이름>   # 또는 --all
+#   --include-protective-stop, --trim-idle start|end|both [--trim-margin 0.5] [--idle-eps-deg 0.1]
+env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<이름> --load                     # → PASS / FAIL
+conda deactivate
+
+# bag 하나만 데이터셋 하나로 (stage1 → stage2 를 이어서)
+./convert_ros2bag_lerobot.sh bags/<bag이름> --arm-action command --base-imu const
+
+# 파이프라인 자동 확인 (sim 을 직접 띄움: 가짜 에피소드 5 개 녹화 → 변환 → 병합 → 검수) → 3/3 PASS, 약 6 분
+python3 isaacsim/scripts/make_fake_episodes.py                                      # --success 3 --pstop 1 --discard 1 [--use-running-sim]
+```
+
+### 5단계 이후
+
 (각 단계 작업 후 여기에 추가)
 

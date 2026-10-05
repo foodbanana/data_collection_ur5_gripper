@@ -10,6 +10,8 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
+ROS 2 데이터 녹화 (녹화 도구 명령·키, 녹화 토픽·주기 표, 구조도, `episode.json`, 녹화 뒤 변환·병합·검수): `docs/data_recording.md`
+변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
 
 ## 경로 규칙
 
@@ -42,16 +44,34 @@ sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 �
 
 - 그리퍼 이진화: 수집 시 드라이버, 추론 시 0.5 threshold
 - 토픽 값은 raw(0~1150) 유지, 0~1 정규화는 stage1 에서만
-- 카메라 시리얼 → 역할 연결은 `config/cameras.yaml` 한 곳에서만
+- 카메라 시리얼 → 역할 연결은 `config/cameras.yaml` 한 곳에서만 (로더 `camera_config.py`. 지금 실물 wrist = D435i, third_view = D456)
+- `/joint_command` 의 `header.stamp` 는 보내는 쪽(텔레옵 노드)이 넣는다 (sim = sim time). stage1 이 이 stamp 로 팔 action 을 맞추고 0 이면 에러
 - 로그·메타데이터 위치값은 로봇 base 기준
 - 실물 freedrive 데이터(`action = states[i+1]`)와 텔레옵 데이터는 팔 action 의미가 달라 섞지 않는다
 
 ## 토픽 (sim = 실물)
 
 `/clock`, `/joint_states`, `/joint_command`, `/gripper/command`, `/gripper/joint_states`(present raw), `/gripper/target`(goal raw 0/1150),
-sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`. 주기·타입은 `docs/sim_ros2_interface.md`.
+sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`. 주기·타입은 `docs/sim_ros2_interface.md`.
 `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw`, `/base/imu`(8단계부터. 고정 베이스에서는 sim·실물 모두 발행 안 하고 stage1 `--base-imu const`).
 자세한 표는 `docs/PLAN.md` 부록 B.
+
+## 녹화·변환 (4단계, sim·실물 공용)
+
+| 단계 | 실행 | 환경 |
+|------|------|------|
+| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (`record_toggle.py`): r 시작/종료, d 버리기, q 종료. `--sim`: r → `/sim/reset` → 녹화, k = 드론 모터 정지. bag 폴더에 `episode.json` | 시스템 python3 + ROS |
+| stage1 | `python3 lerobot_stage1_extract_bag.py <bag> --arm-action command\|next_state --base-imu const\|topic` (둘 다 필수) → `bag_lerobot_intermediate/<bag>/` | 시스템 python3 + ROS |
+| 병합 | `python lerobot_merge_episodes_v21.py --manifest <txt> \| --all --repo-id <id>` (에피소드 1 개는 `lerobot_stage2_build_dataset_v21.py`) | conda `lerobot_v2` |
+| 검수 | `python inspect_dataset_v21.py <데이터셋> --load` → PASS/FAIL | conda `lerobot_v2` |
+| 전체 확인 | `python3 isaacsim/scripts/make_fake_episodes.py` (sim 을 띄워 가짜 에피소드 녹화 → 변환 → 병합 → 검수) → 3/3 PASS, 약 6 분 | 시스템 python3 + ROS |
+
+- conda: `~/miniconda3`, 환경 `lerobot_v2` (Python 3.10, `lerobot==0.3.3` = v2.1). base 자동 활성화 끔. ROS 를 source 한 터미널에서는 `env -u PYTHONPATH python …`
+- stage1 은 격자 시각에 고른 메시지 (카메라·팔·그리퍼) 가 66 ms 보다 오래됐으면 에러 (`--max-age`). `command` 면 첫 `/joint_command` 이전 구간을 뺀다
+- 병합은 팔 action 종류가 다른 에피소드를 섞으면 중단, 보호 정지 에피소드는 기본 제외, 정지 구간 자르기는 옵션 (`--trim-idle`, 기본 안 함)
+- 성공/실패 판정은 사람이 한다 (실패한 에피소드는 `d` 로 `bags/_discarded/` → 변환하지 않음). bag 은 자동으로 지우지 않는다 (30 s 에 약 1.5 GB)
+- `lerobot_stage2_build_dataset_v30.py` 는 옛 중간 파일 형식 전용 (지금 stage1 출력을 읽지 못함, 학습은 v2.1)
+- **sim 을 띄운 채 sim bag 을 `ros2 bag play` 하지 말 것** (bag 의 `/clock`·`/joint_command` 가 다시 발행됨)
 
 ## Isaac Sim 6.1.0 에서 확인된 사실
 
@@ -88,7 +108,9 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`. 주기·타입은 
 - PX4 를 띄운 스크립트는 `PR_SET_PDEATHSIG` 로 같이 끝난다 (`simulation_app.close()` 는 atexit 을 건너뜀). 같은 instance PX4 가 남아 있으면 시작 전에 에러
 - **sim ROS 2 실행은 `isaacsim/scripts/sim_ros2.py`** (씬 + 토픽 + `/sim/reset`). 검사 `python3 isaacsim/scripts/check_ros2.py` → 9/9 PASS (약 8 분).
   `/sim/reset` 은 항상 순간이동 + PX4 재시작 (약 24 s, 매 에피소드 같은 깨끗한 PX4). 리셋 실패면 sim 은 계속, 다음 성공까지 명령 무시.
+  응답 JSON 에 에피소드 메타데이터 (시드, 드론 위치 (world·base), git, 렌더·그리퍼·드론·카메라 설정). `/sim/drone_kill` = 드론 모터 정지 (PX4·기하 공통).
   보호 정지 흉내 (`protective_stop.py`): 접촉력 150 N (손가락은 환경과의 접촉만), 위치 오차 5°, 관절 속도 200 °/s
+- **sim 안에서 시간을 잴 때는 sim time (`SimulationManager.get_simulation_time()`)**. `flight.t` 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
 - **팔을 순간이동하면 속도 차분 기준(ArmBridge `set_now`, 보호 정지 `resync`)도 맞출 것**. 안 하면 순간이동 거리 / dt 가 관절 속도로 잡힘
 - **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).
   카메라는 OmniGraph Camera Helper, 주기는 카메라 prim `omni:sensor:tickRate` (6.0 부터, `frameSkipCount` deprecated). 앱 루프 30 Hz (= 카메라), 물리 120 Hz.

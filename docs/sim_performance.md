@@ -263,7 +263,7 @@ RTF 1 을 넘기려면 update 당 약 1~2 ms 가 더 필요하다. 남은 큰 �
 | 경고 | 판단 |
 |------|------|
 | `CPU performance profile is set to powersave` | **잘못된 경보.** `intel_pstate` 드라이버의 governor 이름이 `powersave` 일 뿐이다(부하에 따라 클럭을 바꾼다는 뜻). EPP·전원 프로필(`powerprofilesctl`)은 performance 이고 부하 중 P코어 5.3 GHz(최대). 바꾸지 않는다 |
-| `DLSS increasing input dimensions: Render resolution of (320, 240)` | **확인 필요 (6단계 전에 결정).** Isaac Sim 기본값(`SimulationApp` `anti_aliasing: 3` = DLSS, `rtx.post.dlss.execMode = 0` = Performance)이라 640x480 카메라를 절반 해상도로 렌더하고 DLSS 로 키운다. 우리 코드가 켠 것이 아님. 실물 RealSense 는 원래 해상도라 VLA 학습 이미지의 sim2real 차이일 수 있다. 다 모은 뒤 바꾸면 이미지 분포가 달라지므로 PLAN 3단계에서 비교 후 결정 |
+| `DLSS increasing input dimensions: Render resolution of (320, 240)` | **결정함 (7장): DLSS Performance 를 설정 파일에 명시해서 쓴다.** 640x480 카메라를 절반 해상도로 렌더하고 DLSS 로 키운다는 안내. DLAA 대비 평균 차이 1/255 이하 |
 | `Forcing fy to fx (618.5508495 != 618.5508683)` | 렌더러가 정사각 픽셀만 지원해 camera_info 의 fy 를 fx 로. 1-7 에서 이미 fy ≈ fx 로 근사 (실물 fy 618.956, 0.07% 차이). stage1 은 camera_info 를 쓰지 않음 |
 | `material:binding not found for /World/Drone/rotor0` | 드론 로터에 재질 연결 없음. 동작 영향 없음 |
 | `maxHistoryTransformCount` | 노출이 긴 카메라의 모션 블러용. 모션 블러를 쓰지 않아 무관 |
