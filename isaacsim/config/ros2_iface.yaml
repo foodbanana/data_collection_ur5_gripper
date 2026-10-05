@@ -17,6 +17,10 @@ arm:
   clock_topic: /clock
   joint_states_topic: /joint_states
   joint_command_topic: /joint_command
+  # 명령 보간 (docs/arm_command_interpolation.md): 루프마다 받은 최신 명령으로, 지금 관절 목표에서 새 명령까지 이 시간 동안
+  # 물리 스텝(120 Hz)마다 직선 이동 (deoxys LINEAR_JOINT_POSITION 과 같은 방식). 없으면 30 Hz 계단 → 관절이 최대 속도로 뛰었다 멈춤.
+  # 루프 한 주기 = 1 / loop_hz. 실물 UR servoJ lookahead (기본 0.1 s) 를 정하면 반응 지연이 비슷해지게 다시 맞출 수 있음
+  command_interp_time: 0.033333   # [s]
 
 # 카메라 렌더 (VLA 학습 이미지). Isaac Sim 기본값에 맡기지 않고 명시 (docs/sim_performance.md 7장, 2026-10-02 사용자 결정)
 #   RTX 실시간 렌더러는 DLSS(3)·DLAA(4)만 지원. DLSS Performance 는 640x480 을 절반 해상도로 렌더해 키움 —
@@ -39,6 +43,22 @@ gripper:
   target_topic: /gripper/target
   joint_name: rh_p12_rn
   publish_hz: 30.0
+
+# 보호 정지 흉내 (3-7, docs/PLAN.md 3단계 "보호 정지"). UR 보호 정지 = Cat 2 (감속 후 정지 유지) 흉내:
+#   물리 스텝마다 검사, 하나라도 넘으면 팔 목표를 현재 위치에 고정하고 이후 /joint_command 무시 (그리퍼 명령은 계속 받음), 해제는 리셋 서비스
+#   topic: std_msgs/Bool, 그리퍼 토픽과 같은 1/30 s 배수 시각에 계속 발행 (녹화 → 에피소드 protective_stop 표시)
+#   기준값은 임시 (UR 문서에 숫자가 없는 것은 임의). 정상 동작 최댓값을 재서 여유를 확인 (sim_ros2 --protective-stop measure)
+protective_stop:
+  topic: /protective_stop
+  contact_force_n: 150.0          # 링크 접촉력 [N] (UR 예시 힘 한계 150 N)
+  #   손가락이 아닌 링크: 모든 물체와의 순 접촉력. 손가락 링크: environment_paths 와의 접촉만
+  #   (드론을 쥐는 힘·빈손으로 닫을 때 손가락끼리 닿는 힘은 외력이 아님. 손가락으로 테이블을 찍는 충돌은 잡아야 함, 2026-10-05 측정)
+  # 2026-10-05 측정 (docs/arm_command_interpolation.md 5.3, 보간 후): 정상 최대 = 접촉 0 N, 오차 0.7° (텔레옵 속도) · 2.9° (최대 속도 근처),
+  #   관절 속도 180 °/s (= drive 최대 속도). 테이블 충돌 = 손가락 끝 317 N, 오차 47.7°
+  tracking_error_deg: 5.0         # 관절 목표 − 측정 [°] (UR 숫자 미공개. 정상 최대 2.9° 위로)
+  joint_speed_dps: 200.0          # 관절 속도 [°/s] (관절각 차분). drive 최대 속도 180 °/s (URDF π rad/s) 보다 위 → 충격으로만 넘음
+  finger_links: [rh_p12_rn_r1, rh_p12_rn_r2, rh_p12_rn_l1, rh_p12_rn_l2]
+  environment_paths: [/World/Table, /World/GroundPlane, /World/ThirdView/mount_plate, /World/ThirdView/mount_post]
 
 cameras:
   tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz

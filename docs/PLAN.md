@@ -791,7 +791,9 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 
 **결정 (2026-10-02)**
 1. **카메라 = OmniGraph Camera Helper, 나머지 = rclpy** (공식 혼합 방식. 보호 정지를 위해 `/joint_command` 를 가로채야 함)
-2. `/base/imu` 는 상수로 발행 (stage1 에서 채우지 않음. 8단계에서 발행하는 쪽만 교체)
+2. ~~`/base/imu` 는 상수로 발행~~ → **바꿈 (2026-10-05): 고정 베이스 단계에서는 sim 도 `/base/imu` 를 발행하지 않는다.**
+   실물에 지금 IMU 가 없어 실물 데이터는 어차피 stage1 `--base-imu const`(명시 옵션)로 채워야 하므로, sim 도 같은 방식으로 맞춘다.
+   8단계에서 sim IMU 센서와 실물 IMU 를 함께 붙이고 `/base/imu` 를 발행한다
 3. 리셋 서비스는 직접 만든다 (`std_srvs/Trigger`)
 4. 보호 정지 기준: UR 문서 값을 찾아 쓰고, 공개되지 않은 값은 임시값 (아래 "보호 정지")
 5. `/joint_states` 120 Hz (물리와 같음, 실물 CB3 드라이버 125 Hz), 카메라 tickRate 30
@@ -817,7 +819,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
     frame_id `<카메라>_color_optical_frame`, QoS 는 실물 wrapper 와 같게 (실물 PC 에서 `ros2 topic info -v` 로 확인 필요)
   - pyrealsense2 / realsense-ros 를 sim 에 쓰지 않는 이유: 실제 USB 장치에서 프레임을 받는 드라이버라 sim 에는 장치가 없고,
     노출·노이즈 같은 실물 특성은 카메라 센서·펌웨어에서 생기므로 통과시켜도 이미지가 그대로다. 이미지 차이는 9단계에서 다룬다
-- 베이스 IMU: `/base/imu` (`sensor_msgs/Imu`, sim time) 를 상수로 발행 (고정 베이스: 각속도 0, 선가속도 +9.81 z). 8단계에서 실제 IMU 로 교체
+- ~~베이스 IMU: `/base/imu` 상수 발행~~ → 하지 않음 (결정 2). 고정 베이스 데이터의 `observation.base_imu` 는 sim·실물 모두 4단계 stage1 `--base-imu const`
 - **보호 정지 흉내** (1-5 "알려진 위험: 높은 K" 1번): 기준 초과 시 팔 목표를 현재 위치에 고정 (UR 보호 정지 = Cat 2 정지, 감속 후 정지 유지),
   `/protective_stop` 발행, 에피소드에 `protective_stop` 표시. 해제는 리셋 서비스로
   - **UR 문서에서 찾은 것** (UR5/CB3 User Manual, UR "Understanding Protective Stops" 2023):
@@ -903,15 +905,31 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   **present 289 에서 멈춤 (≈ 16.3°, grasp_demo 파지 각도와 같음), target 1150** → 실물과 같은 파지 신호
 - `grasp_demo.py` 가 `commands_<케이스>.csv` (제어 주기마다 팔 관절 목표 + 그리퍼 goal raw) 를 남긴다 (ROS 재생 시험, 4단계 가짜 에피소드)
 - 확인할 것 (3-8): **잡은 뒤 RTF 0.85~0.88** (기하 제어기 드론이 잡힌 채 계속 날려 해 접촉 계산이 무거움). 실제 시나리오(PX4, 잡은 뒤 모터 정지)로 다시 잰다
-- 참고: 시험 클라이언트가 밀렸다가 명령을 몰아 보내면 sim 수신 큐(깊이 10)에서 앞의 것이 밀려남 (992 개 중 603 개 적용). sim 은 루프마다 마지막 명령만 쓰므로
-  제어 영향 없음, 데이터셋 action 은 녹화 쪽이 따로 기록. 텔레옵 장치는 일정 주기로 보낼 것. 3-8 에서 일정 주기로 다시 확인
+- ~~참고: 시험 클라이언트가 밀려 명령이 버려짐 (992 개 중 603 개 적용)~~ → **원인은 sim 쪽이었다 (2026-10-05, 고침)**: rclpy `spin_once` 가
+  콜백·빈 호출을 번갈아 해서 루프마다 1 개만 처리했다. 빈 호출 두 번 연속일 때 멈추게 고침 (`docs/arm_command_interpolation.md` 5.1)
+
+**3-7 결과 (2026-10-05)** — `isaacsim/scripts/protective_stop.py`, 설정 `ros2_iface.yaml` `protective_stop`, `sim_ros2.py --protective-stop on|measure`
+- 물리 스텝마다 검사 (UR 보호 정지 = Cat 2 흉내): 걸리면 팔 목표를 그 순간 관절각에 고정, 이후 `/joint_command` 무시 (그리퍼 명령은 받음),
+  `/protective_stop` (std_msgs/Bool) 을 1/30 s 배수 시각에 계속 발행. 해제는 리셋 서비스 (3-6)
+  - 접촉력: 손가락이 아닌 링크는 모든 물체와의 순 접촉력, **손가락은 환경(테이블·바닥·third view 받침대)과의 접촉만**
+    (처음엔 손가락을 통째로 뺐다가 손가락 끝으로 테이블을 찍는 충돌을 놓침. 손가락 view 는 직접 만듦: `RigidPrim(contact_filter_paths)` 는
+    필터 수가 prim 수와 같으면 prim 마다 필터 하나씩 짝지어 버림)
+  - 관절 속도는 관절각 차분 (PhysX 보고 관절 속도가 실제보다 작음)
+- **측정하다 찾은 팔 명령 문제 3 가지를 고침** (`docs/arm_command_interpolation.md`): ① 명령이 30 Hz 계단으로 들어가 관절이 최대 속도로 뛰었다 멈춤
+  → 선형 보간 (`arm.command_interp_time` 33 ms, deoxys 방식, 다른 프로젝트 조사 포함), ② sim 이 루프마다 명령을 1 개만 처리 (rclpy spin_once),
+  ③ PhysX 관절 속도가 실제보다 작음 → `/joint_states` velocity 도 관절각 차분
+- 기준 (정상 최대 → 기준, 충돌): 접촉력 0 N → **150 N** (테이블 317 N), 위치 오차 0.7°·최대 속도 근처 2.9° → **5°** (47.7°),
+  관절 속도 180 °/s (= drive 최대) → **200 °/s** (drive 가 낼 수 있는 속도 위, 충격으로만 넘음)
+- `on` 모드 확인: 테이블 충돌 → 손가락 끝 접촉 316.9 N 에서 정지, 이후 명령 322 개 무시. 팔 흔들기 2 배 (최대 172 °/s)·grasp success 재생 → 정지 안 함,
+  파지 신호 그대로 (present 289, target 1150)
+- `replay_commands.py`: 명령 CSV (grasp_demo `commands_<케이스>.csv` 등) 를 sim time 기준으로 `/joint_command`·`/gripper/command` 재생 (텔레옵 대신)
 
 **완료 기준**
 - [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
 - [ ] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz)
 - [ ] 모든 header.stamp 가 sim time (카메라와 joint 가 같은 시계)
 - [ ] stage1 방식(`imgmsg_to_cv2(bgr8)`)으로 읽은 sim 카메라 영상의 색이 바뀌지 않음
-- [ ] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림
+- [x] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림 — 3-7 (3-8 자동 검사에 넣을 것)
 - [x] 드론을 잡았을 때 present 가 중간에서 멈추고 target 은 1150 (실물과 같은 파지 신호) — 3-3, present 289 / target 1150
 
 ---
@@ -1006,6 +1024,8 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   - stage1: `base_imu.npy` 는 4단계에서 이미 구현됨. (sim) ground-truth `base_pose.npy` 를 intermediate 에 추가 (데이터셋에는 넣지 않음)
   - 데이터셋: `observation.base_imu` 는 0단계에서 확정된 그대로 (고정 베이스 데이터와 열 구성이 이미 같으므로 병합 시 후처리 불필요)
   - 정책에 쓰려면 openpi repack 에 `observation.base_imu` 매핑 + Inputs transform 에서 state 에 이어붙이기 + **norm stats 재계산**. 추론 때도 같은 방식(25 Hz 구간 평균)으로 IMU 를 넣어야 함
+- **`/base/imu` 발행은 이 단계에서 시작** (2026-10-05 결정: 고정 베이스 1~7단계는 sim·실물 모두 발행 안 하고 stage1 `--base-imu const`).
+  sim IMU 센서와 실물 IMU 를 함께 붙이고, 이 단계 데이터는 `--base-imu const` 없이 변환
 - **sim 에서 베이스 IMU 얻기** (물리적 IMU 모델 불필요, 가상 센서)
   - 방법 1 (기본): 베이스 링크에 Isaac Sim IMU 센서 prim 을 자식으로 추가 → 몸체 좌표계 선가속도·각속도·자세 → `ROS2 Publish Imu` 노드로 `sensor_msgs/Imu` 발행
     - 6.0 부터 `isaacsim.sensors.physics` IMU 는 deprecated, `isaacsim.sensors.experimental.physics.IMUSensor` 권장 → 6.1.0 에서 어느 API 를 쓸지 확인
@@ -1071,7 +1091,7 @@ robot_mount ─ base_link ─ ... ─ wrist_3_link ─ flange ─ tool0
 | `/gripper/target` | 브리지 → ROS | 실행된 goal, raw 0/1150 → stage1 에서 /1150 (**action[6]**) |
 | `/cam/wrist/color/image_raw` | 카메라 → ROS | `observation.images.wrist` |
 | `/cam/third_view/color/image_raw` | 카메라 → ROS | `observation.images.third_view` |
-| `/base/imu` | IMU → ROS | `sensor_msgs/Imu` → stage1 구간 평균 → `observation.base_imu` |
+| `/base/imu` | IMU → ROS | **8단계부터** (고정 베이스에서는 발행 안 함, stage1 `--base-imu const`). `sensor_msgs/Imu` → stage1 구간 평균 → `observation.base_imu` |
 
 ## 부록 C: Claude Code 사용 방법
 

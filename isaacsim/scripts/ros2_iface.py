@@ -16,6 +16,7 @@
 
 import os
 
+import numpy as np
 import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,12 +40,14 @@ def load_ros2_config(path=None):
         raise ValueError(f"{path}: render.anti_aliasing 는 {AA_MODES} 중 하나: {r.get('anti_aliasing')}")
     if r.get("dlss_exec_mode") not in DLSS_MODES:
         raise ValueError(f"{path}: render.dlss_exec_mode 는 {DLSS_MODES} 중 하나: {r.get('dlss_exec_mode')}")
-    for k in ("clock_topic", "joint_states_topic", "joint_command_topic"):
+    for k in ("clock_topic", "joint_states_topic", "joint_command_topic", "command_interp_time"):
         if k not in c["arm"]:
             raise KeyError(f"{path}: 'arm.{k}' 항목이 없습니다")
     for k in ("command_topic", "joint_states_topic", "target_topic", "joint_name", "publish_hz"):
         if k not in c["gripper"]:
             raise KeyError(f"{path}: 'gripper.{k}' 항목이 없습니다")
+    if not float(c["arm"]["command_interp_time"]) > 0:
+        raise ValueError(f"{path}: arm.command_interp_time 는 양수 [s]: {c['arm']['command_interp_time']}")
     if "tick_rate" not in c["cameras"]:
         raise KeyError(f"{path}: 'cameras.tick_rate' 항목이 없습니다")
     for name in CAMERA_NAMES:
@@ -153,11 +156,15 @@ def sim_stamp(t):
 
 
 def spin(rclpy, node, bridges):
-    """매 루프 (update 뒤): 쌓인 구독 메시지를 모두 처리 (spin_once 는 콜백 하나씩, 더 없으면 멈춤) 후 브리지 에러를 올린다."""
-    for _ in range(200):
+    """매 루프 (update 뒤): 쌓인 구독 메시지를 모두 처리한 뒤 브리지 에러를 올린다.
+    rclpy spin_once 는 메시지가 쌓여 있어도 콜백 1 번 → 빈 호출 1 번을 번갈아 한다 (1, 0, 1, 0, …, 2026-10-05 확인).
+    빈 호출 한 번에 멈추면 루프마다 1 개만 처리해 60 Hz 명령의 절반이 큐에서 밀려 버려진다 → 빈 호출이 두 번 연속이면 멈춤."""
+    empty = 0
+    for _ in range(400):
         before = sum(b.n_cb for b in bridges)
         rclpy.spin_once(node, timeout_sec=0.0)
-        if sum(b.n_cb for b in bridges) == before:
+        empty = empty + 1 if sum(b.n_cb for b in bridges) == before else 0
+        if empty >= 2:
             break
     for b in bridges:
         b.check()
@@ -167,11 +174,13 @@ class ArmBridge:
     """팔 ROS 2 인터페이스 (실물 UR 드라이버와 같은 토픽·형식, ros2_iface.yaml arm 머리말).
     - 물리 스텝마다 (PHYSICS_POST_STEP 콜백) /clock 과 /joint_states 를 같은 sim time stamp 로 발행
       (관절 값은 articulation tensor view 에서 직접: 실험용 API 는 호출마다 warp 배열을 만들어 느림, docs/sim_performance.md 6장)
-    - /joint_command 는 spin() (매 루프) 에서 받아 바로 팔 drive 목표로 (zero-order hold). 잘못된 명령은 에러
+      velocity 는 **관절각 차분** (q − q_이전) / dt: PhysX 가 보고하는 관절 속도는 실제 움직임보다 작다
+      (2026-10-05 측정: 실제 대비 shoulder_pan 0.85, wrist_1 0.61, wrist_3 0.42 배, 멈춘 관절도 1~3 °/s, docs/arm_command_interpolation.md 5장)
+    - /joint_command 는 spin() (매 루프) 에서 받아 새 목표로. 물리 스텝마다 (PHYSICS_PRE_STEP) 지금 목표에서 새 목표까지
+      command_interp_time 동안 직선 보간 (docs/arm_command_interpolation.md). 잘못된 명령은 에러
     콜백 안 예외는 저장해 두고 check() 에서 다시 올린다."""
 
     def __init__(self, s, cfg, node):
-        import numpy as np
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
         from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import JointState
@@ -191,7 +200,15 @@ class ArmBridge:
         self.pub_js = self.node.create_publisher(JointState, a["joint_states_topic"], 10)
         self.sub_cmd = self.node.create_subscription(JointState, a["joint_command_topic"], self._on_command, 10)
         self.error = None
-        self.n_js, self.n_cmd, self.n_cb = 0, 0, 0
+        self.n_js, self.n_cmd, self.n_cb, self.n_ignored = 0, 0, 0, 0
+        self.stop = None                  # protective_stop.ProtectiveStop (정지 중이면 명령 무시)
+        self.interp_T = float(a["command_interp_time"])
+        self.cmd_per_loop = []            # 루프(spin)마다 받은 /joint_command 수 (명령이 고르게 오는지)
+        self.seg = None                   # 보간 구간 (q_start, q_goal, t_start). None = 보간 안 함 (목표 그대로)
+        self.hold = False                 # True 면 보간·명령 적용을 멈춤 (리셋 서비스가 팔을 직접 움직일 때)
+        self._q_now = None                # 지난 물리 스텝에 넣은 관절 목표
+        self._cb_pre = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
+        self._q_prev = self._view().get_dof_positions().numpy()[0][self.arm_i].astype(float)   # 속도 = 관절각 차분
         self.last_cmd = None              # (sim t, q [rad]) 마지막으로 적용한 명령
         self._cb = SimulationManager.register_callback(self._post_step, event=SimulationEvent.PHYSICS_POST_STEP)
 
@@ -201,6 +218,29 @@ class ArmBridge:
             raise RuntimeError("articulation tensor view 없음 (재생 전?)")
         return v
 
+    def _target_at(self, t):
+        q0, q1, t0 = self.seg
+        u = min(max((t - t0) / self.interp_T, 0.0), 1.0)
+        return q0 + u * (q1 - q0)
+
+    def _pre_step(self, dt, context):
+        """물리 스텝 직전: 보간 구간의 이번 스텝 목표를 drive 에 (이번 스텝이 끝나는 시각 기준)."""
+        try:
+            if self.seg is None or self.hold:
+                return
+            if self.stop is not None and self.stop.stopped:      # 보호 정지: 보간 멈춤 (정지가 관절각에 고정해 둠)
+                self.seg = None
+                return
+            q = self._target_at(self._sm.get_simulation_time() + float(dt))
+            if self._q_now is not None and np.array_equal(q, self._q_now):
+                return
+            self.s.drive.set_arm_targets(q)
+            self._q_now = q
+            if q is self.seg[1] or np.array_equal(q, self.seg[1]):
+                self.seg = None                                   # 도착: 더 쓸 필요 없음
+        except Exception as e:  # noqa: BLE001
+            self.error = self.error or e
+
     def _post_step(self, dt, context):
         try:
             sec, nsec = sim_stamp(self._sm.get_simulation_time())
@@ -208,8 +248,9 @@ class ArmBridge:
             c.clock.sec, c.clock.nanosec = sec, nsec
             self.pub_clock.publish(c)
             v = self._view()
-            q = v.get_dof_positions().numpy()[0][self.arm_i]
-            qd = v.get_dof_velocities().numpy()[0][self.arm_i]
+            q = v.get_dof_positions().numpy()[0][self.arm_i].astype(float)
+            qd = (q - self._q_prev) / float(dt)
+            self._q_prev = q
             tau = v.get_dof_projected_joint_forces().numpy()[0][self.arm_i]
             m = self._JointState()
             m.header.stamp.sec, m.header.stamp.nanosec = sec, nsec
@@ -236,7 +277,18 @@ class ArmBridge:
             out = [f"{n} {v:+.4f} (한계 {a:+.4f} ~ {b:+.4f})" for n, v, a, b in zip(self.names, q, self.lo, self.hi) if not a <= v <= b]
             if out:
                 raise ValueError("/joint_command 가 관절 한계 밖: " + ", ".join(out))
-            self.s.drive.set_arm_targets(q)
+            if (self.stop is not None and self.stop.stopped) or self.hold:
+                self.n_ignored += 1           # 보호 정지·리셋 중: 검사는 하되 적용하지 않음
+                return
+            t = self._sm.get_simulation_time()
+            if self.seg is not None:
+                q_start = self._target_at(t)  # 지금 보간 중인 목표에서 새로 시작
+            elif self._q_now is not None:
+                q_start = self._q_now
+            else:
+                v = self._view()
+                q_start = v.get_dof_position_targets().numpy()[0][self.arm_i].astype(float)
+            self.seg = (np.asarray(q_start, dtype=float), q, t)
             self.n_cmd += 1
             self.last_cmd = (self._sm.get_simulation_time(), q)
         except Exception as e:  # noqa: BLE001
@@ -253,6 +305,14 @@ class ArmBridge:
         if self._cb is not None:
             SimulationManager.deregister_callback(self._cb)
             self._cb = None
+        if self._cb_pre is not None:
+            SimulationManager.deregister_callback(self._cb_pre)
+            self._cb_pre = None
+
+    def set_now(self, q):
+        """밖에서 (리셋 등) 팔 목표를 바꿨을 때 보간 기준을 맞춘다."""
+        self.seg = None
+        self._q_now = np.asarray(q, dtype=float)
 
 
 class GripperBridge:

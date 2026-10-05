@@ -8,6 +8,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
 sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
+sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 
 ## 경로 규칙
 
@@ -47,7 +48,8 @@ sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최�
 ## 토픽 (sim = 실물)
 
 `/clock`, `/joint_states`, `/joint_command`, `/gripper/command`, `/gripper/joint_states`(present raw), `/gripper/target`(goal raw 0/1150),
-`/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw`, `/base/imu`. 자세한 표는 `docs/PLAN.md` 부록 B.
+`/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw`, `/base/imu`(8단계부터. 고정 베이스에서는 sim·실물 모두 발행 안 하고 stage1 `--base-imu const`).
+자세한 표는 `docs/PLAN.md` 부록 B.
 
 ## Isaac Sim 6.1.0 에서 확인된 사실
 
@@ -85,6 +87,10 @@ sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최�
 - **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).
   카메라는 OmniGraph Camera Helper, 주기는 카메라 prim `omni:sensor:tickRate` (6.0 부터, `frameSkipCount` deprecated). 앱 루프 30 Hz (= 카메라), 물리 120 Hz.
   카메라 받는 쪽은 RELIABLE (best effort 면 640x480 이미지가 통째로 버려짐)
+- **sim 팔 명령은 보간한다** (`ros2_iface.yaml` `arm.command_interp_time`, 물리 스텝마다 선형). 앱 루프(30 Hz)마다 바로 넣으면 계단이 되어
+  단단한 drive 가 관절 최대 속도로 뛰었다 멈춘다
+- **PhysX 가 보고하는 관절 속도(`get_dof_velocities`)는 실제보다 작다** (wrist_3 0.42 배, 멈춘 관절도 1~3 °/s). `/joint_states` velocity·보호 정지는 관절각 차분
+- **rclpy `spin_once` 는 메시지가 쌓여 있어도 콜백·빈 호출을 번갈아 한다** → 빈 호출 한 번에 멈추면 메시지가 버려짐. 두 번 연속일 때 멈출 것 (`ros2_iface.spin`)
 - **카메라 렌더 설정은 `ros2_iface.yaml` `render` 에 명시** (DLSS Performance). RTX 실시간 렌더러는 DLSS·DLAA 만 지원(TAA·끔 불가),
   DLSS 모드는 새 stage 마다 기본값으로 돌아가므로 stage 를 만든 뒤 적용하고 다시 읽어 확인
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다
