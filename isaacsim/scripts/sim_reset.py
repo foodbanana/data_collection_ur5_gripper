@@ -146,8 +146,8 @@ class EpisodeReset:
         try:
             self.stop.clear()
             self.arm.seg = None
+            how = self._drone_before_arm(goal)  # kill 상태 드론은 먼저 치움 (빈손 그리퍼에 떨어져 손가락 사이에 끼면 그리퍼가 안 열림, 2026-10-05 check_ros2)
             self._open_gripper()
-            how = self._drone_before_arm(goal)
             T, err = self._arm_home()
             dist = self._drone_after_arm(how, goal)
             res.update(ok=True, drone=how, arm_home_s=round(T, 2), arm_err_deg=round(err, 3), drone_err_mm=round(dist * 1000, 1),

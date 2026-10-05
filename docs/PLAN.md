@@ -927,7 +927,7 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 **3-6 결과 (2026-10-05)** — `/sim/reset` (std_srvs/Trigger), `isaacsim/scripts/sim_reset.py`, 설정 `ros2_iface.yaml` `reset`
 - 서비스 콜백 안에서 sim 을 실제 시간 속도로 돌리며 리셋하고 끝나면 응답 (message = JSON: 시드, 새 드론 위치, 드론 처리, 걸린 sim 시간).
   리셋 중 팔·그리퍼 명령은 무시하고, 리셋 중 쌓인 명령도 버린다 (명령 무시를 콜백 뒤 spin 이 쌓인 것을 꺼낸 다음에 풂)
-- 순서: 보호 정지 해제 → 그리퍼 열기 → (드론 kill 상태면 이륙 지점으로 순간이동 + **PX4 새로 띄움**) → 팔 홈 복귀 (최소 jerk, 최고 1.0 rad/s, ArmBridge 보간기로)
+- 순서: 보호 정지 해제 → (드론 kill 상태면 이륙 지점으로 순간이동 + **PX4 새로 띄움**) → 그리퍼 열기 → 팔 홈 복귀 (최소 jerk, 최고 1.0 rad/s, ArmBridge 보간기로)
   → 드론: **날고 있으면 새 호버 위치로 이동 명령만**, kill 상태였으면 `px4_takeoff` 재이륙. 새 호버 위치 = 씬 drone_pos ± 5 cm (시드 = `--seed` + 리셋 횟수)
   - `sim_ros2.py --reset-offset <m>`: 랜덤 범위를 실행할 때 바꿈 (0 = 항상 기준 위치. PX4 는 그래도 호버 흔들림 1~3 cm, 위치까지 고정하려면 `--flight geometric`).
     리셋 결과 = 에피소드 시작 상태 (팔 홈, 그리퍼 열림, 드론은 팔 위 호버). 처음 테이블에서 이륙하는 것은 PX4 부팅 과정일 뿐
@@ -949,15 +949,35 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   | 5 회 연속 4·5 | 대기 | goto | 6.5·7.6 s | 30·3 mm |
   | 낙하 3 회 | 못 잡은 드론 공중 kill → 팔 위로 낙하 | 순간이동 → PX4 재시작 → 재이륙 | 28.0~29.7 s | 18~19 mm |
   팔 홈 오차 0.033° (drive 중력 처짐). 드론 위치 오차는 PX4 호버 흔들림 범위 (기준 50 mm)
+- 3-8 에서 찾음: kill 된 드론이 빈손으로 닫힌 손가락 사이에 끼면 그리퍼가 안 열려 리셋 실패 ("그리퍼 열림 가 4 s 안에 안 됨", 끼어 있는 동안 RTF 0.69)
+  → kill 상태 드론을 **먼저 순간이동으로 치운 뒤** 그리퍼를 연다
 - 남은 주의: 공중에서 kill 한 드론이 팔 위로 떨어지면 접촉력이 보호 정지 기준(150 N) 가까이 감 (141 N)
 - 5단계 주의: 리셋 뒤 텔레옵 장치는 로봇의 지금 자세(홈)에서 시작해야 한다. 리셋 전 자세의 명령을 그대로 보내면 리셋 직후 팔이 그 자세로 33 ms 만에 뛴다
 
+**3-8 결과 (2026-10-05)** — `isaacsim/scripts/check_ros2.py` (시스템 python3, sim 을 직접 띄워 ROS 2 로 시험, stamp 기준 판정) → **9/9 PASS**
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | 토픽 주기 (sim 기준) | `/joint_states`·`/clock` 120.00 Hz, 카메라 2 대·그리퍼 2 개 30.00 Hz, `/protective_stop` 30 Hz, 끊김 0 |
+| 2 | 같은 시계 | 카메라·그리퍼 stamp 가 모두 `/joint_states` stamp 와 일치 (안 맞는 것 0) |
+| 3 | stage1 방식 이미지 읽기 | `rgb8` 640x480, `imgmsg_to_cv2(bgr8)` = 채널 뒤집기 (색 안 바뀜), frame_id `third_view_camera_color_optical_frame` |
+| 4 | 팔 명령 응답 (계단 0.03 rad) | 움직이기 시작 33 ms, 50 % 50~58 ms, 오버슈트 0 % (0.2 rad 을 한 번에 주면 위치 오차 5° 초과로 보호 정지 = 설계대로) |
+| 5 | 이미지 지연 | 팔이 움직이기 시작한 stamp = 이미지가 바뀐 첫 stamp (**0 프레임**): 이미지는 stamp 시각의 물리 상태 |
+| 6 | 파지 신호 (기하 제어기, 명령 재생) | present 297 / target 1150 |
+| 7 | 보호 정지 | 재생 중 false, 테이블 충돌 2.8 s 에 true, 리셋 뒤 false |
+| 8 | 리셋 (PX4) | goto 6.9·7.4 s, 빈손 kill → PX4 재시작 29.7 s, 매번 팔 홈 0.033°·그리퍼 열림·보호 정지 false |
+| 9 | RTF (헤드리스, PX4, 카메라 2 대, 대기) | 0.96 |
+- 기준 명령: `isaacsim/config/ros2_check/commands_success.csv` (grasp_demo 기하 제어기 success 명령, 만든 방법은 같은 폴더 README). 계단·테이블 충돌 명령은 스크립트가 만든다
+- **잡은 채 RTF 가 낮다** (따로 잼): PX4 드론을 잡은 채 모터 켬 0.75, **모터 끔 (실제 수집 조건) 0.69**, 기하 제어기 드론이 잡힌 채 버팀 0.67.
+  손가락·드론 접촉 계산이 무거움. stamp 정합성은 문제없고 텔레옵 조작감만 영향 (잡은 뒤 들고 옮기면 약 30 % 느림).
+  PhysX 설정은 지금 안 바꿈 (사용자 결정) → 5단계 텔레옵에서 불편하면 원인(드론·손가락 충돌 형상, solver)을 찾는다
+- B 의 grasp 재생은 빗나감 (리셋이 드론 위치를 ±5 cm 랜덤으로 바꾸므로 고정 명령 재생으로는 안 잡힘). 리셋 kill 경로 확인에는 상관없음
+
 **완료 기준**
-- [ ] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준)
-- [ ] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz)
-- [ ] 모든 header.stamp 가 sim time (카메라와 joint 가 같은 시계)
-- [ ] stage1 방식(`imgmsg_to_cv2(bgr8)`)으로 읽은 sim 카메라 영상의 색이 바뀌지 않음
-- [x] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림 — 3-7 (3-8 자동 검사에 넣을 것)
+- [x] 카메라 렌더링 포함 real-time factor 측정·기록 (텔레오퍼레이션 조작감 기준) — 3-1, `docs/sim_performance.md` (대기 0.96~0.97, 잡은 채 0.69)
+- [x] 모든 토픽 hz 가 목표에 맞음 (카메라 ≥ 25 Hz) — 3-8 (카메라 30.00 Hz)
+- [x] 모든 header.stamp 가 sim time (카메라와 joint 가 같은 시계) — 3-8
+- [x] stage1 방식(`imgmsg_to_cv2(bgr8)`)으로 읽은 sim 카메라 영상의 색이 바뀌지 않음 — 3-8
+- [x] 보호 정지: 정상 파지·텔레옵에서는 걸리지 않고, 테이블에 일부러 부딪히면 걸림 — 3-7, 3-8
 - [x] 드론을 잡았을 때 present 가 중간에서 멈추고 target 은 1150 (실물과 같은 파지 신호) — 3-3, present 289 / target 1150
 
 ---
@@ -1241,6 +1261,7 @@ ros2 service call /sim/reset std_srvs/srv/Trigger                               
 python3 isaacsim/scripts/replay_commands.py <commands.csv>                          # 명령 CSV 재생 (grasp_demo commands_<케이스>.csv 등)
 python3 isaacsim/scripts/drone_cmd.py kill                                          # 드론 모터 정지 (잡은 뒤)
 ros2 run rqt_image_view rqt_image_view                                              # 다른 터미널: 카메라 보기
+python3 isaacsim/scripts/check_ros2.py                                              # 3-8 자동 검사 → 9/9 PASS (약 8 분, --part A|B)
 ros2 topic hz --use-sim-time /joint_states                                          # sim 기준 주기 (기본은 wall 기준)
 
 # 토픽 도착 시각·stamp 기록 (시스템 python3)
