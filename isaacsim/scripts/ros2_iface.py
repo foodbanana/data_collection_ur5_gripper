@@ -205,7 +205,7 @@ class ArmBridge:
         self.interp_T = float(a["command_interp_time"])
         self.cmd_per_loop = []            # 루프(spin)마다 받은 /joint_command 수 (명령이 고르게 오는지)
         self.seg = None                   # 보간 구간 (q_start, q_goal, t_start). None = 보간 안 함 (목표 그대로)
-        self.hold = False                 # True 면 보간·명령 적용을 멈춤 (리셋 서비스가 팔을 직접 움직일 때)
+        self.hold = False                 # True 면 /joint_command 무시 (리셋 중. 리셋은 follow() 로 팔을 움직임)
         self._q_now = None                # 지난 물리 스텝에 넣은 관절 목표
         self._cb_pre = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
         self._q_prev = self._view().get_dof_positions().numpy()[0][self.arm_i].astype(float)   # 속도 = 관절각 차분
@@ -226,7 +226,7 @@ class ArmBridge:
     def _pre_step(self, dt, context):
         """물리 스텝 직전: 보간 구간의 이번 스텝 목표를 drive 에 (이번 스텝이 끝나는 시각 기준)."""
         try:
-            if self.seg is None or self.hold:
+            if self.seg is None:
                 return
             if self.stop is not None and self.stop.stopped:      # 보호 정지: 보간 멈춤 (정지가 관절각에 고정해 둠)
                 self.seg = None
@@ -309,6 +309,17 @@ class ArmBridge:
             SimulationManager.deregister_callback(self._cb_pre)
             self._cb_pre = None
 
+    def follow(self, q_goal):
+        """밖에서 (리셋) 다음 목표를 줄 때: 명령과 같은 보간 (지금 목표 → q_goal, command_interp_time 동안). hold 와 무관."""
+        t = self._sm.get_simulation_time()
+        if self.seg is not None:
+            q_start = self._target_at(t)
+        elif self._q_now is not None:
+            q_start = self._q_now
+        else:
+            q_start = self._view().get_dof_position_targets().numpy()[0][self.arm_i].astype(float)
+        self.seg = (np.asarray(q_start, dtype=float), np.asarray(q_goal, dtype=float), t)
+
     def set_now(self, q):
         """밖에서 (리셋 등) 팔 목표를 바꿨을 때 보간 기준을 맞춘다."""
         self.seg = None
@@ -340,7 +351,8 @@ class GripperBridge:
             raise RuntimeError(f"그리퍼가 열림(0)으로 시작하지 않음: goal {s.drive.gripper.goal} rad")
         self.goal_raw = 0.0                   # 실물 노드: 시작 시 Goal Position 0 (열림)
         self.error = None
-        self.n_pub, self.n_cmd, self.n_cb = 0, 0, 0
+        self.n_pub, self.n_cmd, self.n_cb, self.n_ignored = 0, 0, 0, 0
+        self.hold = False                     # True 면 명령 무시 (리셋 중)
         self._last_k = None
         self._cb = SimulationManager.register_callback(self._post_step, event=SimulationEvent.PHYSICS_POST_STEP)
 
@@ -377,6 +389,9 @@ class GripperBridge:
             v = float(msg.data)
             if not math.isfinite(v) or not 0.0 <= v <= self.raw_max:
                 raise ValueError(f"/gripper/command 는 0 ~ {self.raw_max:g} (raw): {v}")
+            if self.hold:
+                self.n_ignored += 1
+                return
             self.s.drive.set_gripper_goal(v * self.upper / self.raw_max)
             self.goal_raw = v
             self.n_cmd += 1

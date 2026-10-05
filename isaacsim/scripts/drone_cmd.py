@@ -117,6 +117,14 @@ class PX4Commander:
         self.t, self._t_sp, self._t_req = 0.0, -1e9, -1e9
         self.connected = False
 
+    def reset_link(self):
+        """PX4 를 새로 띄운 뒤: 연결·상태를 처음처럼 (스트림 끄기도 새 PX4 에 다시 보냄). 소켓은 그대로."""
+        self.connected, self._streams_sent = False, False
+        self.armed, self.mode, self.landed = False, None, None
+        self.estimate_enu, self.estimate_yaw = None, None
+        self.target, self.want_offboard, self.want_armed = None, False, False
+        self._t_sp, self._t_req = -1e9, -1e9
+
     def close(self):
         self.conn.close()
         if self.server is not None:

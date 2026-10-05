@@ -408,6 +408,44 @@ class DroneFlight:
         self.ctrl.reset(yaw)
         self.t, self.t_arm, self.armed = 0.0, 0.0, True
 
+    def teleport(self, position, yaw=0.0):
+        """드론을 position (world, 몸체 원점) 에 수평·yaw 로 순간이동하고 속도 0 (리셋 서비스, 3-6). 모터가 꺼진 채 멈춰 있을 때만 부를 것.
+        가상 센서의 자세·위치 차분 기준(_prev_pose)도 지운다 (안 지우면 순간이동 한 스텝에 거대한 가짜 속도·가속도가 PX4 로 감)."""
+        from isaacsim.core.experimental.prims import Articulation
+
+        if self.backend == "px4" and self.px4.armed:
+            raise RuntimeError("PX4 가 armed 인 채로 순간이동할 수 없음 (먼저 kill)")
+        if self.armed and self.backend != "px4":
+            raise RuntimeError("기하 제어기가 켜진 채로 순간이동할 수 없음 (먼저 release)")
+        q = [math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)]
+        if self.info["articulation"]:
+            if getattr(self, "_art_root", None) is None:
+                self._art_root = Articulation(self.info["path"])
+            r = self._art_root
+            r.set_world_poses(positions=[list(map(float, position))], orientations=[q])
+            r.set_velocities(linear_velocities=[[0.0, 0.0, 0.0]], angular_velocities=[[0.0, 0.0, 0.0]])
+            r.set_dof_velocities(np.zeros((1, r.num_dofs)))
+        else:
+            self.body.set_world_poses(positions=[list(map(float, position))], orientations=[q])
+            self.body.set_velocities(linear_velocities=[[0.0, 0.0, 0.0]], angular_velocities=[[0.0, 0.0, 0.0]])
+        self._prev_pose = None
+        if self.px4 is not None and self.px4.sensors is not None:
+            self.px4.sensors.imu.v_prev = None       # IMU 가속도 = 속도 차분 → 이전 속도도 지움 (순간이동 전 낙하 속도가 남으면 가짜 가속도)
+        self.omega = np.zeros(len(self.dir))
+        self.omega_cmd = np.zeros(len(self.dir))
+
+    def restart_px4(self):
+        """PX4 를 새로 띄운다 (모터가 꺼져 멈춰 있을 때만, 리셋 서비스). 이륙은 drone_scene.px4_takeoff 로."""
+        if self.backend != "px4":
+            raise RuntimeError("PX4 드론이 아님")
+        if self.px4.armed:
+            raise RuntimeError("PX4 가 armed 인 채로 다시 띄울 수 없음 (먼저 kill)")
+        self.px4.restart()
+        self.cmd.reset_link()
+        self._prev_pose = None
+        self.omega = np.zeros(len(self.dir))
+        self.omega_cmd = np.zeros(len(self.dir))
+
     def release(self):
         """모터 정지. geometric: ω = 0 (한 step 지연 때문에 바로 다음 step 은 지난 ω, 그다음부터 0, Pegasus 와 같은 순서).
         px4: kill 명령 (공중 강제 disarm, 실물과 같음) → PX4 가 모터 명령을 0 으로."""

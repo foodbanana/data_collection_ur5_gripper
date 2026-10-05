@@ -77,6 +77,7 @@ class ProtectiveStop:
         self.hz = float(publish_hz)
         self.pub = node.create_publisher(Bool, c["topic"], 10)
         self.stopped, self.reason, self.t_stop = False, None, None
+        self.ignore_contact = False            # True 면 접촉력 기준을 보지 않음 (리셋 중: 테이블을 누른 채 정지한 팔이 빠져나올 때)
         self.max = {"force": (0.0, None, None), "error": (0.0, None, None), "speed": (0.0, None, None)}   # (값, 링크·관절, sim t)
         v = s.robot._physics_articulation_view
         self._q_prev = v.get_dof_positions().numpy()[0][self.arm_i].astype(float)
@@ -103,7 +104,8 @@ class ProtectiveStop:
                 for k, (x, where) in vals.items():
                     if x > self.max[k][0]:
                         self.max[k] = (x, where, t)
-                over = [f"{k} {x:.1f} ({where}) > {self.lim[k]:g}" for k, (x, where) in vals.items() if x > self.lim[k]]
+                over = [f"{k} {x:.1f} ({where}) > {self.lim[k]:g}" for k, (x, where) in vals.items()
+                        if x > self.lim[k] and not (k == "force" and self.ignore_contact)]
                 if over and self.mode == "on":
                     self.stopped, self.reason, self.t_stop = True, "; ".join(over), t
                     self.s.drive.set_arm_targets(q)          # 그 순간 관절각에 고정 (Cat 2: 정지 유지)

@@ -168,6 +168,24 @@ class PX4Bridge:
         if self.sitl["autolaunch"]:
             self.launcher.kill()
 
+    def restart(self):
+        """PX4 프로세스를 새로 띄운다 (리셋 서비스: kill·낙하로 EKF 가 망가진 드론 = 실물의 재부팅, 3-6).
+        상태·가상 센서(편향 포함)도 처음처럼. 로그는 새 폴더 (<run_dir>_r<n>). 연결은 step() 이 다시 맺는다 (status 로 확인)."""
+        if not self.sitl["autolaunch"]:
+            raise RuntimeError("autolaunch 가 꺼져 있으면 PX4 를 다시 띄울 수 없음")
+        self.stop()
+        self.n_restart = getattr(self, "n_restart", 0) + 1
+        self.launcher = PX4Launcher(self.sitl["px4_dir"], self.c["airframe"], self.sitl["instance"],
+                                    f"{self.run_dir}_r{self.n_restart}", self.c.get("params"))
+        self.sensors, self.dt = None, None
+        self.heartbeat, self.first_actuator = False, False
+        self.armed, self.u = False, np.zeros(self.n)
+        self.omega = np.zeros(self.n)
+        self.pending = None
+        self.last = {"imu": None, "baro": None, "mag": None}
+        self.last_hb_wall = 0.0
+        self.start()
+
     # ── 수신 ──
     def _handle(self, msg):
         if msg.get_type() == "HIL_ACTUATOR_CONTROLS":

@@ -7,7 +7,8 @@
 #         /gripper/joint_states (present raw)·/gripper/target (goal raw) (30 Hz, 같은 stamp)
 #   구독: /joint_command (팔 6 관절 목표 [rad]), /gripper/command (raw 0 / 1150)
 #         /protective_stop (std_msgs/Bool, 30 Hz) — 보호 정지 흉내 (3-7, protective_stop.py)
-#   (리셋 서비스는 3-6 에서 추가. /base/imu 는 8단계부터)
+#   서비스: /sim/reset (std_srvs/Trigger) — 에피소드 리셋 (3-6, sim_reset.py). 끝날 때까지 sim 을 돌린 뒤 응답 (message = JSON)
+#   (/base/imu 는 8단계부터)
 #   토픽·주기·렌더 설정: isaacsim/config/ros2_iface.yaml. stamp 는 모두 sim time
 #
 # 실행 (ROS 2 를 source 한 터미널):
@@ -17,6 +18,8 @@
 #   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --seed --init-pose q1..q6
 #         --prop-spin on|off (기본 GUI on, headless off) --duration [sim s] (headless 는 없으면 Ctrl+C 까지)
 #         --protective-stop on|measure (기본 on. measure = 정지하지 않고 최댓값만 기록, 기준 여유 확인용)
+#         --reset-offset [m] (리셋 때 드론 호버 위치 랜덤 범위 ±값, 기본 ros2_iface.yaml reset.drone_offset. 0 = 항상 씬 drone_pos.
+#                             PX4 는 그래도 호버 흔들림 1~3 cm, 위치까지 거의 고정하려면 --flight geometric)
 #   손목·third view 화면은 ROS 토픽으로 본다 (예: ros2 run rqt_image_view rqt_image_view). 카메라 뷰포트 창은 렌더 비용이 커서 띄우지 않음
 # =============================================================
 
@@ -31,6 +34,7 @@ import test_scene as ts  # noqa: E402
 import numpy as np  # noqa: E402
 
 import protective_stop as ps  # noqa: E402
+import sim_reset as sr  # noqa: E402
 import ros2_iface as ri  # noqa: E402
 
 STATUS_SEC = 10.0      # 상태 출력 주기 (sim s)
@@ -48,6 +52,8 @@ def parse():
     p.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q", help="팔 시작 자세 [rad] (기본 home_pose)")
     p.add_argument("--prop-spin", choices=("on", "off"), default=None, help="프로펠러 회전 표시 (기본 GUI on, headless off)")
     p.add_argument("--protective-stop", choices=("on", "measure"), default="on", help="보호 정지 (measure = 최댓값만 기록)")
+    p.add_argument("--reset-offset", type=float, default=None,
+                   help="리셋 드론 위치 랜덤 범위 ±[m] (기본 ros2_iface.yaml reset.drone_offset, 0 = 항상 기준 위치)")
     p.add_argument("--ros2-config", default=None)
     p.add_argument("--report-dir", default=ts.REPORT_DIR)
     args, _ = p.parse_known_args()
@@ -59,6 +65,10 @@ def parse():
 def main():
     args = parse()
     cfg = ri.load_ros2_config(args.ros2_config)
+    if args.reset_offset is not None:
+        if args.reset_offset < 0:
+            raise ValueError(f"--reset-offset 는 0 이상 [m]: {args.reset_offset}")
+        cfg["reset"]["drone_offset"] = args.reset_offset
     loop_hz = float(cfg["loop_hz"])
     n_sub = (1.0 / ts.PHYSICS_DT) / loop_hz
     if abs(n_sub - round(n_sub)) > 1e-9:
@@ -89,7 +99,18 @@ def main():
         grip = ri.GripperBridge(s, cfg, node)
         stop = ps.ProtectiveStop(s, cfg, node, mode=args.protective_stop, publish_hz=cfg["gripper"]["publish_hz"])
         arm.stop = stop
-        bridges = [arm, grip, stop]
+        pace = {"t0": None, "w0": None}
+
+        def step_paced():
+            """한 루프 + 실제 시간 맞춤 (메인 루프·리셋 서비스 공용)."""
+            ds.step(s)
+            if pace["t0"] is not None:
+                ahead = (s.flight.t - pace["t0"]) - (time.monotonic() - pace["w0"])
+                if ahead > 0:
+                    time.sleep(ahead)                       # 실제 시간 속도 (텔레옵)
+
+        reset = sr.EpisodeReset(s, cfg, node, arm, grip, stop, step_paced, seed=args.seed)
+        bridges = [arm, grip, stop, reset]
         ds.run(s, 0.5)                                       # 카메라 렌더가 한 번 돈 뒤 렌더 설정 확인
         render = ri.check_render_settings(cfg)
         if not args.headless:
@@ -97,19 +118,19 @@ def main():
         print(f"[sim_ros2] 준비: 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
               f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']}, "
               f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "
+              f"서비스 {cfg['reset']['service']} (드론 위치 ±{cfg['reset']['drone_offset']:g} m), "
               f"카메라 {[cfg['cameras'][n]['topic'] for n in ri.CAMERA_NAMES]}", flush=True)
 
         t0, wall0 = s.flight.t, time.monotonic()
+        pace["t0"], pace["w0"] = t0, wall0
         t_status, w_status, n_status = t0, wall0, 0
         while ds._running():
-            ds.step(s)
+            step_paced()
             n_before = arm.n_cb
-            ri.spin(rclpy, node, bridges)
+            ri.spin(rclpy, node, bridges)                   # (리셋 서비스는 이 안에서 끝날 때까지 돈다)
+            reset.release()                                 # 리셋이 끝났으면 명령 받기 재개 (리셋 중 쌓인 명령은 방금 spin 이 버림)
             if arm.n_cmd:                                   # 첫 명령 뒤부터: 루프마다 받은 명령 수
                 arm.cmd_per_loop.append(arm.n_cb - n_before)
-            ahead = (s.flight.t - t0) - (time.monotonic() - wall0)
-            if ahead > 0:
-                time.sleep(ahead)                           # 실제 시간 속도 (텔레옵)
             if s.flight.t - t_status >= STATUS_SEC:
                 w = time.monotonic()
                 cmd = "없음" if arm.last_cmd is None else f"{np.round(arm.last_cmd[1], 3).tolist()} (t {arm.last_cmd[0]:.2f})"
@@ -117,6 +138,8 @@ def main():
                       f"/joint_states {arm.n_js - n_status} 개, /joint_command 누적 {arm.n_cmd} 개, 마지막 명령 {cmd}, "
                       f"그리퍼 present {grip.present_raw():.0f} target {grip.goal_raw:.0f} (명령 누적 {grip.n_cmd})", flush=True)
                 print(f"[sim_ros2]   {stop.summary()}, 정지 중 무시한 팔 명령 {arm.n_ignored} 개", flush=True)
+                if reset.failed:
+                    print("[sim_ros2]   마지막 리셋 실패 → 팔·그리퍼 명령 무시 중. /sim/reset 을 다시 호출하세요", flush=True)
                 t_status, w_status, n_status = s.flight.t, w, arm.n_js
             if args.duration is not None and s.flight.t - t0 >= args.duration:
                 break
@@ -129,7 +152,7 @@ def main():
         print(f"[ERROR] {type(e).__name__}: {e}", flush=True)
         traceback.print_exc()
     finally:
-        if len(bridges) == 3:                               # 끝날 때 (Ctrl+C 포함) 보호 정지 요약
+        if len(bridges) >= 3:                               # 끝날 때 (Ctrl+C 포함) 보호 정지 요약
             print(f"[sim_ros2] 끝: {bridges[2].summary()}, 정지 중 무시한 팔 명령 {bridges[0].n_ignored} 개", flush=True)
             c = np.bincount(bridges[0].cmd_per_loop) if bridges[0].cmd_per_loop else []
             print(f"[sim_ros2] 루프마다 받은 /joint_command 수 분포 (0 개, 1 개, 2 개, …): {list(c)}", flush=True)
