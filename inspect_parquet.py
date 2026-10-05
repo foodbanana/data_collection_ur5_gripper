@@ -6,11 +6,12 @@
 #   parquet 경로를 인자로 받아, 내용을 사람이 보기 좋게 출력한다.
 #   - 열 목록, 행(프레임) 수, dtype
 #   - observation.state / action 배열을 관절별 열로 펼쳐서 미리보기
-#   - 그리퍼 검수: action 그리퍼 값 종류({0,1150} 기대),
-#     state 그리퍼 범위(연속), 42억 이상치 유무
+#   - 그리퍼 검수: action 그리퍼 값 종류({0, 1} 기대, 0단계 스키마: raw / 1150),
+#     state 그리퍼 범위(0~1 연속), 범위 밖 값 유무
+#   데이터셋 전체 검수 (PASS/FAIL) 는 inspect_dataset_v21.py
 #   - (옵션) 펼친 표를 .xlsx 로 저장
 #
-#   ※ 이미지(head/third_view)는 parquet 에 없고 별도 mp4 로 저장되므로
+#   ※ 이미지(wrist/third_view)는 parquet 에 없고 별도 mp4 로 저장되므로
 #     여기서는 숫자 데이터(state/action/메타)만 다룬다.
 #
 # 사용:
@@ -120,46 +121,47 @@ def main():
     # ── 그리퍼 검수 ──
     print('\n── 그리퍼 검수 ──')
     for c in array_cols:
+        if c not in ('observation.state', 'action'):     # 그리퍼는 state·action 의 마지막 칸 (base_imu 등은 해당 없음)
+            continue
         arr = stack_col(df[c])
         g = arr[:, GRIPPER_IDX]
         short = c.replace('observation.', '').replace('.', '_')
         uniq = np.unique(g)
-        over = int((g > 1e9).sum())
+        over = int((g > 1.0).sum())
         neg = int((g < 0).sum())
         # 값 종류가 많으면 앞 8개만
-        uniq_show = uniq if len(uniq) <= 8 else \
-            list(np.round(uniq[:8], 2)) + ['...']
-        print(f'  [{short}] 그리퍼 열: min {g.min():.1f}, max {g.max():.1f}, '
-              f'값종류 {uniq_show}, 42억이상 {over}개, 음수 {neg}개')
+        uniq_show = np.round(uniq, 3).tolist() if len(uniq) <= 8 else \
+            np.round(uniq[:8], 3).tolist() + ['...']
+        print(f'  [{short}] 마지막 열: min {g.min():.3f}, max {g.max():.3f}, '
+              f'값종류 {uniq_show}, 1 초과 {over}개, 음수 {neg}개')
 
-    # action 그리퍼가 이진({0,1150})인지, state 그리퍼가 연속인지 요약
+    # action 그리퍼가 이진({0, 1})인지, state 그리퍼가 연속인지 요약
     if 'action' in df.columns and 'observation.state' in df.columns:
         ga = stack_col(df['action'])[:, GRIPPER_IDX]
         gs = stack_col(df['observation.state'])[:, GRIPPER_IDX]
-        binary_ok = set(np.unique(ga)).issubset({0.0, 1150.0})
-        print(f'\n  action 그리퍼 이진(0/1150) 여부: '
+        binary_ok = set(np.unique(ga)).issubset({0.0, 1.0})
+        print(f'\n  action 그리퍼 이진(0/1) 여부: '
               f'{"OK" if binary_ok else "아님 -> " + str(np.unique(ga))}')
-        print(f'  state 그리퍼 연속 범위: {gs.min():.0f} ~ {gs.max():.0f} '
+        print(f'  state 그리퍼 연속 범위: {gs.min():.3f} ~ {gs.max():.3f} '
               f'(파지 시 중간값이면 정상)')
-        # 파지 신호 예시: action=1150 인데 state<1150 인 프레임
-        # 파지 신호: 닫기 명령(action=1150) 구간에서 state 가 얼마나 닫혔는지.
+        # 파지 신호: 닫기 명령(action=1) 구간에서 state 가 얼마나 닫혔는지.
         #   닫기 명령 직후엔 state 가 아직 0 (그리퍼가 막 닫히기 시작)이므로,
         #   "명령 구간의 state 최대 지점" = 물체에 막혀 멈춘 실제 파지 깊이를 본다.
-        close = (ga == 1150)
+        close = (ga == 1.0)
         if close.any():
             gs_close = gs[close]
             gmax = gs_close.max()
             i = int(np.where(close)[0][np.argmax(gs_close)])   # 최대 지점의 프레임 번호
-            pct = np.round(np.percentile(gs_close, [0, 25, 50, 75, 100])).astype(int)
-            print(f'  닫기 명령(action=1150) 프레임 수: {int(close.sum())}')
+            pct = np.round(np.percentile(gs_close, [0, 25, 50, 75, 100]), 3)
+            print(f'  닫기 명령(action=1) 프레임 수: {int(close.sum())}')
             print(f'  닫기 명령 중 state 분포 [min/25/50/75/max]: {pct.tolist()}')
-            if gmax < 1140:
-                print(f'  → 파지 신호 확인: 프레임 {i}에서 action=1150(꽉 닫아라)인데 '
-                      f'state={gmax:.0f}에서 멈춤 (물체에 막힘)')
+            if gmax < 0.95:   # sim 빈손 닫기는 손가락끼리 닿아 약 0.985 에서 멈춤 (lerobot_v21_common.GRASP_STATE_MAX)
+                print(f'  → 파지 신호 확인: 프레임 {i}에서 action=1(꽉 닫아라)인데 '
+                      f'state={gmax:.3f}에서 멈춤 (물체에 막힘)')
             else:
-                print(f'  → state 가 {gmax:.0f}까지 닫힘 (거의 완전 닫힘 = 허공/얇은 물체)')
+                print(f'  → state 가 {gmax:.3f}까지 닫힘 (거의 완전 닫힘 = 허공/얇은 물체)')
         else:
-            print('  닫기 명령(action=1150) 없음 (이 에피소드엔 그리퍼 닫기 동작이 없음)')
+            print('  닫기 명령(action=1) 없음 (이 에피소드엔 그리퍼 닫기 동작이 없음)')
 
     # ── xlsx 저장 ──
     if args.xlsx is not None:

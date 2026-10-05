@@ -1079,6 +1079,26 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
     `--skip-start 0.5` 면 통과
 - 남은 것: `convert_ros2bag_lerobot.sh` 는 stage1 필수 인자를 아직 안 넘긴다 (4-4 에서)
 
+**4-4 결과 (2026-10-05)** — conda `lerobot_v2` 에서 실행 (`env -u PYTHONPATH python ...`)
+- 공용 모듈 `lerobot_v21_common.py` (중간 파일 읽기·스키마 검사·feature 정의·프레임 추가). stage2 (에피소드 1 개) 와 병합이 같은 코드를 쓴다
+- `lerobot_stage2_build_dataset_v21.py`·`lerobot_merge_episodes_v21.py`: feature = `observation.state` (7), `action` (7), **`observation.base_imu` (6)**,
+  `observation.images.wrist`·`observation.images.third_view`. 중간 파일이 `schema_version 2` 가 아니면 에러
+- 병합: 매니페스트 또는 `--all` (중간 파일 폴더 전체). 사전검사에서 fps·이미지 크기·**팔 action 종류**·base_imu 방식이 에피소드끼리 다르면 중단.
+  **보호 정지 에피소드는 기본 제외** (`--include-protective-stop`), 제외한 것은 출력과 `meta/merge_manifest.json` 에 남김.
+  `_discarded` 의 bag 은 stage1 을 돌리지 않으므로 중간 파일이 없어 들어가지 않는다
+- **정지 구간 자르기** `--trim-idle start|end|both` (기본 안 함), `--trim-margin` 0.5 s, `--idle-eps-deg` 0.1.
+  정지 = **action 과 state 가 모두** 첫 / 마지막 프레임 값에서 그대로인 구간. 처음에 action 만 봤더니 닫기 명령 뒤 그리퍼가 닫히는 2 s 가 정지로 잡혀
+  뒤를 자르면 파지 장면이 잘렸다 (그리퍼 state 0.191 에서 끊김) → state 도 보게 고침 (뒤 정지 233 → 33 프레임, 자른 뒤에도 0.262)
+- 검수 `inspect_dataset_v21.py <데이터셋> [--load]`: 1 형식 (v2.1, fps 25, feature 키·크기), 2 에피소드·프레임·mp4 수, 3 값 범위 (유한값, 팔 ±2π,
+  그리퍼 state 0~1, action {0, 1}), 4 파지 신호 (닫기 명령 중 state 최댓값 < 0.95. sim 빈손 닫기는 0.985), 5 LeRobotDataset 로드 (비디오 디코딩 포함).
+  에피소드별 표: 프레임 수, 그리퍼, 파지 신호, 앞·뒤 정지 [s], `/joint_command` 간격 (중앙값·최댓값·40 ms 넘은 횟수). FAIL 이 있으면 종료 코드 1
+- `inspect_parquet.py`: 그리퍼 기준을 0~1 / {0, 1} 로
+- `convert_ros2bag_lerobot.sh <bag> --arm-action … --base-imu …` (필수 인자 전달). **v3.0 단계는 뺐다**: `lerobot_stage2_build_dataset_v30.py` 는 손대지 않았고
+  옛 중간 파일 형식 (head/, 그리퍼 raw) 용이라 지금 stage1 출력을 읽지 못한다 (학습은 v2.1)
+- 확인 (PX4 bag 1 개): 변환 스크립트 한 번으로 bag → 중간 파일 → v2.1, 검수 4/4 (`--load` 포함 5/5): 572 프레임, 그리퍼 state 0.000~0.262, 파지 신호 있음,
+  정지 앞 0.08 s / 뒤 1.32 s. 병합 옵션: 팔 action 이 다른 에피소드 → 중단, 보호 정지 표시한 복사본 → 제외, `--trim-idle both` → 551 프레임
+- 남은 것: 에피소드 여러 개 병합과 진짜 보호 정지 bag 은 4-5 에서
+
 **작업 (처음 계획)**
 - `record_toggle.py`: `TOPICS` 에 `/joint_command` 추가, 녹화 시작 시 리셋 서비스 호출 연동
   - **카메라는 RELIABLE 로 받는다** (best effort 면 이미지가 통째로 버려짐, 3-1 결과). 실물 녹화 QoS 도 확인
