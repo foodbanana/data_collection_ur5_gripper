@@ -990,7 +990,7 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 > - stage1 (`--arm-action`·`--base-imu` 필수, 그리퍼 0~1, 메시지 나이 검사 66 ms, 첫 명령 이전 구간 제외) → 병합 (보호 정지 제외, 정지 구간 자르기는 옵션) → 검수 `inspect_dataset_v21.py`
 > - 성공/실패 판정은 사람 (`d` 로 버림). conda `lerobot_v2` (lerobot 0.3.3). v3.0 변환은 뺌
 > - **남은 문제** (아래 "4단계에서 남은 문제"): ~~녹화 시작 직후 메시지 누락~~ (2026-10-06 고침: 발행·수신 큐를 3 s 분량으로), `check_ros2` 6 번 1 회 실패 (원인 확인 못 함),
->   실물 PC 에서는 새 파이프라인을 아직 돌려 보지 못함
+>   ~~실물 PC 에서는 새 파이프라인을 아직 돌려 보지 못함~~ (2026-10-06 노트북에서 카메라·그리퍼로 녹화 → 변환 → 검수 5/5. 팔·텔레옵 경로는 아직)
 
 **확정 계획 (2026-10-05 사용자 결정)**
 | 단계 | 내용 |
@@ -1154,9 +1154,10 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 | B1 | 재생 스크립트가 명령을 고르게 못 보냄 (4-1): 60 Hz 명령의 4~6 % 가 25 ms 늦음 | 원인 앎 (`/clock` 을 받아 보내는 방식) | 학습 데이터에 안 씀. 텔레옵 데이터는 검수 표의 `/joint_command` 간격으로 확인 |
 | B2 | stage1 이 bag 전체를 메모리에 올림 (30 s 에피소드 약 1.5 GB) | 기존 방식 | 에피소드가 몇 분으로 길어지면 메모리 부족 가능 → 그때 순차 읽기로 |
 | B3 | 5 번 이미지 지연 검사 민감도: 8 번 중 2 번이 1 프레임 | 기준 안 (3-8 표) | 검사가 첫 프레임 변화 값을 리포트에 남기게 하면 확인 가능 |
-| C1 | **실물 PC 에서 새 파이프라인을 돌려 보지 못함**: record_toggle 실물 모드, stage1 `mode: real` 경로, 실물 카메라 런치의 `/cam/...` 토픽·RELIABLE QoS | 실물 장치가 이 PC 에 없음 | 새 팔이 오기 전이라도 `fake_joint_states.py` + 실물 그리퍼·카메라로 녹화 → 변환 (`--arm-action next_state`) 을 한 번 돌려 볼 것 |
-| C2 | 실물 카메라 프레임 드롭 (30 Hz 설정에서 20~25 Hz) 과 나이 검사 66 ms | 실물 데이터 없음 | 프레임이 연달아 빠지면 stage1 이 에러. 원인 후보: 자동 노출 (`auto_exposure_priority`), QoS, USB 대역폭. 실물에서 `ros2 topic hz`·`ros2 topic info -v` 로 확인 뒤 기준 조정 |
+| C1 | ~~실물 PC 에서 새 파이프라인을 돌려 보지 못함~~ → **확인함 (2026-10-06, 아래 "실물 PC 확인")**: 카메라 2 대 + 그리퍼 + 가짜 관절값으로 녹화 → stage1 (`next_state`) → v2.1 → 검수 5/5 | 팔·텔레옵 (`/joint_command`) 경로는 못 봄 | 새 팔·텔레옵 장치가 오면 `--arm-action command` 로 다시 확인 |
+| C2 | ~~실물 카메라 프레임 드롭 (30 Hz 설정에서 20~25 Hz)~~ → **카메라 문제가 아니었다 (2026-10-06)**: 발행은 30 Hz, `ros2 topic hz` 가 `image_raw` 를 best effort 로 받아 낮게 보인 것. RELIABLE 녹화는 29.99 Hz | 해결 | 주기는 `camera_info` 로 잴 것. 나이 기준 66 ms 는 실물에서도 통과 (카메라 최대 33.4 ms, 그리퍼 48.2 ms) |
 | C3 | `--base-imu topic` (구간 평균), PX4 드론 에피소드 여러 개의 병합 | 못 돌려 봄 (IMU 데이터 없음 / 고정 명령 재생이 PX4 드론을 매번 잡지 못함. PX4 bag 1 개는 변환·검수함) | 8단계 / 5단계 텔레옵 데이터로 |
+| D1 | **실물 stamp 동기화**: 카메라·팔·그리퍼·텔레옵 명령의 `header.stamp` 를 서로 다른 프로그램이 찍는다. 그 사이의 시각 차이를 모른다 (아래 "실물 stamp 동기화 문제") | 재지 않음. 변환은 통과 (수십 ms 안에서 겹침) | 차이만큼 한 프레임 안에서 이미지와 관절값이 어긋난다 (예: 30 ms × 팔 30 °/s = 0.9°). sim 은 차이 0 → sim2real 차이. 실물 수집 전에 측정 |
 
 **A1 추적: 녹화 시작 직후 메시지 누락 (2026-10-06)**
 - 디스크의 bag 12 개 중 누락은 1 개: 녹화기가 녹화 0.05~0.75 s 동안 카메라를 받지 못하다가 한꺼번에 받았고, 카메라 2 대가 정확히 10 장씩 없음 (`/joint_states` 7 개)
@@ -1179,6 +1180,49 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 남은 한계: ① 전달이 멈추는 이유 자체는 모른다 (멈춰도 잃지 않게 했을 뿐). 3 s 넘게 멈추면 다시 잃는다 (본 최대 1.5 s)
   ② 실물은 UR 드라이버·그리퍼 노드·RealSense 의 발행 큐를 여기서 바꿀 수 없다 → 같은 누락이 나오면 stage1 나이 검사가 잡는다
   ③ 녹화 중에 새 노드를 띄우면 (`ros2 topic echo`, rqt 등) 같은 일이 생길 수 있다 → 필요한 노드는 녹화 전에 띄울 것
+
+**실물 PC 확인 (C1·C2, 2026-10-06)** — 노트북 (Galaxy Book6 Pro), RealSense ROS 4.58.4 (LibRealSense 2.58.4, 카메라 펌웨어 5.17.3.10), 브랜치 `isaacsim_v6.1.0` `f3b98f1`.
+사용자가 노트북에서 실행하고 출력을 보내 줌. 팔은 고장이라 `fake_joint_states.py` (가짜 `/joint_states` 125 Hz), 그리퍼는 실물
+- 카메라: wrist = D435I (843112074130, USB 3.2, usb2 허브 경유), third_view = D456 (252122301126, USB 3.2, usb4). Color RGB8 640x480 30 FPS.
+  발행 QoS RELIABLE·TRANSIENT_LOCAL (큐 깊이는 `ros2 topic info` 에 UNKNOWN), `rgb_camera.auto_exposure_priority` False (D435I 에서 확인)
+- **"실물 카메라가 20~25 Hz 로 떨어진다" 는 측정 방법 문제였다**: `ros2 topic hz <image_raw>` 약 20 Hz (구독자가 BEST_EFFORT + 파이썬으로 0.9 MB 이미지 처리),
+  같은 카메라의 `camera_info` 는 29.96 Hz (이미지와 한 쌍으로 발행), RELIABLE 로 녹화한 bag 은 29.99 Hz. 3-1 의 sim 결과 (best effort 25 Hz → RELIABLE 30 Hz) 와 같은 현상.
+  예전 실물 녹화 (기본 QoS) 가 실제로 이미지를 잃었는지는 확인 못 함 (옛 bag 을 보지 않음)
+- **카메라 런치를 레포 안으로** (`launch/cameras.launch.py`, `5_cameras.sh`): `config/cameras.yaml` 을 읽어 역할마다 노드 (`namespace cam`, `name <역할>`)
+  → `/cam/wrist/color/image_raw`·`/cam/third_view/color/image_raw` (+ `camera_info`) 가 나오는 것 확인. 예전 `realsense_dual_camera` 런치 (모델 이름 토픽) 는 안 씀
+- **녹화** (`./6_record_bag.sh realtest`, 실물 모드, 29.54 s, 1.5 GB): 녹화 전 토픽 검사 통과 (발행자·카메라 RELIABLE), 카메라 `image_raw` 886 / 886 (29.99 Hz),
+  그리퍼 2 토픽 887 (30.0 Hz), `/joint_states` 3693 (125 Hz), `/gripper/command` 4, `/joint_command` 없음 (텔레옵 장치 없음). `episode.json` `mode: real`, 카메라 역할 → 모델·시리얼
+- **변환·검수**: stage1 `--arm-action next_state --base-imu const` → 738 프레임, 고른 메시지 나이 최대 카메라 33.3·33.4 ms, **그리퍼 48.2 ms** (30 Hz 인데 33 ms 를 넘음:
+  그리퍼 노드의 발행 간격이 고르지 않음. 한계 66 ms 까지 여유 18 ms), `/joint_states` 8.1 ms → stage2 → `inspect_dataset_v21.py --load` **5/5 PASS**
+  (그리퍼 state 0.000~0.646, action {0, 1}, 파지 신호 있음: 물체를 잡아 0.646 = raw 743 에서 멈춤)
+- 카메라 stamp 와 그리퍼·관절 stamp 가 같은 시각 기준 (PC 시각) 으로 겹쳐 변환이 됐다. **두 시계 사이의 정확한 차이 (수 ms~수십 ms) 는 재지 않았다** (9단계 "실물 시계 확인")
+- 그리퍼 노드가 한 번 시작 7.5 s 뒤 포트 에러로 끝남 (`Present Position 읽기 실패` → `device reports readiness to read but returned no data`), 다시 실행하니 됨. 원인 확인 안 함 (연결 문제로 추정)
+- 못 본 것: 실물 팔 (`/joint_states` 진짜 값), 텔레옵 `/joint_command` 경로 (`--arm-action command`), 에피소드 여러 개 병합, 긴 시간 녹화
+
+**실물 stamp 동기화 문제 (D1, 2026-10-06 기록. 아직 재지 않음)**
+- **무엇이 문제인가**: stage1 은 모든 토픽을 `header.stamp` 로 맞춘다 (격자 시각 직전의 최신 메시지). sim 은 모든 stamp 가 같은 물리 스텝의 sim time 이라
+  이미지와 관절값이 정확히 같은 순간이다 (3-8: 이미지 지연 0 프레임). **실물은 stamp 를 찍는 주체와 시점이 토픽마다 다르다**:
+
+  | 토픽 | stamp 를 찍는 곳 | 실제 사건과의 차이 (추정, 확인 필요) |
+  |------|------------------|--------------------------------------|
+  | 카메라 `image_raw` | RealSense 드라이버 (realsense-ros). 카메라 하드웨어 시각을 PC 시각으로 환산하는지 (`global_time_enabled`), 도착 시각을 쓰는지에 따라 다름 | 노출 시점 ~ PC 도착 사이 (USB 전송·처리 지연 수 ms~수십 ms) |
+  | `/joint_states` | UR 드라이버가 로봇 컨트롤러에서 값을 받은 PC 시각 | 측정 시점보다 통신 지연만큼 늦음 (수 ms) |
+  | `/gripper/joint_states`·`/gripper/target` | 그리퍼 노드가 직렬 통신으로 위치를 읽은 뒤의 PC 시각 | 읽는 데 걸린 시간만큼 늦음. 발행 간격도 고르지 않음 (메시지 나이 최대 48.2 ms) |
+  | `/joint_command` | 텔레옵 노드가 보낸 PC 시각 | 로봇이 실제로 받아 움직이기까지의 지연은 stamp 에 없음 |
+
+- **왜 중요한가**: 토픽 사이에 시각 차이 Δ 가 있으면 데이터셋의 한 프레임 안에서 이미지와 state (그리고 action) 가 Δ 만큼 어긋난다.
+  어긋남 크기 = 속도 × Δ (팔 30 °/s·Δ 30 ms → 0.9°, 그리퍼가 닫히는 중 (약 30 °/s) 도 같은 크기). 정책은 "이 이미지일 때 이 관절값" 으로 배우므로
+  어긋남이 크면 시각 정보와 고유감각이 맞지 않는 데이터가 된다. 추론 때도 같은 지연이 있으면 상쇄되지만, **sim 데이터 (Δ = 0) 와 실물 데이터를 섞으면 차이가 난다** (9단계)
+- **지금 아는 것**: 실물 bag 1 개가 변환됐다 = 카메라·그리퍼·(가짜) 관절 stamp 가 같은 PC 시각 기준으로 겹친다 (고른 메시지 나이 카메라 33.4 ms, 그리퍼 48.2 ms).
+  이것은 "수십 ms 안" 이라는 것만 말해 준다. **Δ 자체는 모른다**. 가짜 관절값이라 팔 쪽은 아예 볼 수 없었다
+- **재는 방법 (sim 의 check_ros2 5 번과 같은 원리)**: 갑자기 시작하는 움직임을 만들고, 관절값이 변하기 시작한 stamp 와 이미지가 변하기 시작한 stamp 를 비교한다
+  1. 그리퍼: 카메라에 손가락이 보이게 두고 닫기 명령 → `/gripper/joint_states` 가 변하기 시작한 stamp vs 이미지가 변하기 시작한 stamp (팔 없이 지금 장비로 가능)
+  2. 팔 (새 팔이 온 뒤): 작은 계단 명령 → `/joint_states` 변화 시작 vs 이미지 변화 시작
+  3. 여러 번 반복해 평균과 흔들림을 본다. 30 Hz 카메라라 한 번의 분해능은 33 ms → 반복이 필요
+  - 같이 확인: `ros2 param get /cam/wrist global_time_enabled` (카메라 stamp 가 어떤 시계인지), 카메라 `color/metadata` 토픽의 하드웨어 시각
+- **대응 후보 (측정 뒤 결정)**: ① 차이가 작으면 (한 프레임 40 ms 의 일부) 그대로 두고 기록 ② stage1 에 토픽별 시각 보정을 명시 옵션으로 (`meta.json` 에 기록, 조용히 적용하지 않음)
+  ③ 카메라 stamp 방식을 드라이버 설정으로 바꿈 ④ sim 쪽에 실물과 같은 지연을 넣어 맞춤 (9단계)
+- 관련: 9단계 "실물 시계 확인", `docs/data_recording.md` 7 장
 
 > 1~4단계는 텔레오퍼레이션 장치 없이 진행한다. 키보드나 스크립트로 `/joint_command` 를 보낸다.
 
@@ -1286,7 +1330,7 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 실물 파이프라인을 같은 스키마(카메라 키, 그리퍼 스케일)로 통일
 - 실물 카메라 장착 위치를 sim 과 일치 (1-7 에서 확정한 `cam_tilt` 로 실물 마운트 출력)
 - sim/실물 데이터 혼합 비율 실험
-- **실물 시계 확인**: RealSense stamp(카메라 하드웨어 시각 또는 PC 시각)와 UR 드라이버 stamp(PC 시각)가 같은 기준인지.
+- **실물 시계 확인** (자세한 것은 4단계 "실물 stamp 동기화 문제 (D1)": 토픽별 stamp 주체, 재는 방법, 대응 후보): RealSense stamp(카메라 하드웨어 시각 또는 PC 시각)와 UR 드라이버 stamp(PC 시각)가 같은 기준인지.
   stage1 은 header.stamp 로 맞추므로 기준이 다르면 이미지와 관절이 어긋난다 (sim 은 둘 다 sim time)
 - sim camera_info 의 fy 는 fx 로 맞춰진다 (렌더러가 정사각 픽셀만, 실물 fy 618.956 vs fx 618.551, 0.07%). stage1 은 camera_info 를 쓰지 않음
 
