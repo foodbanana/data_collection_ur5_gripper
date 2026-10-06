@@ -138,7 +138,7 @@ sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--r
 ```bash
 ./6_record_bag.sh <작업명>          # r 시작 / r 종료, d 버리기, q 종료 (리셋·k 없음)
 ```
-카메라 런치가 `/cam/wrist/...`·`/cam/third_view/...` 로 RELIABLE 발행해야 한다 (`5_cameras.sh` 안내). 자세한 순서는 `README.md` 1 절.
+`5_cameras.sh` (`launch/cameras.launch.py`) 가 `/cam/wrist/...`·`/cam/third_view/...` 로 발행한다 (RealSense 드라이버 기본 QoS = RELIABLE). 자세한 순서는 `README.md` 1 절.
 **실물 PC 에서는 이 녹화 도구를 아직 돌려 보지 못했다** (PLAN 4단계 남은 문제 C1).
 
 ### 4.3 녹화 확인

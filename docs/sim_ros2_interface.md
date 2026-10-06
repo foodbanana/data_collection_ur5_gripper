@@ -127,7 +127,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | `/joint_states` effort | 관절 전류 [A] (UR 드라이버) | 관절 토크 [Nm] (PhysX projected joint force) | stage1 은 effort 를 안 씀 |
 | `/joint_states` 주기 | 125 Hz | 120 Hz (물리 스텝) | stage1 이 25 Hz 로 리샘플 |
 | `/gripper/command` 범위 밖 | 노드가 0~1150 으로 clamp | 에러로 중단 | 텔레옵은 0 / 1150 만 보냄 |
-| 카메라 토픽 이름 | `/cam/wrist/...`, `/cam/third_view/...` 로 발행해야 함 (실물 PC 의 카메라 런치를 고쳐야 한다, `5_cameras.sh` 안내. 옛 이름은 `/d435i/d435i/...`, `/d456/d456/...`) | `/cam/wrist/...`, `/cam/third_view/...` | 녹화·stage1 은 `/cam/...` 만 받는다 (4단계) |
+| 카메라 토픽 이름 | `/cam/wrist/...`, `/cam/third_view/...` (`5_cameras.sh` → `launch/cameras.launch.py`. 옛 런치의 이름은 `/d435i/d435i/...`, `/d456/d456/...`) | `/cam/wrist/...`, `/cam/third_view/...` | 녹화·stage1 은 `/cam/...` 만 받는다 (4단계) |
 | 카메라 렌더 | RealSense 원래 해상도 | DLSS Performance (절반 해상도 렌더 후 업스케일, DLAA 대비 평균 차이 1/255 이하) | `docs/sim_performance.md` 7장 |
 | camera_info fy | 618.956 (fx 618.551) | fy = fx (렌더러가 정사각 픽셀만) | stage1 은 camera_info 를 안 씀 |
 | 팔 명령 → 움직임 | servoJ (lookahead 로 부드럽게) | 선형 보간 33 ms + drive (50 % 도달 약 50 ms) | `docs/arm_command_interpolation.md` |

@@ -107,9 +107,11 @@ chmod +x *.sh
 
 conda base 자동 활성화는 꺼 둔다 (`conda config --set auto_activate_base false`). 켜져 있으면 ROS·Isaac Sim 의 python 과 섞인다.
 
-**실물 카메라 런치**: 카메라 토픽이 `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw` 로 나오도록
-`~/realsense_ws` 의 `realsense_dual_camera` 런치를 고친다 (realsense2_camera: `camera_namespace:=cam`, `camera_name:=wrist` / `third_view`,
-시리얼은 `config/cameras.yaml` 값. 지금 wrist = D435i, third_view = D456). 발행 QoS 는 RELIABLE 이어야 한다 (아니면 녹화 도구가 녹화를 거부).
+**실물 카메라 런치**: `5_cameras.sh` 가 이 레포의 `launch/cameras.launch.py` 를 실행한다. `config/cameras.yaml` 을 읽어 역할마다
+realsense2_camera 노드 하나 (`namespace cam`, `name wrist` / `third_view`) 를 띄우므로 토픽이 `/cam/wrist/color/image_raw`, `/cam/third_view/color/image_raw` 로 나온다
+(지금 wrist = D435i, third_view = D456. 카메라를 바꾸면 yaml 의 model·serial 만 고친다). `~/realsense_ws` 는 realsense2_camera 패키지를 쓰려고 source 만 하고,
+예전 `realsense_dual_camera` 런치 (토픽 `/d435i/d435i/...`) 는 쓰지 않는다.
+주기는 `ros2 topic hz /cam/wrist/color/camera_info` 로 잰다 (`image_raw` 를 `ros2 topic hz` 로 재면 best effort 수신·파이썬 처리 때문에 실제보다 낮게 나온다).
 
 ---
 
@@ -182,8 +184,8 @@ source ~/realsense_ws/install/setup.bash
 ros2 topic hz /joint_states
 ros2 topic hz /gripper/joint_states
 ros2 topic hz /gripper/target
-ros2 topic hz /cam/wrist/color/image_raw
-ros2 topic hz /cam/third_view/color/image_raw
+ros2 topic hz /cam/wrist/color/camera_info        # 카메라 주기는 camera_info 로 (image_raw 는 실제보다 낮게 나온다)
+ros2 topic hz /cam/third_view/color/camera_info
 ```
 
 ### [터미널 6] 에피소드 녹화 (r 토글)
@@ -383,7 +385,7 @@ env -u PYTHONPATH python inspect_parquet.py \
 | `2_arm_freedrive.sh` | 2 | freedrive ON (Enter 로 해제+원복) |
 | `3_gripper_node.sh` | 3 | 그리퍼 present/target 발행 + 명령 수신 |
 | `4_gripper_teleop.sh` | 4 | 그리퍼 키보드 제어 (0/1) |
-| `5_cameras.sh` | 5 | 카메라 2대 (color) |
+| `5_cameras.sh`, `launch/cameras.launch.py` | 5 | 카메라 2대 (color). `config/cameras.yaml` 의 역할 이름으로 `/cam/<역할>/...` 발행 |
 | `6_record_bag.sh` | 6 | 에피소드 녹화 (r 토글) — `record_toggle.py` 실행 래퍼 |
 | `record_toggle.py` | 6 | 녹화 토글 본체 (토픽 목록, 녹화 전 검사, `--sim` 리셋·드론 kill 연동) |
 | `config/cameras.yaml`, `camera_config.py` | - | 카메라 역할 (wrist / third_view) ↔ 실물 모델·시리얼, 토픽 이름. 녹화·변환 공용 |
