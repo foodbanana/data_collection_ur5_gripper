@@ -75,7 +75,7 @@ class ProtectiveStop:
         self.joints = list(ts.ARM_JOINTS)
         self.dt = ts.PHYSICS_DT
         self.hz = float(publish_hz)
-        self.pub = node.create_publisher(Bool, c["topic"], 10)
+        self.pub = node.create_publisher(Bool, c["topic"], max(10, int(round(float(cfg["publish_queue_sec"]) * self.hz))))
         self.stopped, self.reason, self.t_stop = False, None, None
         self.max = {"force": (0.0, None, None), "error": (0.0, None, None), "speed": (0.0, None, None)}   # (값, 링크·관절, sim t)
         v = s.robot._physics_articulation_view

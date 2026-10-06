@@ -32,7 +32,7 @@ def load_ros2_config(path=None):
     path = path or DEFAULT_ROS2_CONFIG
     with open(path, encoding="utf-8") as f:
         c = yaml.safe_load(f)
-    for k in ("ros_distro", "node_name", "loop_hz", "render", "arm", "gripper", "cameras"):
+    for k in ("ros_distro", "node_name", "loop_hz", "publish_queue_sec", "render", "arm", "gripper", "cameras"):
         if k not in c:
             raise KeyError(f"{path}: '{k}' 항목이 없습니다")
     r = c["render"]
@@ -110,6 +110,12 @@ def set_camera_tick_rate(paths, rate):
         RtxCamera(p, tick_rate=float(rate), reset_xform_op_properties=False)
 
 
+def pub_depth(cfg, hz):
+    """발행 큐 길이 [메시지 수] = publish_queue_sec 분량. 받는 쪽 (녹화기 등) 이 잠깐 못 받는 동안 발행 큐 (keep_last) 가 넘치면
+    그 메시지는 RELIABLE 이어도 버려진다 (새 노드가 뜨는 순간·녹화기가 뜬 직후 0.4~0.7 s, PLAN 4단계 A1)."""
+    return max(10, int(round(float(cfg["publish_queue_sec"]) * float(hz))))
+
+
 def add_camera_publishers(s, cfg):
     """씬 s 의 손목·third view 카메라를 Camera Helper (rgb) + Camera Info Helper 로 발행 (재생 중에 호출).
     해상도는 카메라 설정 yaml (1-7, 실물 640x480). 그래프 경로를 돌려준다."""
@@ -135,8 +141,10 @@ def add_camera_publishers(s, cfg):
                  (f"{rp}.inputs:width", w), (f"{rp}.inputs:height", h),
                  (f"{rgb}.inputs:type", "rgb"), (f"{rgb}.inputs:topicName", cc[name]["topic"]),
                  (f"{rgb}.inputs:frameId", cc[name]["frame_id"]), (f"{rgb}.inputs:useSystemTime", False),
+                 (f"{rgb}.inputs:queueSize", pub_depth(cfg, cc["tick_rate"])),
                  (f"{info}.inputs:topicName", cc[name]["info_topic"]),
-                 (f"{info}.inputs:frameId", cc[name]["frame_id"]), (f"{info}.inputs:useSystemTime", False)]
+                 (f"{info}.inputs:frameId", cc[name]["frame_id"]), (f"{info}.inputs:useSystemTime", False),
+                 (f"{info}.inputs:queueSize", pub_depth(cfg, cc["tick_rate"]))]
     graph, _, _, _ = og.Controller.edit(
         {"graph_path": CAMERA_GRAPH, "evaluator_name": "push",
          "pipeline_stage": og.GraphPipelineStage.GRAPH_PIPELINE_STAGE_ONDEMAND},
@@ -196,8 +204,9 @@ class ArmBridge:
         self.lo, self.hi = lo.astype(float), hi.astype(float)
         a = cfg["arm"]
         self.node = node
-        self.pub_clock = self.node.create_publisher(Clock, a["clock_topic"], 10)
-        self.pub_js = self.node.create_publisher(JointState, a["joint_states_topic"], 10)
+        d = pub_depth(cfg, 1.0 / ts.PHYSICS_DT)
+        self.pub_clock = self.node.create_publisher(Clock, a["clock_topic"], d)
+        self.pub_js = self.node.create_publisher(JointState, a["joint_states_topic"], d)
         self.sub_cmd = self.node.create_subscription(JointState, a["joint_command_topic"], self._on_command, 10)
         self.error = None
         self.n_js, self.n_cmd, self.n_cb, self.n_ignored = 0, 0, 0, 0
@@ -335,8 +344,8 @@ class GripperBridge:
         self.hz = float(g["publish_hz"])
         self.upper, self.raw_max = ts.GRIPPER_UPPER, ts.GRIPPER_RAW_MAX
         self.grip_i = int(s.drive.grip_i)
-        self.pub_present = node.create_publisher(JointState, g["joint_states_topic"], 10)
-        self.pub_target = node.create_publisher(JointState, g["target_topic"], 10)
+        self.pub_present = node.create_publisher(JointState, g["joint_states_topic"], pub_depth(cfg, self.hz))
+        self.pub_target = node.create_publisher(JointState, g["target_topic"], pub_depth(cfg, self.hz))
         self.sub_cmd = node.create_subscription(Float64, g["command_topic"], self._on_command, 10)
         if abs(s.drive.gripper.goal) > 1e-9:
             raise RuntimeError(f"그리퍼가 열림(0)으로 시작하지 않음: goal {s.drive.gripper.goal} rad")

@@ -43,6 +43,12 @@ SIM_RESET_SERVICE = '/sim/reset'
 SIM_KILL_SERVICE = '/sim/drone_kill'
 SIM_RESET_TIMEOUT = 120.0   # [s, 실제 시간] 리셋은 약 24 s (sim). 이 시간 안에 응답이 없으면 에러
 
+# 녹화기 수신 큐 길이 [s 분량]. 녹화기 (ros2 bag record) 는 뜬 직후 0.4~0.7 s 동안 메시지를 꺼내 가지 못할 때가 있고
+#   (다른 노드가 같이 뜰 때 30 번 중 10 번), 그동안 온 메시지는 수신 큐에 쌓인다. 큐가 짧으면 (기본 10 개 = 카메라 0.33 s) 넘쳐서 버려진다
+#   → 상태 토픽마다 이만큼의 메시지를 담을 수 있게 QoS override 로 큐를 늘린다 (docs/PLAN.md 4단계 남은 문제 A1)
+QUEUE_SEC = 3.0
+TOPIC_HZ = {'/joint_states': 125.0, '/clock': 120.0}     # 나머지 상태 토픽은 30 Hz
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BAG_DIR = os.path.join(SCRIPT_DIR, 'bags')
 DISCARD_DIR = os.path.join(BAG_DIR, '_discarded')   # 버린 에피소드 보관 (실제 삭제는 수동으로)
@@ -142,11 +148,19 @@ class RosLink:
         self.rclpy.shutdown()
 
 
-def write_qos_overrides(image_topics):
-    """카메라 이미지를 RELIABLE 로 받게 하는 ros2 bag record QoS override 파일. → 경로"""
+def write_qos_overrides(link):
+    """ros2 bag record QoS override 파일 (상태 토픽). → 경로
+    - 큐 길이: QUEUE_SEC 분량 (녹화기가 뜬 직후 못 꺼내 가는 동안 넘치지 않게)
+    - 카메라 이미지는 RELIABLE (check_topics 가 발행자도 RELIABLE 인지 확인). 다른 토픽은 발행자와 같은 reliability
+      (발행자가 best effort 인데 RELIABLE 로 받으면 연결이 안 되어 조용히 빈 토픽이 된다)"""
+    from rclpy.qos import ReliabilityPolicy
+
     f = tempfile.NamedTemporaryFile('w', prefix='record_toggle_qos_', suffix='.yaml', delete=False)
-    for t in image_topics:
-        f.write(f"{t}:\n  history: keep_last\n  depth: 10\n  reliability: reliable\n  durability: volatile\n")
+    for t in link.state_topics:
+        pubs = link.node.get_publishers_info_by_topic(t)
+        reliable = t in link.image_topics or (bool(pubs) and all(p.qos_profile.reliability == ReliabilityPolicy.RELIABLE for p in pubs))
+        depth = int(round(QUEUE_SEC * TOPIC_HZ.get(t, 30.0)))
+        f.write(f"{t}:\n  history: keep_last\n  depth: {depth}\n  reliability: {'reliable' if reliable else 'best_effort'}\n  durability: volatile\n")
     f.close()
     return f.name
 
@@ -155,7 +169,7 @@ class BagRecorder:
     def __init__(self, task_name, link):
         self.task_name = task_name
         self.link = link
-        self.qos_path = write_qos_overrides(link.image_topics)
+        self.qos_path = None         # QoS override 파일 (녹화 시작마다 발행자 QoS 를 보고 다시 씀)
         self.proc = None
         self.out_dir = None
         self.t_start = None
@@ -177,6 +191,8 @@ class BagRecorder:
                 say(f"          {p}")
             say(IDLE_MSG)
             return False
+        self._remove_qos_file()
+        self.qos_path = write_qos_overrides(self.link)
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         ep_name = f"{stamp}_{self.task_name}" if self.task_name else stamp
         self.out_dir = os.path.join(BAG_DIR, ep_name)
@@ -184,7 +200,7 @@ class BagRecorder:
         mode = 'sim' if self.link.sim else 'real'
         self.info = {
             'episode': ep_name, 'mode': mode, 'task_name': self.task_name, 'recorded_at': datetime.now().isoformat(timespec='seconds'),
-            'topics': self.link.topics, 'camera_reliability': 'reliable',
+            'topics': self.link.topics, 'camera_reliability': 'reliable', 'queue_sec': QUEUE_SEC,
             'cameras': {role: {'topic': r['topic'], **r[mode]} for role, r in cams['roles'].items()},
             'sim_reset': reset_info,
             'drone_kill': [],            # 녹화 중 k 키로 드론 모터를 끈 시각 (sim time)
@@ -275,11 +291,16 @@ class BagRecorder:
         if self.recording:
             self.info['drone_kill'].append(info)
 
+    def _remove_qos_file(self):
+        if self.qos_path is not None:
+            try:
+                os.unlink(self.qos_path)
+            except OSError:
+                pass
+            self.qos_path = None
+
     def close(self):
-        try:
-            os.unlink(self.qos_path)
-        except OSError:
-            pass
+        self._remove_qos_file()
 
 
 def reset_then_record(recorder, link):

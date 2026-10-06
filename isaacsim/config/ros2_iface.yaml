@@ -7,6 +7,9 @@
 ros_distro: jazzy                 # python.sh 실행 전에 source /opt/ros/<distro>/setup.bash. 다르면 에러
 node_name: isaac_sim              # sim 안 rclpy 노드
 loop_hz: 30.0                     # 앱 루프(렌더) 주기 = 카메라 주기. 물리 120 Hz → update 한 번에 물리 4 스텝 (3-1, docs/sim_performance.md)
+publish_queue_sec: 3.0            # [s] 발행 큐 길이 (keep_last 깊이 = 이 시간 × 토픽 주기: /joint_states·/clock 360, 30 Hz 토픽 90, 카메라 90 장).
+                                  #   받는 쪽이 잠깐 못 받는 동안 (녹화기가 뜬 직후, 새 노드가 뜨는 순간) 큐가 넘치면 RELIABLE 이어도 버려진다.
+                                  #   기본 깊이 10 (카메라 0.33 s, /joint_states 0.08 s) 에서 녹화 시작 직후 누락 (PLAN 4단계 A1)
 
 # 팔 (3-2). 실물 UR 드라이버와 같게: /joint_states = 팔 6 관절 (이름 shoulder_pan_joint … wrist_3_joint), position·velocity·effort
 #   sim 은 물리 스텝마다 발행 (120 Hz, 실물 125 Hz). stamp = sim time (SimulationManager.get_simulation_time, 카메라와 같은 시계)

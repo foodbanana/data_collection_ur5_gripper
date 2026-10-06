@@ -72,6 +72,8 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 - 성공/실패 판정은 사람이 한다 (실패한 에피소드는 `d` 로 `bags/_discarded/` → 변환하지 않음). bag 은 자동으로 지우지 않는다 (30 s 에 약 1.5 GB)
 - `lerobot_stage2_build_dataset_v30.py` 는 옛 중간 파일 형식 전용 (지금 stage1 출력을 읽지 못함, 학습은 v2.1)
 - **sim 을 띄운 채 sim bag 을 `ros2 bag play` 하지 말 것** (bag 의 `/clock`·`/joint_command` 가 다시 발행됨)
+- **발행 큐·녹화 수신 큐는 3 s 분량** (`ros2_iface.yaml` `publish_queue_sec`, `record_toggle.py` `QUEUE_SEC`). 기본 깊이 10 이면 녹화 시작 직후
+  새 노드가 뜰 때 전달이 0.4~1.5 s 멈추는 동안 넘쳐서 버려진다 (RELIABLE 이어도). 양쪽 다 늘려야 한다. 녹화 중에는 새 노드를 띄우지 않는다
 
 ## Isaac Sim 6.1.0 에서 확인된 사실
 
