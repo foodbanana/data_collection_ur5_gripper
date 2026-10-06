@@ -202,7 +202,7 @@ env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<
 | 잡은 채 RTF 0.69 | 드론을 잡은 뒤 sim 이 약 30 % 느려진다. stamp 는 sim time 이라 데이터 정합성은 문제없고 조작감만 영향 |
 | 실물 카메라 주기 | 실물 카메라는 30 Hz 로 발행한다. `ros2 topic hz <image_raw>` 가 20 Hz 로 보이는 것은 그 도구가 best effort 로 받기 때문 → **주기는 `camera_info` 로 잰다**. RELIABLE 녹화는 29.99 Hz, 변환에서 고른 이미지 나이 최대 33.4 ms |
 | 실물 그리퍼 발행 간격 | 30 Hz 인데 고른 메시지 나이가 최대 48.2 ms (간격이 고르지 않음). 나이 한계 66 ms 까지 여유 18 ms |
-| **실물 stamp 동기화 (재지 않음)** | 변환은 모든 토픽을 `header.stamp` 로 맞춘다. sim 은 모든 stamp 가 같은 물리 스텝이지만, 실물은 카메라 (RealSense 드라이버)·팔 (UR 드라이버)·그리퍼 (그리퍼 노드)·명령 (텔레옵 노드) 이 각자 stamp 를 찍는다. 그 사이의 시각 차이만큼 한 프레임 안에서 이미지와 관절값이 어긋난다 (30 ms × 30 °/s = 0.9°). 실물 bag 이 변환된 것은 수십 ms 안에서 겹친다는 뜻일 뿐, 차이 자체는 모른다 → 실물 수집 전에 측정 (PLAN 4단계 "실물 stamp 동기화 문제 (D1)") |
+| **실물 stamp 동기화** | 변환은 모든 토픽을 `header.stamp` 로 맞춘다. sim 은 모든 stamp 가 같은 물리 스텝이지만, 실물은 카메라 (RealSense 드라이버)·팔 (UR 드라이버)·그리퍼 (그리퍼 노드)·명령 (텔레옵 노드) 이 각자 stamp 를 찍는다. 그 차이만큼 한 프레임 안에서 이미지와 관절값이 어긋난다 (30 ms × 30 °/s = 0.9°). **카메라 ↔ 그리퍼 1 차 측정: −50 ~ 0 ms 사이** (`measure_stamp_offset.py`, 정확한 값은 못 정함: 닫을 때 −51, 열 때 0 ms). 카메라 stamp 는 찍은 시각에 가깝고 (`global_time_enabled` True), 그리퍼 stamp 는 발행 순간. **카메라 ↔ 팔은 재지 않음** → 새 팔이 오면 측정 (PLAN 4단계 "실물 stamp 동기화 문제 (D1)") |
 | sim bag 재생 | sim 을 띄운 채 `ros2 bag play` 하지 말 것 |
 
 ---
@@ -217,5 +217,6 @@ env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<
 | `isaacsim/scripts/replay_commands.py` | 명령 CSV 재생 (텔레옵 대신) |
 | `isaacsim/scripts/make_fake_episodes.py` | 녹화 → 변환 → 병합 → 검수 자동 확인 |
 | `docs/sim_ros2_interface.md` | sim 이 내는 토픽·주기·QoS, 리셋·보호 정지 |
+| `docs/timestamp_sync.md` | 시각 (stamp) 동기화: sim 과 실물에서 stamp 를 누가 찍는지, 측정 결과, 모르는 것 |
 | `README.md`, `dataset_merge.md` | 변환·병합·검수 실행 방법과 옵션 |
 | `docs/PLAN.md` 4단계 | 4-0 ~ 4-5 결과, 결정과 이유, 남은 문제 |

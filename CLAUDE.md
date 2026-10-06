@@ -11,6 +11,7 @@ sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최�
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
 ROS 2 데이터 녹화 (녹화 도구 명령·키, 녹화 토픽·주기 표, 구조도, `episode.json`, 녹화 뒤 변환·병합·검수): `docs/data_recording.md`
+시각 (stamp) 동기화 (변환이 stamp 를 쓰는 방법, sim = 같은 물리 스텝, 실물 = 토픽마다 다른 프로그램이 찍음·측정 결과·모르는 것): `docs/timestamp_sync.md`
 변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
 
 ## 경로 규칙
