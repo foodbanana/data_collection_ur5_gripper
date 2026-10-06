@@ -4,6 +4,7 @@ UR5(CB3, UR5e 아님) + ROBOTIS RH-P12-RN(A) 1DOF 그리퍼 + 손목 D435i 로 �
 LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 레포. 실물 파이프라인과 Isaac Sim 6.1.0 파이프라인이 녹화·변환을 공유한다.
 
 전체 계획과 단계별 완료 기준: `docs/PLAN.md`
+데이터 수집 전체 구조 한 장 (명령 → sim / 실물 → 녹화 → 변환 → 병합 → 검수, 블록별 상태): `docs/architecture.md`
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`

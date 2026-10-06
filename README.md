@@ -5,7 +5,7 @@ ros2 bag → **LeRobot v2.1 데이터셋** 으로 변환하는 스크립트 모�
 
 **목적**: openpi π0.5 를 LoRA 로 파인튜닝하기 위한 데이터 수집. openpi 는 LeRobot **v2.1** 포맷만 호환.
 전체 흐름은 아래 [전체 구조](#전체-구조) 참고. 데이터셋 스키마와 원칙은 `CLAUDE.md`, 계획·단계별 결과는 `docs/PLAN.md`,
-녹화 토픽·주기·구조도와 sim 녹화 순서는 [docs/data_recording.md](docs/data_recording.md).
+전체 구조 한 장은 [docs/architecture.md](docs/architecture.md), 녹화 토픽·주기·구조도와 sim 녹화 순서는 [docs/data_recording.md](docs/data_recording.md).
 
 기존 워크스페이스(`~/ur_freedrive_ws`, `~/rh_gripper_ros2_ws`, `~/realsense_ws`)는
 **source 만** 한다. 이 폴더는 실행·녹화·변환 관리 전용.

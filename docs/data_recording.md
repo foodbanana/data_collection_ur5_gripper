@@ -4,7 +4,7 @@
 
 텔레옵 시연을 ros2 bag 으로 녹화하고 LeRobot v2.1 데이터셋으로 만들기까지를 정리한다.
 녹화 도구와 변환 스크립트는 sim 과 실물이 같은 것을 쓴다 (CLAUDE.md 원칙 1). 이 문서의 주기·측정값은 sim 기준이다.
-sim 이 토픽을 내는 쪽은 `docs/sim_ros2_interface.md`, 변환 옵션 전체는 `README.md`, 병합 절차는 `dataset_merge.md`.
+전체 흐름 한 장은 `docs/architecture.md`, sim 이 토픽을 내는 쪽은 `docs/sim_ros2_interface.md`, 변환 옵션 전체는 `README.md`, 병합 절차는 `dataset_merge.md`.
 
 ---
 
