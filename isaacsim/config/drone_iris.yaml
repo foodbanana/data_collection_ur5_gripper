@@ -28,7 +28,7 @@ link_masses:
 #   flight.prop_joints 에 있는 관절은 고정하지 않는다
 lock_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
 
-zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 rad/s 등)를 0 으로
+zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 °/s 등, USD 각속도 속성은 degree/s)를 0 으로
 
 # 바닥에 놓였을 때 기울기 허용 [degree]: 앞쪽 아래 안테나(드론 좌표 x 73, y 49 mm)가 다리 끝보다 10 mm 더 내려와
 #   안테나 + 다리로 3.4° 기울어져 섬 (원본 형상, 2026-10-01 check_drone)
@@ -96,7 +96,8 @@ px4:
   downward_sensor_position: [0.0, 0.0, 0.0]   # m, body 좌표계. 하향 거리 센서·flow 위치 (광축 = body −z). 바닥에 놓이면 약 4 cm
   # 각속도 게인 환산: MC_{ROLL,PITCH,YAW}RATE_K = (I / I_ref) ÷ (팔 / 팔_ref) (축별, drone_flight._px4_airframe_params)
   #   기준 = P-2 에서 안정 확인한 조합 (2026-10-02): Gazebo Iris 관성 + Pegasus 추력 모델 + Pegasus Iris 로터 위치 → ω 표준편차 1.3 rad/s
-  #   (Pegasus Iris USD 관성 그대로는 PX4 Iris 게인이 너무 세서 17 Hz 포화 진동)
+  #   (PhysX 가 충돌 형상에서 계산한 관성으로는 PX4 Iris 게인이 너무 세서 17 Hz 포화 진동. iris.usd 에 저장된 관성은 Gazebo Iris 값과 같지만
+  #    drone.add_drone 이 link_masses 가 있으면 지운다, PLAN P-2 정정 2026-10-07)
   rate_gain_scaling:
     enabled: true
     reference_inertia: [0.029125, 0.029125, 0.055225]   # kg·m², PX4 Gazebo Iris (sitl_gazebo iris.sdf)

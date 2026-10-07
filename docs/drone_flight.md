@@ -368,8 +368,11 @@ PX4: https://github.com/PX4/PX4-Autopilot `v1.16.0` (Pegasus 포크가 시험한
   - 각가속도 = 토크 / I, 최대 토크 ∝ 팔 길이 (roll: 로터 |y| 평균, pitch: |x| 평균, yaw: 반토크라 팔 무관)
   - 기준 = P-2 에서 안정 확인한 조합: Gazebo Iris 관성 (0.029125, 0.029125, 0.055225) + Pegasus 추력 + Pegasus Iris 로터 위치 (|x| 0.131, |y| 0.213 m)
   - 결과 roll 0.246, pitch 0.148, yaw 0.148 → 호버 모터 ω 흔들림 0.5 rad/s
-  - **환산하지 않으면**: Pegasus Iris(원래 크기)조차 모터 명령이 17.4 Hz 로 0 ↔ 0.9 포화 진동 (ω 표준편차 355 rad/s). `iris.usd` 관성이 비어 PhysX 가
+  - **환산하지 않으면**: Pegasus Iris(원래 크기)조차 모터 명령이 17.4 Hz 로 0 ↔ 0.9 포화 진동 (ω 표준편차 355 rad/s). PhysX 가
     충돌 형상으로 계산한 값(0.0175, 0.0107, 0.0268)이 PX4 Iris 게인이 맞춰진 Gazebo Iris 보다 1.7~2.7 배 작기 때문. 0.75 배는 6~9 배 작음
+    - **[정정 2026-10-07]** 여기에 "`iris.usd` 관성이 비어" 라고 적혀 있었으나 사실이 아니다. `iris.usd` body 에는 `diagonalInertia = (0.029125, 0.029125, 0.055225)`
+      (= Gazebo Iris 값) 가 저장돼 있고, `drone.add_drone` 이 `link_masses` 가 있으면 이를 지워 PhysX 가 형상에서 다시 계산하게 한다.
+      즉 위 진동은 우리가 원본 관성을 지운 결과로 보인다 (지우지 않고 다시 돌려 보지는 않음, PLAN P-2 정정 참고)
 
 ### 13-4. Pegasus 에 없는 것 (사실성)
 | 항목 | 내용 | 이유 |

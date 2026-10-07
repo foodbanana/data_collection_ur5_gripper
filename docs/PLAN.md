@@ -467,7 +467,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 3DR Iris = 예전 PX4 Gazebo SITL 기본 기체 ("PX4 처럼 보이는" 외형, 2번 PX4 단계에서도 같은 외형). Pegasus Simulator 6.0.1 포크의 `iris.usd` 복사 (BSD-3, 출처는 README)
 - 원본 허리 폭 약 105 mm 는 그리퍼 완전 열림 107 mm 로 잡을 수 없음 → **0.75 배** (허리 81 mm, 전체 폭 약 36 cm)
 - 씬 레이어 덮어쓰기 (`drone.add_drone`, 원본 USD 그대로): 축소, 질량 0.8 kg (body 0.78 + 프로펠러 0.005 × 4, 원본 body 1.5 kg),
-  프로펠러 회전 관절 4 개 → FixedJoint, 저장된 초기 속도(rotor0 9.4 rad/s 등) 0, 물체 재질
+  프로펠러 회전 관절 4 개 → FixedJoint, 저장된 초기 속도(rotor0 9.4 °/s 등. USD 각속도 속성은 degree/s, 예전에 rad/s 로 적었음) 0, 물체 재질
 - 잡는 곳: 몸체 허리(드론 x = 0) 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근
 - 대안: 기본 도형 간이 드론 `isaacsim/config/drone_simple.yaml` → `isaacsim/scripts/build_simple_drone.py` → `assets/drones/simple_drone/`
   (박스 몸체 180 × 80 × 70 mm + 팔·모터·로터·다리 각 4, 평평한 옆면, 치수 전부 yaml). 같은 `drone.py`·`check_drone.py` 로 쓴다
@@ -657,9 +657,16 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 `drone_flight.py` 에 `flight.backend: geometric | px4`, 설정 `px4_sitl.yaml`·`drone_iris_pegasus.yaml` (Pegasus Iris 원래 크기 1.52 kg), 시험 `check_px4.py` → **5/5 PASS** (250 Hz, GPS, compat)
 - 연결: lockstep 시작 sim 0.6 s, Offboard + arm 요청 1.2 s 뒤 armed. 실시간 비율 1.06 (headless). PX4 로그(.ulg)·콘솔은 `isaacsim/reports/px4_<시각>/`
 - **Pegasus Iris 는 그대로 쓰면 모터 명령이 17.4 Hz 로 0 ↔ 0.9 포화 진동** (ω 표준편차 355 rad/s, 그래도 날고 기울기 1.4°):
-  `iris.usd` body 관성이 비어 있어(diagonalInertia 0) PhysX 가 충돌 형상으로 계산 → [0.0175, 0.0107, 0.0268] kg·m², PX4 Iris 파라미터가 맞춰진 Gazebo Iris
+  ~~`iris.usd` body 관성이 비어 있어(diagonalInertia 0)~~ PhysX 가 충돌 형상으로 계산 → [0.0175, 0.0107, 0.0268] kg·m², PX4 Iris 파라미터가 맞춰진 Gazebo Iris
   [0.029, 0.029, 0.055] 보다 1.7~2.7 배 작음 → 각속도 루프가 사실상 너무 셈. **관성을 Gazebo 값으로 주면 ω 표준편차 1.3 rad/s, 기울기 0.19°**
   → P-3 (0.75 배, 관성 6~9 배 작음) 은 PX4 각속도 게인을 기체 관성에 맞춰야 함 (기하 제어기 게인 환산과 같은 문제)
+  - **[정정 2026-10-07] `iris.usd` 의 관성은 비어 있지 않다**: 파일을 열어 보면 body 에 `diagonalInertia = (0.029125, 0.029125, 0.055225)` 가 저장돼 있고,
+    이것이 위의 Gazebo Iris 값과 같다. 관성을 0 으로 만드는 것은 **우리 코드**: `drone.add_drone` 이 `link_masses` 가 있으면 저장된 관성·주축을 지워
+    PhysX 가 형상에서 다시 계산하게 한다 (질량을 바꾸면 저장된 관성이 맞지 않으므로). 기준선 `drone_iris_pegasus.yaml` 도 `link_masses` 를 주므로 지워진다
+    → 위 17.4 Hz 진동은 Pegasus 에셋 탓이 아니라 우리가 원본 관성을 지운 결과로 보인다 (파일·코드를 읽어 확인. **지우지 않고 다시 돌려 보지는 않음**)
+    - 수집 설정 (0.75 배, 0.8 kg) 에는 영향이 없을 것으로 본다: 원본 관성은 축소·감량한 기체에 어차피 맞지 않아 다시 계산하는 것이 맞고,
+      `rate_gain_scaling` 이 그 관성에 맞춰 게인을 환산하며 시험 (`check_px4` 5/5, 파지 6/6) 도 그 상태에서 통과
+    - 남은 것: "Pegasus 기준선 재현" 이 Pegasus 와 같은 관성으로 돌았는지 (질량을 바꾸지 않는 기준선에서는 관성을 지우지 않는 것이 맞는지) 는 확인하지 않음
 - GPS 호버: 실제 위치 − 목표 RMS 48~55 mm (대부분 z −40 mm = EKF 고도 추정 오차, 추정 − 실제 RMS 43~47 mm), 계단 +10 cm overshoot 14~39% (실행마다 다름)
 - kill: disarm 까지 32 ms, 그 뒤 수직 가속도 −9.810 m/s², ω 0
 - 로터 순서·위치: USD rotor0~3 = PX4 CA_ROTOR0~3 (앞-오른쪽, 뒤-왼쪽, 앞-왼쪽, 뒤-오른쪽), 위치 차이 1~4 cm
@@ -1318,6 +1325,26 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 로봇 고정: 씬에서 **root_joint 의 body0 을 움직이는 베이스 강체로 바꾸는 방식**을 검토. 이때 fixed base override 를 쓸지
   (`--base floating` 으로 USD 원본 구조를 쓸지)도 다시 결정 (1-4 참고. 최상위 prim 은 강체가 아니므로 Transform 을 움직여도 물리적으로 따라오지 않음)
   → 1~4단계 구조 유지, 씬 스크립트에 `--base kinematic` 추가
+  - **메모 (2026-10-07, 구조 정리와 방식 후보. 아직 해 보지 않음 → 구현할 때 확인)**
+    - 지금 구조: `root_joint` = 고정 관절, body0 = 로봇 최상위 prim (강체가 아님 → 세상의 그 자리에 고정), body1 = `robot_mount`. 지우지 않고 유지해 왔다.
+      `ArticulationRootAPI` 는 **USD 파일에는 `robot_mount`** (PhysX 가 `root_joint` 를 articulation 밖 구속으로 봄 → floating base, 질량행렬 16×16),
+      **씬 (메모리) 에서는 최상위 prim** 으로 옮긴다 (`test_scene._make_fixed_base` → `root_joint` 가 articulation 의 첫 관절 → fixed base, 10×10). 파일은 그대로
+    - 방식 후보
+
+      | 방식 | 내용 | 팔이 관성력을 느끼나 | 고칠 양 | 걱정 |
+      |------|------|----------------------|---------|------|
+      | A (먼저 시도) | kinematic 강체 (플랫폼) 를 궤적대로 움직이고 `root_joint` 의 body0 을 그 강체로. `ArticulationRootAPI` 는 USD 원본 위치 (`robot_mount`, floating) | 예 | 적음 (`--base kinematic` 자리가 비어 있음) | 연결이 articulation 밖 구속이라 플랫폼과 `robot_mount` 가 미세하게 벌어지거나 떨릴 수 있음. 질량행렬 16×16 (`compute_gain_seed.py` 그대로는 안 됨) |
+      | B (A 가 안 되면) | 고정된 뿌리와 `robot_mount` 사이에 직선 3 + 회전 3 관절을 넣고 drive 로 구동 (fixed base, DOF 16) | 예 | 많음 (DOF 10 → 16: `check_articulation` 기대값, drive 설정 구조, 질량행렬을 쓰는 코드) | 회전 3 관절의 순서 (큰 각도) |
+      | C (쓰지 않음) | 최상위 prim 위치를 매 스텝 덮어씀 (순간이동) | **아니오** | 가장 적음 | PhysX 가 속도·가속도를 모름 → 관성력 없음, IMU 값 틀어짐 (아래 "베이스 구동 방식 주의") |
+
+    - A 를 만들면 먼저 볼 것 (드론·ROS 없이 `test_scene` 수준에서, 사인파로 흔들며): 플랫폼 ↔ `robot_mount` 상대 움직임 (0 에 가까워야 함),
+      `tune_drives.py` A~F 가 floating 에서도 통과하는지, 아래 완료 기준 (sim IMU = 수식 계산값)
+    - `ArticulationRootAPI` 를 USD 파일에 최상위 prim 으로 넣지 않는 이유: 손으로 고치면 재import 때 사라짐, 이 단계에서 floating 구조가 필요할 수 있음,
+      고정 방식은 로봇이 아니라 씬의 성질. **확인해 볼 것**: importer 의 Base Type 을 Fixed 로 하면 (1-3 에서는 Source) 처음부터 fixed 구조로 나오는지
+      (손 편집이 아니므로 재import 문제가 없음). 베이스 방식이 정해진 뒤에 결정
+    - 방식과 무관하게 같이 고칠 곳: 플랫폼을 보호 정지 `environment_paths` 에 추가하고 기준 (위치 오차·관절 속도) 오탐 다시 측정, `/sim/reset` 이 베이스 움직임도 되돌림,
+      `check_articulation.py` 의 `fixed_base` 기대값을 모드별로, `record_toggle.py` 토픽에 `/base/imu`, 메타데이터의 "로봇 base 기준" 위치를 어느 시각의 base 로 볼지,
+      테이블·third view 카메라 배치
 - **베이스 상태 기록 (bag → intermediate 는 상위집합, 데이터셋에서 선택)**
   - bag: 베이스 IMU(`sensor_msgs/Imu`, 수백 Hz). sim 은 Isaac IMU 센서로 같은 토픽 + ground-truth 베이스 pose/twist 추가
   - D435i 내장 IMU 는 **손목**의 움직임이라 베이스 IMU 를 대체하지 못함 (필요하면 별도로 녹화만)

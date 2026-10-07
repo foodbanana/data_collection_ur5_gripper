@@ -25,7 +25,7 @@ link_masses:
 #   flight.prop_joints 에 있는 관절은 고정하지 않는다
 lock_joints: [rotor0/joint0, rotor1/joint1, rotor2/joint2, rotor3/joint3]
 
-zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 rad/s 등)를 0 으로
+zero_initial_velocity: true        # 원본에 저장된 초기 속도(rotor0 9.4 °/s 등, USD 각속도 속성은 degree/s)를 0 으로
 
 # 바닥에 놓였을 때 기울기 허용 [degree]: 앞쪽 아래 안테나(드론 좌표 x 73, y 49 mm)가 다리 끝보다 10 mm 더 내려와
 #   안테나 + 다리로 3.4° 기울어져 섬 (원본 형상, 2026-10-01 check_drone)
@@ -89,7 +89,7 @@ px4:
   zero_position_armed: [100.0, 100.0, 100.0, 100.0]
   rotor_geometry_from_sim: false       # 기준선: PX4 Iris 값 그대로
   downward_sensor_position: [0.0, 0.0, 0.0]   # m, body 좌표계 (flow 일 때)
-  rate_gain_scaling: {enabled: false}  # 기준선: PX4 Iris 게인 그대로 (P-2: USD 관성으로는 17 Hz 진동, PLAN 참고)
+  rate_gain_scaling: {enabled: false}  # 기준선: PX4 Iris 게인 그대로 (P-2: PhysX 가 형상에서 계산한 관성으로는 17 Hz 진동. iris.usd 에 저장된 관성은 link_masses 때문에 지워짐, PLAN P-2 정정)
   # 모터 1차 지연 (PX4 Gazebo motor_model timeConstantUp/Down 기본값). Pegasus 에는 없음 → 기준선은 끔
   motor_dynamics: {enabled: false, tau_up: 0.0125, tau_down: 0.025}
   sensor_kinematics: physx_velocity      # 기준선: Pegasus 와 같이 PhysX 속도
