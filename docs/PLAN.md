@@ -1285,6 +1285,16 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
 - 랜덤화: 조명, 드론 초기 위치·자세, 텍스처
 - 소량(수십 에피소드)으로 7단계 학습 루프를 먼저 한 번 돌려 문제를 찾은 뒤 대량 수집
 
+**수집 전 확인** (다 모은 뒤 바꾸면 이미지 분포가 달라진다)
+- [ ] **sim third view 카메라를 실물 구성에 맞춘다** (`isaacsim/config/third_view_camera.yaml`, 4단계 확정 계획·2-3 에서 넘어옴).
+  지금은 임시: 모양 = D435i 메시, intrinsics = D456 가정값 (가로 약 90°, fx = fy = 320), `serial: null`
+  - 먼저 실물 third view 카메라 모델 (지금 D456 252122301126, 두 번째 D435i 로 바꿀 수 있음) 과 놓을 위치를 정한다
+  - `intrinsics`: 실물 `ros2 topic echo --once /cam/third_view/color/camera_info` 값으로 (손목 카메라 1-7 과 같은 방식), `serial` 도 채운다
+  - `position`·`look_at`: 실물 카메라를 놓은 위치·방향 (로봇 base 기준으로 재서)
+  - 모양 (`model`): D435i 면 그대로. D456 이면 메시가 없다 (`realsense2_description` 에 D455 까지만) → 대신할 모양을 정한다.
+    third view 영상에는 자기 몸체가 안 나오므로 손목 카메라에 보일 때만 영향
+  - 바꾼 뒤 `drone_scene.py --headless --check` (3/3), `check_ros2.py` (9/9)
+
 ---
 
 ## 7단계: 학습과 sim 평가
@@ -1316,6 +1326,9 @@ python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` 필요 (`ros2_iface.e
   - 정책에 쓰려면 openpi repack 에 `observation.base_imu` 매핑 + Inputs transform 에서 state 에 이어붙이기 + **norm stats 재계산**. 추론 때도 같은 방식(25 Hz 구간 평균)으로 IMU 를 넣어야 함
 - **`/base/imu` 발행은 이 단계에서 시작** (2026-10-05 결정: 고정 베이스 1~7단계는 sim·실물 모두 발행 안 하고 stage1 `--base-imu const`).
   sim IMU 센서와 실물 IMU 를 함께 붙이고, 이 단계 데이터는 `--base-imu const` 없이 변환
+  - **설정 위치 (2026-10-07)**: `/base/imu` 의 토픽 이름·주기·frame_id 는 `isaacsim/config/ros2_iface.yaml` 에 둔다
+    (팔·그리퍼·카메라 토픽과 같은 곳. 발행 큐 `publish_queue_sec` 도 같이 적용된다: 100 Hz 이상이라 기본 깊이 10 이면 0.1 s 분량).
+    센서의 위치·방향·잡음은 카메라처럼 따로 둔다 (어느 파일인지는 베이스 설정을 만들 때 정함)
 - **sim 에서 베이스 IMU 얻기** (물리적 IMU 모델 불필요, 가상 센서)
   - 방법 1 (기본): 베이스 링크에 Isaac Sim IMU 센서 prim 을 자식으로 추가 → 몸체 좌표계 선가속도·각속도·자세 → `ROS2 Publish Imu` 노드로 `sensor_msgs/Imu` 발행
     - 6.0 부터 `isaacsim.sensors.physics` IMU 는 deprecated, `isaacsim.sensors.experimental.physics.IMUSensor` 권장 → 6.1.0 에서 어느 API 를 쓸지 확인
