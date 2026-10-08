@@ -2,6 +2,7 @@
 
 작성: 2026-10-01 · 대상 커밋: `4c6932d` (브랜치 `isaacsim_v6.1.0`)
 추가: 2026-10-02 — **13장 PX4 SITL** (실제 PX4 펌웨어가 드론을 날림, 2단계 2번)
+추가: 2026-10-08 — **14장 PX4 내부 제어 식** (위치 → 속도 → 자세 → 각속도 → 할당, v1.16.0 소스)
 
 2단계 씬의 드론은 **로터 4 개의 추력으로 실제 쿼드콥터처럼 난다.** 몸체를 손으로 붙잡아 두는 가상의 힘이 아니라,
 제어기가 정한 로터 회전속도로 추력을 만들고 그 추력으로 몸체를 기울여 움직인다.
@@ -25,6 +26,7 @@
 | 모터 정지 | `release()` → ω = 0 → 추력 0 → 자유 낙하 (실물: 잡은 뒤 모터를 멈춤) |
 | 프로펠러 회전 | 보여 주기용, 추력과 분리 (`--prop-spin on`) |
 | PX4 SITL | 제어기 자리를 **실제 PX4 v1.16.0** 으로 (13장, `--flight px4`). 로터 추력 부분은 그대로 |
+| PX4 내부 식 | 목표 위치 → 모터 명령까지 PX4 안의 제어 식과 기본 게인 (14장) |
 
 ---
 
@@ -467,3 +469,287 @@ CLI 는 UDP localhost `command_port` (14600) 로 JSON 명령을 보내 그 목�
 씬이 이륙·waypoint 를 마치기 전에는 이동 명령 거부. CLI 로 goto·hold 하면 hover 모드 사인파 목표는 멈춤.
 확인 (2026-10-02): 이륙 중 goto → 거부, waypoint 2 개 뒤 ready, `goto 0.65 0.05 1.45 --yaw-deg 20` → 4 s 뒤 추정 (0.654, 0.060, 1.465)
 
+
+---
+
+## 14. PX4 내부 제어 식 (v1.16.0 소스에서 읽음, 2026-10-08)
+
+13장은 PX4 를 **연결하는 방법**이다. 이 장은 PX4 **안에서** 목표 위치가 모터 명령 $u$ 가 되기까지의 식이다.
+`~/PX4-Autopilot` (v1.16.0) 소스를 읽고 옮겼다. 게인은 PX4 기본값이고 (airframe `10015_gazebo-classic_iris` 는 로터 위치·`CA_ROTORi_KM` 만 정함),
+우리가 바꾸는 것은 `CA_ROTORi_PX/PY` 와 `MC_*RATE_K` 뿐이다 (13-3).
+**PX4 를 돌려 로그로 확인한 내용이 아니라 소스를 읽은 내용이다.** 좌표계는 PX4 의 것: world **NED** (z 아래), 몸체 **FRD**.
+
+### 14-1. 전체 흐름
+
+```
+PX4Commander (UDP 14540, 20 Hz)
+  SET_POSITION_TARGET_LOCAL_NED: 위치 p_sp + yaw ψ_sp          (속도·가속도 목표는 보내지 않음)
+        │
+        ▼
+[1] 위치 P            v_sp   = Kp_pos (p_sp − p)                               mc_pos_control
+[2] 속도 PID          a_sp   = Kp_vel (v_sp − v) + ∫ − Kd_vel v̇
+[3] 가속도 → 추력     T_sp (정규화 추력 벡터, 호버 = hover thrust)
+[4] 추력 → 목표 자세  q_sp (몸체 z 축 = −T_sp 방향, yaw = ψ_sp),  총추력 |T_sp|
+        │
+        ▼
+[5] 자세 P            Ω_sp   = Kp_att · 2 · Im(q⁻¹ q_sp)                       mc_att_control
+        │
+        ▼
+[6] 각속도 PID        τ_sp   = K [ P (Ω_sp − Ω) + ∫ − D Ω̇ ]   (정규화 토크)    mc_rate_control
+        │
+        ▼
+[7] 할당              u      = M [τ_sp ; T]  → 0~1 로 자름                      control_allocator
+        │
+        ▼
+HIL_ACTUATOR_CONTROLS (TCP 4560)  →  sim: ω = 1000 u + 100  →  모터 지연  →  F = k ω²   (13-2, 5장)
+```
+
+상태 $p, v, \dot v, q, \Omega, \dot\Omega$ 는 정답값이 아니라 **EKF2 추정값** (sim 가상 센서로부터, 13-5) 이다.
+
+| 단계 | 소스 파일 (`~/PX4-Autopilot/src/`) |
+|---|---|
+| 1~3 | `modules/mc_pos_control/PositionControl/PositionControl.cpp` (`_positionControl`, `_velocityControl`, `_accelerationControl`) |
+| 4 | `modules/mc_pos_control/PositionControl/ControlMath.cpp` (`thrustToAttitude`, `bodyzToAttitude`, `limitTilt`) |
+| 5 | `modules/mc_att_control/AttitudeControl/AttitudeControl.cpp` (`update`) |
+| 6 | `lib/rate_control/rate_control.cpp` (`update`, `updateIntegral`), 게인 = `modules/mc_rate_control/MulticopterRateControl.cpp` |
+| 7 | `modules/control_allocator/VehicleActuatorEffectiveness/ActuatorEffectivenessRotors.cpp`, `lib/control_allocation/control_allocation/ControlAllocationPseudoInverse.cpp`, `ControlAllocationSequentialDesaturation.cpp` |
+
+### 14-2. 위치 → 속도 목표 (P)
+
+$$
+\mathbf{v}_{sp} = K_p^{pos} \odot (\mathbf{p}_{sp} - \mathbf{p}), \qquad K_p^{pos} = (0.95,\ 0.95,\ 1.0)\ \mathrm{s^{-1}}
+$$
+
+수평 크기는 `MPC_XY_VEL_MAX` 12 m/s, 수직은 위 3 m/s·아래 1.5 m/s 로 자른다.
+위치 오차 1 cm → 속도 목표 약 1 cm/s. 적분항이 없다 (정상 상태 오차는 다음 단계의 속도 적분이 없앤다).
+
+### 14-3. 속도 → 가속도 목표 (PID)
+
+$$
+\mathbf{a}_{sp} = K_p^{vel} \odot (\mathbf{v}_{sp} - \mathbf{v}) + \mathbf{i}_v - K_d^{vel} \odot \dot{\mathbf{v}},
+\qquad \dot{\mathbf{i}}_v = K_i^{vel} \odot (\mathbf{v}_{sp} - \mathbf{v})
+$$
+
+| | 수평 (x, y) | 수직 (z) | 파라미터 |
+|---|---|---|---|
+| $K_p^{vel}$ | 1.8 | 4.0 | `MPC_XY_VEL_P_ACC`, `MPC_Z_VEL_P_ACC` |
+| $K_i^{vel}$ | 0.4 | 2.0 | `MPC_XY_VEL_I_ACC`, `MPC_Z_VEL_I_ACC` |
+| $K_d^{vel}$ | 0.2 | 0.0 | `MPC_XY_VEL_D_ACC`, `MPC_Z_VEL_D_ACC` |
+
+- 미분항은 속도 오차의 미분이 아니라 **추정 가속도 $\dot{\mathbf v}$** 에 건다 (목표가 갑자기 바뀌어도 튀지 않음)
+- 수직 적분은 $\pm g$ 로 제한. 추력이 한계에 닿으면 적분을 멈춘다 (수직), 수평은 포화된 만큼 적분을 되돌린다 (tracking anti-windup, 이득 $2 / K_p^{vel}$)
+- 출력 단위가 m/s² 이다. 기하 제어기(6-2)는 같은 자리에서 힘 [N] 을 내고 질량을 곱한다. PX4 는 질량을 모르고 14-4 의 hover thrust 로 환산한다
+
+### 14-4. 가속도 → 추력 벡터
+
+PX4 는 추력을 뉴턴이 아니라 **0~1 정규화 값**으로 다룬다. "호버에 필요한 정규화 추력" $T_h$ (hover thrust) 하나로 가속도와 추력을 잇는다.
+
+원하는 몸체 z 축 (FRD 라 **아래**를 향하는 단위 벡터, NED 성분. 추력은 그 반대 방향. `MPC_ACC_DECOUPLE 1` 기본):
+
+$$
+\hat{\mathbf{b}}_z = \frac{(-a_{sp,x},\ -a_{sp,y},\ g)}{\lVert\cdot\rVert}
+\quad \text{(기울기는 } \texttt{MPC\_TILTMAX\_AIR}\ 45^\circ \text{ 로 제한)}
+$$
+
+수직 추력과 총추력:
+
+$$
+T_z = a_{sp,z}\,\frac{T_h}{g} - T_h, \qquad
+T = \min\!\left(\frac{T_z}{\hat{\mathbf{b}}_z \cdot \hat{\mathbf{z}}},\ -T_{min}\right), \qquad
+\mathbf{T}_{sp} = \hat{\mathbf{b}}_z\, T
+$$
+
+- $a_{sp,z} = 0$ 이면 $T_z = -T_h$ (위로 호버 추력). 기울어지면 $1/\cos$ 만큼 총추력을 늘려 수직 성분을 유지
+- $T_{min}$ = `MPC_THR_MIN` 0.12, 최대 = `MPC_THR_MAX` 1.0. 포화 때는 수직을 먼저 지키고 수평에 `MPC_THR_XY_MARG` 0.3 만큼 남긴다
+- $T_h$: `MPC_USE_HTE 1` (기본) 이면 PX4 의 hover thrust 추정기가 비행 중에 추정한다. 추정 전 초기값은 `MPC_THR_HOVER` 0.5.
+  $T_h$ 가 바뀔 때 수직 적분을 같이 고쳐 추력이 튀지 않게 한다 (`updateHoverThrust`).
+  **우리 모션캡처 설정에서는 이 추정기가 돌지 않아 $T_h$ 가 0.5 에 머문다** (14-10 B)
+- **우리 sim 과의 차이**: PX4 는 추력 ∝ $u$ 로 가정한다 (`THR_MDL_FAC` 0 기본). sim 은 $F = k(1000u + 100)^2$ 이라 $u$ 에 대해 이차식이다.
+  호버는 $u \approx 0.38$ (13-2). 이 차이가 비행에 주는 영향은 따로 재지 않았다
+
+### 14-5. 추력 벡터 → 목표 자세
+
+몸체 z 축을 $-\mathbf{T}_{sp}$ 방향으로 두고, yaw 목표 $\psi_{sp}$ 로 나머지 축을 정한다 (`bodyzToAttitude`):
+
+$$
+\hat{\mathbf{b}}_z = \frac{-\mathbf{T}_{sp}}{\lVert \mathbf{T}_{sp} \rVert}, \quad
+\mathbf{y}_C = (-\sin\psi_{sp},\ \cos\psi_{sp},\ 0), \quad
+\hat{\mathbf{b}}_x = \frac{\mathbf{y}_C \times \hat{\mathbf{b}}_z}{\lVert\cdot\rVert}, \quad
+\hat{\mathbf{b}}_y = \hat{\mathbf{b}}_z \times \hat{\mathbf{b}}_x, \quad
+R_{sp} = [\hat{\mathbf{b}}_x\ \hat{\mathbf{b}}_y\ \hat{\mathbf{b}}_z]
+$$
+
+총추력 명령은 $-\lVert \mathbf{T}_{sp} \rVert$ (몸체 z, FRD 라 음수 = 위). 기하 제어기 6-3 과 같은 구성이다 (좌표계와 부호만 다름).
+
+### 14-6. 자세 → 각속도 목표 (P, quaternion)
+
+$$
+q_e = q^{-1} \otimes q_{sp}, \qquad
+\boldsymbol{\Omega}_{sp} = K_p^{att} \odot \big(2\,\mathrm{sgn}(q_{e,w})\,\mathrm{Im}(q_e)\big), \qquad
+K_p^{att} = (6.5,\ 6.5,\ 2.8)\ \mathrm{s^{-1}}
+$$
+
+- 오차 $2\,\mathrm{Im}(q_e) = 2 \sin(\alpha/2)\,\hat{\mathbf n}$ (회전축 × 각도에 가까운 값, 작은 각에서는 각도 [rad])
+- **기울기(roll·pitch)를 yaw 보다 먼저 맞춘다**: 목표 자세를 "몸체 z 축만 맞추는 회전" 과 "남은 yaw 회전" 으로 나누고 yaw 쪽 각도에 `MC_YAW_WEIGHT` 0.4 를 곱한다
+  (yaw 게인은 그만큼 나눠서 보정). 로터 반토크로 만드는 yaw 는 약해서 위치 제어에 필요한 기울기를 방해하지 않게 하려는 것
+- 출력은 roll·pitch 220 °/s, yaw 200 °/s 로 자른다 (`MC_ROLLRATE_MAX` 등)
+- 기하 제어기 6-4 는 자세 오차와 각속도 오차에서 **토크를 한 번에** 계산한다. PX4 는 자세 P → 각속도 PID 로 **두 단계**다
+
+### 14-7. 각속도 → 토크 (PID)
+
+$$
+\boldsymbol{\tau}_{sp} = K \odot \Big[ P \odot (\boldsymbol{\Omega}_{sp} - \boldsymbol{\Omega}) + \mathbf{i}_\Omega - D \odot \dot{\boldsymbol{\Omega}} \Big] + FF \odot \boldsymbol{\Omega}_{sp},
+\qquad \dot{\mathbf{i}}_\Omega = K \odot I \odot (\boldsymbol{\Omega}_{sp} - \boldsymbol{\Omega})
+$$
+
+| | roll | pitch | yaw | 파라미터 |
+|---|---|---|---|---|
+| $P$ | 0.15 | 0.15 | 0.2 | `MC_*RATE_P` |
+| $I$ | 0.2 | 0.2 | 0.1 | `MC_*RATE_I` |
+| $D$ | 0.003 | 0.003 | 0 | `MC_*RATE_D` |
+| $FF$ | 0 | 0 | 0 | `MC_*RATE_FF` |
+| $K$ (PX4 기본) | 1 | 1 | 1 | `MC_*RATE_K` |
+| **$K$ (우리 기체, 13-3)** | **0.246** | **0.148** | **0.148** | sim 이 PX4 시작 때 넣음 |
+
+- $\boldsymbol\Omega$ = 자이로 각속도, $\dot{\boldsymbol\Omega}$ = 그 미분 (PX4 가 걸러서 계산). 미분항은 14-3 처럼 오차가 아니라 측정값에 건다
+- 적분은 $\pm 0.3$ 으로 제한, 할당이 포화된 방향으로는 쌓지 않음, 각속도 오차가 크면 줄임 (400 °/s 기준 $1 - (e/400°)^2$), 착지 상태면 멈춤
+- **$\boldsymbol\tau_{sp}$ 는 N·m 가 아니라 −1~1 정규화 토크**다. PX4 는 기체 관성을 모른다. 같은 정규화 토크가 만드는 각가속도는 (최대 토크 / 관성) 에 비례하므로,
+  관성이 작은 기체에서는 같은 게인이 그만큼 세다. 13-3 의 $K = (I/I_{ref}) / (\text{팔}/\text{팔}_{ref})$ 는 이 식의 $K$ 를 줄여 기준 기체와 같은 각가속도 응답을 만드는 것이다
+
+### 14-8. 할당: (토크, 추력) → 모터 명령
+
+로터 $i$ (위치 $\mathbf{r}_i$, 축 $\hat{\mathbf{a}}_i$ = 몸체 위쪽 (FRD 에서 $(0, 0, -1)$ = `CA_ROTORi_AX/AY/AZ` 0, 0, −1, 로그의 파라미터로 확인), 추력 계수 $c_T$, 모멘트 비 $k_{M,i}$) 가 만드는 모멘트와 추력으로 **effectiveness 행렬** $B$ (6 × 4) 의 열을 채운다:
+
+$$
+\mathbf{m}_i = c_T\,(\mathbf{r}_i \times \hat{\mathbf{a}}_i) - c_T\,k_{M,i}\,\hat{\mathbf{a}}_i, \qquad
+\mathbf{f}_i = c_T\,\hat{\mathbf{a}}_i, \qquad
+B = \begin{bmatrix} \mathbf{m}_1 & \cdots & \mathbf{m}_4 \\ \mathbf{f}_1 & \cdots & \mathbf{f}_4 \end{bmatrix}
+$$
+
+- $\mathbf{r}_i$ = `CA_ROTORi_PX/PY` (우리는 sim 로터 위치를 넣음, 13-3), $k_{M,i}$ = `CA_ROTORi_KM` ±0.05 (부호 = 회전 방향, airframe 값)
+- 모터 명령은 $B$ 의 유사역행렬 $M = B^{+}$ 로 구한다: $\mathbf{u} = M\,[\boldsymbol\tau_{sp};\ \mathbf{T}]$.
+  $M$ 의 열은 축별로 **정규화**한다 (roll·pitch 는 같은 배율, yaw 따로, 추력은 로터 평균이 1 이 되게). 그래서 입력이 정규화 값이어도 된다
+- 멀티콥터는 `SEQUENTIAL_DESATURATION` 방식 (`CA_METHOD` 자동). 어떤 모터가 0~1 을 벗어나면 차례로 줄인다 (`MC_AIRMODE` 0 기본, `mixAirmodeDisabled`):
+  1. yaw 를 빼고 계산 → 벗어나면 **추력을 줄임** (늘리지는 않음) → 그래도 벗어나면 roll, pitch 를 줄임
+  2. yaw 를 더함 → 벗어나면 **yaw 를 줄임** (roll·pitch 는 그대로) → 추력을 줄임
+
+  즉 포화 때 지키는 순서는 roll·pitch > yaw > 추력
+- 기하 제어기의 할당(7장)과 같은 원리다. 차이: 7장은 $\omega_i^2$ 를 뉴턴 단위로 직접 풀고, PX4 는 정규화된 $u_i$ 를 푼다
+
+출력 $u_i \in [0, 1]$ 이 `HIL_ACTUATOR_CONTROLS` 로 sim 에 온다 (13-2).
+
+### 14-9. 기하 제어기(6장)와 비교
+
+| | 기하 제어기 (`--flight geometric`) | PX4 (`--flight px4`, 기본) |
+|---|---|---|
+| 상태 | PhysX 정답값 | EKF2 추정값 (센서 잡음·지연) |
+| 위치 | PID 한 단계 → 힘 [N] | 위치 P → 속도 PID → 가속도 [m/s²] (두 단계) |
+| 자세 | 자세·각속도 오차 → 토크 [N·m] (한 단계) | 자세 P → 각속도 PID → 정규화 토크 (두 단계) |
+| 질량·관성 | 식에 직접 들어감 (8-2 에서 게인 환산) | 모름. hover thrust 추정 + `MC_*RATE_K` 로 대신 |
+| 할당 | 뉴턴 단위, $\omega_i^2$ | 정규화, $u_i$, 포화 때 roll·pitch 우선 |
+| 모터 | 즉시 | 1차 지연 (13-4) |
+
+### 14-10. 로그로 확인한 것 (2026-10-08)
+
+PX4 비행 로그 `isaacsim/reports/px4_20261005_160728/log/2026-10-05/07_07_29.ulg` (모션캡처, 387 s, 호버 구간 96%) 를 pyulog 로 읽었다
+(`~/PX4-Autopilot/.venv/bin/python`). B 는 다른 로그 3 개에서도 같았다. 새로 sim 을 돌리지는 않았다.
+
+**A. 제어기 주기 = 120 Hz (sim physics 와 같음)**
+
+| 토픽 (로그에 전부 기록되는 것) | 주기 | 의미 |
+|---|---|---|
+| `sensor_combined` | 120 Hz | sim 이 보낸 `HIL_SENSOR` (physics step 마다 1 개) |
+| `vehicle_angular_velocity` | 120 Hz | 각속도 제어기를 깨우는 토픽 |
+| `vehicle_attitude` | 120 Hz | 자세 제어기를 깨우는 토픽 (EKF2 출력) |
+| `vehicle_local_position` | 120 Hz | 위치 제어기를 깨우는 토픽 (EKF2 출력) |
+| `esc_status` | 120 Hz | `HIL_ACTUATOR_CONTROLS` 를 보낼 때마다 1 개 |
+
+- 세 제어기는 타이머가 아니라 **위 토픽이 올 때마다** 돈다 (소스: 각 모듈의 `registerCallback`). 입력이 전부 120 Hz 이므로 위치·자세·각속도·할당이 모두 120 Hz
+- 실물 PX4 는 각속도 루프가 훨씬 빠르다 (`IMU_GYRO_RATEMAX` 800 Hz). sim 은 센서를 120 Hz 로만 주므로 PX4 내부 루프도 120 Hz 로 묶인다
+- 제어기 출력 토픽 (`vehicle_rates_setpoint` 등) 은 로거가 솎아서 기록하므로 (10~60 Hz) 그것으로는 주기를 알 수 없다. 위 표는 솎지 않는 토픽만
+- 위치 제어기가 실제로 120 Hz 로 계산했는지는 입력 토픽 주기와 소스 구조에서 추론한 것이다 (직접 잰 값은 모터 명령 120 Hz)
+
+**B. hover thrust 추정기는 돌지 않는다 → $T_h$ = 0.5 (기본값) 그대로**
+
+| 항목 | 값 |
+|---|---|
+| `hover_thrust_estimate` 토픽 | 모션캡처 로그 3 개에 **없음** (발행된 적 없음). GPS·flow 방식 로그 (`px4_20261002_131143`) 에는 있음 |
+| 호버 중 총추력 명령 (`vehicle_thrust_setpoint` z) | −0.3788 (표준편차 0.0004) |
+| 호버 중 모터 명령 $u$ 평균 | 0.3788 (로터별 0.365, 0.392, 0.369, 0.389) → 13-2 의 예상값 0.38 과 일치 |
+| 호버 중 수직 가속도 목표 $a_{sp,z}$ | **+2.4 m/s²** (0 이 아님, 로그 3 개에서 2.38~2.73) |
+
+- 원인 (소스 `mc_hover_thrust_estimator`): 추정기는 "공중" 판정이 나야 시작하는데 그 조건이 `dist_bottom > 1 m` 이다.
+  `dist_bottom` 은 EKF2 의 지면까지 높이 추정값이고, 모션캡처 설정은 거리 센서를 끄므로 (`EKF2_RNG_CTRL 0`) 이 값이 유효하지 않고 (`dist_bottom_valid` 0) 최대 0.85 m 였다
+- 결과: 14-4 의 $T_h$ 가 0.5 인 채로 비행한다. 실제 호버 추력은 0.379 이므로 14-4 식에서
+  $a_{sp,z} = g\,(1 - 0.379 / 0.5) = 2.38$ m/s² 가 되어야 하고, 로그 값과 맞는다. **이 차이는 수직 속도 적분항이 메우고 있다** (14-3)
+- 비행은 된다 (13-6 의 시험은 전부 이 상태에서 한 것). 식에서 달라지는 점: 수직 가속도 → 추력 환산 배율 $T_h / g$ 가 $0.5 / 0.379 = 1.32$ 배 크고
+  (같은 수직 가속도 목표에 추력을 더 많이 바꿈), 이륙 뒤 적분이 2.4 m/s² 만큼 쌓여야 고도가 맞는다. 수평은 추력 방향(기울기)으로 정해지므로 $T_h$ 와 무관.
+  이것이 비행에 실제로 얼마나 보이는지는 재지 않았다
+- 맞추려면 `drone_iris.yaml` `px4.params` 에 `MPC_THR_HOVER: 0.38` 을 넣으면 된다 (PX4 문서가 권하는 방법). **넣지 않았다** — 13-6 의 비행·파지 시험 결과가 지금 값 기준이라, 바꾸면 다시 시험해야 한다
+
+**C. Offboard 위치 목표는 다듬어지지 않고 그대로 들어간다**
+
+- 로그의 `trajectory_setpoint`: 위치·yaw 만 값이 있고 속도·가속도·yaw 속도는 NaN (표본의 98%)
+- 소스: `mavlink_receiver` 가 `SET_POSITION_TARGET_LOCAL_NED` 를 `trajectory_setpoint` 로 바로 발행하고, `mc_pos_control` 이 그것을 그대로 읽는다 (사이에 궤적 생성 없음)
+- `PX4Commander.goto` 도 목표를 한 번에 바꾼다 (`drone_cmd.py`, 속도 제한 없음). 따라서 **`goto` 는 위치 목표의 계단 입력**이고, 14-2 에 따라 속도 목표가 $0.95 \times$ 거리 [m/s] 로 뛴다
+  (0.1 m 이동 → 0.095 m/s, 1 m 이동 → 0.95 m/s). 부드럽게 움직이려면 보내는 쪽이 목표를 조금씩 옮겨야 한다 (조종기 연결 때도 같음)
+
+**D. 로터 축**: `CA_ROTOR0_AX` 0, `CA_ROTOR0_AZ` −1 (몸체 위쪽), `CA_ROTOR0_CT` 6.5, `CA_ROTOR0_KM` 0.05, `CA_ROTOR0_PX/PY` 0.1032 / 0.1551 (sim 로터 위치),
+`MC_ROLLRATE_K` 0.2456, `MC_PITCHRATE_K`·`MC_YAWRATE_K` 0.1484, `MC_AIRMODE` 0, `THR_MDL_FAC` 0 — 14-7·14-8 에 적은 값과 같다
+
+### 14-11. EKF2 (상태 추정) 개요
+
+제어기가 쓰는 $p, v, q$ 는 EKF2 가 IMU 와 모션캡처 위치를 합쳐 만든다. 여기는 **구조와 우리 설정**만 적는다.
+공분산 전파·관측 갱신의 식은 PX4 가 SymForce 로 자동 생성한 코드 (`src/modules/ekf2/EKF/python/ekf_derivation/generated/`) 라 옮기지 않았다.
+
+**상태** (`generated/state.h`, 오차 상태 24 개):
+
+| 상태 | 크기 | 우리 설정에서 |
+|---|---|---|
+| 자세 quaternion | 3 (오차) | IMU 적분 + 모션캡처 yaw |
+| 속도 (NED) | 3 | IMU 적분 |
+| 위치 (NED) | 3 | IMU 적분 + 모션캡처 위치 |
+| 자이로 bias | 3 | 추정 |
+| 가속도계 bias | 3 | 추정 |
+| 지자기 (지구·몸체) | 3 + 3 | 안 씀 (`EKF2_MAG_TYPE 5`) |
+| 바람 | 2 | 안 씀 |
+| 지면 높이 (terrain) | 1 | 거리 센서가 없어 유효하지 않음 (14-10 B 의 원인) |
+
+**예측** (IMU 가 올 때마다 = 120 Hz, `ekf.cpp` `predictState`). IMU 는 각도 증분 $\Delta\boldsymbol\theta$ 와 속도 증분 $\Delta\mathbf{v}$ 로 들어온다:
+
+$$
+q \leftarrow q \otimes \exp\!\big(\Delta\boldsymbol\theta - \mathbf{b}_g \Delta t\big), \qquad
+\mathbf{v} \leftarrow \mathbf{v} + R(q)\,\big(\Delta\mathbf{v} - \mathbf{b}_a \Delta t\big) + \mathbf{g}\,\Delta t, \qquad
+\mathbf{p} \leftarrow \mathbf{p} + \tfrac{1}{2}(\mathbf{v}_{old} + \mathbf{v})\,\Delta t
+$$
+
+($\mathbf{g} = (0, 0, 9.80665)$ NED. 지구 자전 항은 생략해 적음.) 가속도계가 재는 것은 중력을 뺀 비력이라 중력을 더한다.
+
+**갱신** (모션캡처가 올 때, 표준 칼만 필터 형태):
+
+$$
+\mathbf{y} = \mathbf{z} - \mathbf{h}(\hat{\mathbf{x}}), \qquad
+K = P H^\top (H P H^\top + R)^{-1}, \qquad
+\hat{\mathbf{x}} \leftarrow \hat{\mathbf{x}} + K \mathbf{y}, \qquad
+P \leftarrow (I - K H) P
+$$
+
+| 관측 $\mathbf z$ | 무엇과 비교 | 잡음 $R$ (우리 설정, `px4_sitl.yaml`) |
+|---|---|---|
+| 모션캡처 위치 (수평·수직) | 위치 상태 | `EKF2_EVP_NOISE` 0.01 m |
+| 모션캡처 yaw | 자세 상태의 yaw | `EKF2_EVA_NOISE` 0.05 rad |
+
+- `EKF2_EV_CTRL 11` = 수평 위치 + 수직 위치 + yaw 를 쓴다 (속도는 안 씀). `EKF2_HGT_REF 3` = 고도 기준도 모션캡처
+- **지연 처리**: 모션캡처는 20 ms 늦게 온다 (`EKF2_EV_DELAY 20`). EKF2 는 IMU 를 버퍼에 쌓아 두고 **과거 시각의 상태**에서 관측을 합친 뒤,
+  그 뒤의 IMU 를 다시 적분해 현재 상태를 낸다 (output predictor). 그래서 제어기는 지연 없는 현재 추정값을 받는다
+- 관측이 예측과 너무 다르면 버린다 (innovation gate, `EKF2_EVP_GATE` 기본 5σ)
+- 기압계는 로그에서 17 Hz 로 들어오지만 고도 기준이 아니다
+
+**파지와의 관계**: 그리퍼가 드론을 잡으면 실제 움직임이 거의 없는데 PhysX 가 보고하는 각속도는 크다. 그 값을 자이로로 주면 위 예측 식의 $\Delta\boldsymbol\theta$ 가 틀려
+자세 추정이 틀어진다 → 13-4 의 "센서용 속도 = 자세 차분" 이 필요했던 이유
+
+### 14-12. 아직 확인하지 않은 것
+- `MPC_THR_HOVER` 를 0.38 로 맞췄을 때 비행·파지 거동이 어떻게 달라지는지 (14-10 B)
+- 추력 모델 차이 (PX4 는 $u$ 에 비례 가정, sim 은 이차식, 14-4) 의 영향
+- EKF2 의 공분산 전파·갱신 식 자체 (자동 생성 코드), 모션캡처 지연 20 ms 가 버퍼에서 몇 표본으로 처리되는지
+- 위치 제어기 계산 주기의 직접 측정 (14-10 A 는 입력 토픽 주기에서 추론)
