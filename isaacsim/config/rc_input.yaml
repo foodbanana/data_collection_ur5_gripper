@@ -1,0 +1,33 @@
+# =============================================================
+# rc_input.yaml — 실물 조종기 입력 (docs/PLAN.md 5단계 5-A, docs/drone_teleop.md, scripts/rc_input.py)
+#
+#   Radiolink 조종기 → 수신기 → Raspberry Pi Pico → USB 직렬. 한 줄 = "RC," + 정수 10 개 (값 번호는 1 부터), 142.9 Hz
+#   값은 A-0 에서 잰 것 (2026-10-08, isaacsim/reports/rc_probe_20261008_122839). 축 방향은 실물 조종기로 드론을 움직여 확인함 (2026-10-08)
+# =============================================================
+
+port: /dev/serial/by-id/usb-MicroPython_Board_in_FS_mode_e6647c15678f4f38-if00   # 꽂는 순서와 무관한 이름 (/dev/ttyACM0 은 바뀔 수 있음)
+baudrate: 115200            # USB 직렬이라 실제 속도와 무관
+stale_sec: 0.2              # 실제 시간 [s]. 줄이 이만큼 안 오면 입력 없음으로 본다 (Pico·USB 문제. 정상 간격 7 ms)
+
+# 신호 상태 값 (정상 0). 조종기를 끄면 값 2 가 먼저 1, 약 0.5 s 뒤 값 1 도 1 → 하나라도 0 이 아니면 신호 끊김
+lost_flags: [1, 2]
+
+# 스틱 4 축: index = 값 번호, min·center·max = 잰 값, sign = +1 이면 값이 커질 때 +
+#   + 방향: pitch 앞 (스틱 위), roll 오른쪽, throttle 위, yaw 오른쪽 (PX4 MANUAL_CONTROL 과 같음)
+#   왼쪽 스틱 = throttle·yaw, 오른쪽 스틱 = pitch·roll
+axes:
+  roll:     {index: 3, min: 200, center: 1003, max: 1800, sign: 1}
+  pitch:    {index: 4, min: 204, center: 999,  max: 1800, sign: -1}    # 오른쪽 스틱을 위로 밀면 값이 작아진다
+  throttle: {index: 5, min: 217, center: 993,  max: 1800, sign: 1}
+  yaw:      {index: 6, min: 200, center: 994,  max: 1800, sign: 1}
+range_margin: 60            # 잰 min·max 밖으로 이만큼까지는 끝값으로 본다. 더 벗어나면 잘못된 입력 (신호 끊김처럼 다룸)
+deadzone: 0.02              # 정규화한 값 (−1 ~ 1) 에서 가운데 근처를 0 으로 (가운데 흔들림 최대 1 / 800. PX4 도 MPC_HOLD_DZ 0.1 을 따로 건다)
+handover_center: 0.1        # 조종기에 넘길 때 네 축이 모두 이 안이어야 한다 (넘기는 순간 드론이 튀지 않게)
+
+# 조종기를 쓸 때만 PX4 에 넣는 파라미터 (드론 설정 px4.params 에 합침)
+px4_params:
+  MPC_VEL_MANUAL: 0.5       # m/s, Position 모드에서 스틱 끝의 수평 속도 (PX4 기본 10, 작업 영역이 테이블 위 1 ~ 2 m)
+  MPC_MAN_Y_MAX: 60.0       # °/s, 스틱 끝의 yaw 속도 (PX4 기본 150)
+  MPC_Z_VEL_MAX_UP: 0.5     # m/s, 수직 속도 한계 (PX4 기본 3 / 1.5). **수동 모드 전용이 아니다**: Offboard 이륙에도 적용된다
+  MPC_Z_VEL_MAX_DN: 0.5
+  MAN_ARM_GESTURE: 0        # 스틱 동작으로 arm / disarm 하지 않는다 (arm 은 sim, 모터 정지는 /sim/drone_kill)

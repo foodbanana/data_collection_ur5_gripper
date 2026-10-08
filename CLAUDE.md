@@ -8,7 +8,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
-드론 텔레옵 구조 (실물 조종기 → Pico → sim PX4 드론: 지금 포트·명령 경로, 넘겨받기 계획, 녹화할 때 구조. 5단계 5-A, 계획): `docs/drone_teleop.md`
+드론 텔레옵 구조 (실물 조종기 → Pico → sim PX4 드론: 포트·명령 경로, 넘기기·되돌리기 규칙, 직렬 줄 형식, 녹화할 때 구조. 5단계 5-A): `docs/drone_teleop.md`
 sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
@@ -115,6 +115,9 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
   `/sim/reset` 은 항상 순간이동 + PX4 재시작 (약 24 s, 매 에피소드 같은 깨끗한 PX4). 리셋 실패면 sim 은 계속, 다음 성공까지 명령 무시.
   응답 JSON 에 에피소드 메타데이터 (시드, 드론 위치 (world·base), git, 렌더·그리퍼·드론·카메라 설정). `/sim/drone_kill` = 드론 모터 정지 (PX4·기하 공통).
   보호 정지 흉내 (`protective_stop.py`): 접촉력 150 N (손가락은 환경과의 접촉만), 위치 오차 5°, 관절 속도 200 °/s
+- **조종기 텔레옵** (`sim_ros2.py --drone-rc on`, `docs/drone_teleop.md`): Pico USB 직렬은 sim 이 직접 읽는다 (표준 라이브러리 termios. Isaac Sim python 에 pyserial 없음, 계정이 `dialout` 그룹이어야 함).
+  스틱은 명령 링크 (UDP 14540) 의 `MANUAL_CONTROL` + PX4 POSCTL. **`MANUAL_CONTROL` 은 보내기 시작하면 끊지 않는다** (끊으면 1 s 뒤 failsafe 착륙) → 조종기 신호가 끊기면 sim 이 Offboard 로 되돌린다.
+  조종기 입력·드론 위치는 녹화하지 않는다. `check_rc.py` → 6/6
 - **sim 안에서 시간을 잴 때는 sim time (`SimulationManager.get_simulation_time()`)**. `flight.t` 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
 - **팔을 순간이동하면 속도 차분 기준(ArmBridge `set_now`, 보호 정지 `resync`)도 맞출 것**. 안 하면 순간이동 거리 / dt 가 관절 속도로 잡힘
 - **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).

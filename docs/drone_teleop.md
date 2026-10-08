@@ -2,7 +2,8 @@
 
 작성: 2026-10-08 · 5단계 5-A 계획 시점 (`docs/PLAN.md` 5단계), 브랜치 `isaacsim_v6.1.0`
 
-실물 Radiolink 조종기로 sim 의 PX4 드론을 조종하는 경로를 정리한다. **2 장은 지금 있는 구조 (코드에서 확인), 3 장부터는 계획이다 (아직 만들지 않음).**
+실물 Radiolink 조종기로 sim 의 PX4 드론을 조종하는 경로를 정리한다. 2 장은 조종기를 넣기 전부터 있던 구조, 3 장부터가 조종기 경로다.
+**만들었고, 실물 조종기로 sim 드론이 움직이는 것까지 확인했다 (2026-10-08, 8 장).**
 드론 비행 자체 (추력 모델, PX4 연결·센서, PX4 내부 제어 식) 는 `docs/drone_flight.md`, 전체 수집 흐름은 `docs/architecture.md`.
 
 ---
@@ -13,11 +14,12 @@
 |------|------|
 | 목적 | 사람이 실물 조종기로 sim 드론을 움직인다 (이동 드론 시연. 2단계에서 미구현으로 둔 `trajectory` 모드를 대신) |
 | 입력 장치 | Radiolink 조종기 → Raspberry Pi Pico → USB 직렬 `/dev/ttyACM0` (있음, 2026-10-08 확인) |
-| PX4 로 가는 길 | **새 포트 없음.** 지금 쓰는 명령 링크 (UDP 14540) 에 MAVLink `MANUAL_CONTROL` 을 실어 보낸다 (계획) |
-| 비행 모드 | 리셋·이륙은 지금처럼 Offboard (자동), 그 뒤 조종기에 넘기면 PX4 수동 모드 (Position 예정) |
+| PX4 로 가는 길 | **새 포트 없음.** 지금 쓰는 명령 링크 (UDP 14540) 에 MAVLink `MANUAL_CONTROL` 을 실어 보낸다 |
+| 비행 모드 | 리셋·이륙은 지금처럼 Offboard (자동), 그 뒤 조종기에 넘기면 PX4 수동 모드 (Position = `POSCTL`) |
+| 실행 | `sim_ros2.py --drone-rc on` (기본 off). 설정 `isaacsim/config/rc_input.yaml` |
 | 넘겨받는 곳 | sim 프로세스 안 `PX4Commander` (4 장: 밖에서 따로 붙으면 지금 코드와 충돌) |
 | 녹화 | **드론 정보는 녹화하지 않는다** (2026-10-08 사용자 결정). 녹화 도구·변환·데이터셋 그대로 |
-| 상태 | 조종기 → Pico → 직렬 출력까지 있음. 그 뒤 (읽는 쪽, sim 연결) 는 아직 |
+| 상태 | sim 쪽까지 만듦: `check_rc.py` 6/6, 가짜 직렬 입력으로 `sim_ros2.py` 10/10. **실물 조종기로도 확인** (GUI, 축 방향 맞음) |
 
 ---
 
@@ -67,7 +69,7 @@
 
 ---
 
-## 3. 드론 텔레옵을 넣은 구조 (계획)
+## 3. 드론 텔레옵을 넣은 구조
 
 ```text
  PILOT
@@ -83,16 +85,16 @@
         | "RC,0,0,1006,1002,995,996,200,200,200,1800"   fields 3..6 = 4 stick axes
         v
  +-----------------------+
- | RC input reader       |   NOT BUILT (5-A A-1): parse, check format / range / timeout
+ | RC input reader       |   rc_input.py (inside the sim process): parse, check format / range / timeout
  +-----------------------+
-        | stick values (inside the sim process, or a ROS 2 topic: to be decided)
+        | stick values pitch / roll / throttle / yaw, -1..1   (drone_rc.py decides hand-over / take-back)
         v
  +--------------------------------------+             +----------------------------+
  | sim process                          |             | PX4 SITL                   |
  |  PX4Commander                        |  UDP 14540  |                            |
  |   before hand-over (as now):         |------------>|  Offboard: position target |
  |     position target + Offboard       |             |                            |
- |   after hand-over (NEW):             |             |                            |
+ |   after hand-over:                   |             |                            |
  |     MANUAL_CONTROL (4 sticks)        |------------>|  manual mode (Position):   |
  |     mode request Offboard -> manual  |             |   sticks -> velocity ->    |
  |     no position target, no Offboard  |             |   attitude -> rate -> u    |
@@ -106,12 +108,28 @@
 | 구간 | 통로 | 상태 |
 |------|------|------|
 | 조종기 → Pico | 무선 + 수신기 | 있음 |
-| Pico → PC | USB 직렬 `/dev/ttyACM0`, 한 줄에 값 10 개 | 있음 (값의 뜻·범위·주기는 5-A A-0 에서 확인) |
-| PC 에서 읽기 | 직렬 읽기 + 검사 | 만들 것. sim 프로세스 안에서 직접 읽을지, 별도 ROS 2 노드로 둘지는 정할 것 (PLAN 5-A "정할 것" 2 번) |
-| sim → PX4 | **UDP 14540** (지금 명령 링크), MAVLink `MANUAL_CONTROL` | 만들 것 |
+| Pico → PC | USB 직렬 `/dev/ttyACM0`, 한 줄에 값 10 개, 142.9 Hz | 있음 (값의 뜻은 아래 "직렬 줄") |
+| PC 에서 읽기 | sim 프로세스가 직접 읽는다 (`rc_input.RcInput`, 표준 라이브러리 termios. ROS 노드를 따로 두지 않음) | 만듦 |
+| sim → PX4 | **UDP 14540** (지금 명령 링크), MAVLink `MANUAL_CONTROL` (`PX4Commander.handover`) | 만듦 |
 | PX4 → 드론 | TCP 4560 (모터 명령) → 추력 | 그대로 |
 
-### PX4 소스에서 확인한 것 (v1.16.0, 돌려 본 것은 아님)
+### 직렬 줄 (A-0 에서 잰 것, 2026-10-08. `isaacsim/scripts/rc_input.py`, PLAN 5-A "A-0 결과")
+
+`RC,<값 1>,<값 2>,<값 3> … <값 10>` = 상태 표시 2 개 + 채널 8 개, 142.9 Hz.
+
+| 값 번호 | 뜻 | 범위 (가운데) | 방향 | `MANUAL_CONTROL` 로 |
+|---------|-----|---------------|------|----------------------|
+| 1, 2 | 신호 상태 (정상 0, 0. 조종기를 끄면 1) | 0 / 1 | — | 0 이 아니면 신호 끊김 |
+| 3 | 오른쪽 스틱 좌우 | 200 ~ 1800 (1003) | 오른쪽 = 커짐 | y (roll, 오른쪽 +) |
+| 4 | 오른쪽 스틱 상하 | 204 ~ 1800 (999) | **위 = 작아짐** | x (pitch, 앞 +) → 부호를 뒤집는다 |
+| 5 | 왼쪽 스틱 상하 | 217 ~ 1800 (993) | 위 = 커짐 | z (스로틀, 0 ~ 1000, 가운데 500) |
+| 6 | 왼쪽 스틱 좌우 | 200 ~ 1800 (994) | 오른쪽 = 커짐 | r (yaw, 오른쪽 +) |
+| 7 ~ 10 | 안 바뀜 (스위치 없음) | — | — | 안 씀 |
+
+- 조종기를 꺼도 줄은 계속 온다 (값이 `1,1,1000,1000,0,1000,…` 으로 바뀜) → 끊김은 값 1·2 로 판정, 줄이 안 오는 것 (Pico·USB) 은 시간 제한으로 따로
+- 축 방향은 기록을 시간 순으로 맞춰 정했고, 실물 조종기로 드론을 움직여 맞는 것을 확인했다 (8 장)
+
+### PX4 소스에서 확인한 것 (v1.16.0. 돌려 본 결과는 8 장)
 
 | 항목 | 내용 | 어디 |
 |------|------|------|
@@ -134,7 +152,7 @@
 | 리셋 | `/sim/reset` 은 Offboard 로 재이륙한다 → "Offboard (자동) ↔ 조종기" 를 한 곳에서 바꿔야 리셋과 맞물린다 |
 | 시각 | lockstep 이라 PX4 시계 = sim 시간. `PX4Commander.tick` 은 sim 시간으로 돈다 |
 
-그래서 `PX4Commander` 에 "조종기에 넘김" 상태를 둔다: 위치 목표 송신·Offboard 재요청·hover 목표 갱신을 멈추고, 수동 모드를 요청하고, 스틱 값을 보낸다.
+그래서 `PX4Commander` 에 "조종기에 넘김" 상태를 두었다 (`set_sticks`, `handover`, `takeback`): 위치 목표 송신·Offboard 재요청·hover 목표 갱신을 멈추고, 수동 모드를 요청하고, 스틱 값을 보낸다.
 kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Commander` 를 거치므로 그대로 쓴다.
 
 ---
@@ -149,7 +167,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
  receiver -> Pi Pico                          arm teleop node (5-B, NOT BUILT)
         | USB serial /dev/ttyACM0                    |
         v                                            | /joint_command
- RC input reader (5-A, NOT BUILT)                    | /gripper/command
+ RC input reader (5-A, inside sim)                   | /gripper/command
         |                                            |
         | (drone only, NOT recorded)        +--------+--------+
         v                                   v                 v
@@ -173,15 +191,15 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 - 드론 조종 입력은 정책의 action 이 아니다 (정책은 팔·그리퍼만 움직인다)
 - 조종기는 두 손을 쓴다 → 드론 조종과 팔 조작 (SpaceMouse) 을 한 사람이 같이 하기 어렵다 (PLAN 5-A "정할 것" 5 번)
 
-### 에피소드 한 번의 순서 (계획)
+### 에피소드 한 번의 순서
 
 | 순서 | 누가 | 하는 일 |
 |------|------|---------|
 | 1 | 녹화 담당 | `r` → `/sim/reset` (약 24 s): 팔 홈, 드론은 Offboard 로 자동 이륙·호버 |
-| 2 | sim | 스틱이 중앙 근처면 조종기에 넘김 (아니면 넘기지 않고 알림) → 녹화 시작 |
+| 2 | sim | 리셋이 끝나면 녹화 시작. 스틱이 가운데 근처면 조종기에 넘김 (아니면 넘기지 않고 알림. 가운데에 두면 넘어감) |
 | 3 | 조종사 | 드론을 작업 영역 안에서 움직이거나 세움 |
 | 4 | 팔 조작자 | 접근해 잡음 |
-| 5 | 녹화 담당 또는 조종사 | 드론 모터 정지 (`k`, 또는 조종기 스위치로 옮길지는 정할 것) |
+| 5 | 녹화 담당 | 드론 모터 정지 (`k`. 조종기에 스위치가 없다) |
 | 6 | 녹화 담당 | `r` → 저장. 실패했거나 조종기 신호가 끊긴 에피소드는 `d` |
 
 ---
@@ -190,11 +208,14 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 
 | 항목 | 상태 |
 |------|------|
-| 직렬 줄의 값 10 개의 뜻 (스틱 4 축의 순서·방향, 1·2 번째, 7~10 번째), 범위, 주기, 신호가 끊길 때 출력 | 모름 → PLAN 5-A A-0 |
-| 조종기 값 → `MANUAL_CONTROL` 환산 (특히 스로틀 0 ~ 1000, 500 중앙), dead zone | A-0 뒤에 |
-| Offboard → 수동 모드로 넘길 때 드론이 튀지 않는지 | 돌려 보지 않음 |
-| 어느 수동 모드를 쓸지 | Position 예정 (모션캡처로 위치 추정이 있음). 스로틀이 추력을 직접 정하는 모드는 hover thrust 문제와 겹친다 (`docs/drone_flight.md` 14-10 B) |
-| 스틱 입력이 끊겼을 때의 PX4 동작 | 기본은 Return (실내 씬에 맞지 않음) → 파라미터를 정할 것 (그 자리 호버 등), 끊김은 터미널에 알림 |
+| 직렬 줄의 값 10 개의 뜻, 범위, 주기, 신호가 끊길 때 출력 | 쟀다 (3 장 "직렬 줄"). 축 방향은 드론을 움직여 다시 확인 |
+| 조종기 값 → `MANUAL_CONTROL` 환산, dead zone, 축별 최대 속도 | 설정 파일에 (A-2) |
+| Offboard → 수동 모드로 넘길 때 드론이 튀지 않는지 | 튀지 않는다 (0.2 ~ 0.3 s 뒤 POSCTL, 그 뒤 10 s 최대 30 mm, 8 장) |
+| 어느 수동 모드를 쓸지 | Position (`POSCTL`, 스틱 = 속도, 가운데 = 그 자리). 스로틀이 추력을 직접 정하는 모드는 hover thrust 문제와 겹친다 (`docs/drone_flight.md` 14-10 B) |
+| 조종기 신호가 끊겼을 때 | sim 이 Offboard 로 되돌려 그 자리에 세우고 터미널에 알린다 (PX4 failsafe 에 맡기지 않음, 8 장) |
+| 스틱 끝 속도, 수직 속도 한계 | 임시값 (`rc_input.yaml` `px4_params`). 실물 조종기로 날려 보고 정한다 |
+| 축 방향 | 실물 조종기로 확인함 (8 장). `rc_input.yaml` `axes` 그대로 |
+| GUI 에서 드론을 보는 시점 | 드론 뒤에서 보지 않으면 스틱의 앞·뒤·좌·우가 화면과 어긋난다 → 실물 조종기로 날려 보고 정한다 |
 | RTF < 1 (드론을 잡은 채 0.69) 에서의 조종 느낌 | 재지 않음. 스틱 값은 sim 시간 기준 30 Hz (앱 루프) 로 나간다 |
 | 기하 제어기 드론 (`--flight geometric`) | `MANUAL_CONTROL` 방식은 PX4 전용 |
 | 직렬 권한 | 지금 사용자 계정이 `dialout` 그룹에 없어 `sudo` 로만 읽힌다 → 그룹 추가 또는 udev 규칙 |
@@ -205,7 +226,10 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 
 | 파일 | 내용 |
 |------|------|
-| `isaacsim/scripts/drone_cmd.py` | `PX4Commander` (명령 링크, 넘겨받기를 넣을 곳), `CommandServer`, CLI |
+| `isaacsim/scripts/rc_input.py`, `isaacsim/config/rc_input.yaml` | 직렬 읽기·검사·스틱 환산 (`RcReader`, `RcMap`, `RcInput`), A-0 입력 확인 도구. 축 배치·범위·PX4 파라미터 |
+| `isaacsim/scripts/drone_rc.py` | `DroneRc`: 넘기기·되돌리기 판단 (루프마다) |
+| `isaacsim/scripts/check_rc.py` | 넘기기 시험 (조종기 없이, 스틱은 스크립트가 만듦) → 6/6 |
+| `isaacsim/scripts/drone_cmd.py` | `PX4Commander` (명령 링크, `set_sticks`·`handover`·`takeback`), `CommandServer`, CLI |
 | `isaacsim/scripts/px4_bridge.py` | `PX4Launcher`, `PX4Bridge` (시뮬레이터 링크, lockstep) |
 | `isaacsim/scripts/drone_flight.py` | `DroneFlight` (`arm`, `release`, `teleport`, `restart_px4`, `check` 에서 `PX4Commander.tick`) |
 | `isaacsim/scripts/sim_reset.py` | `/sim/reset`, `/sim/drone_kill` |
@@ -213,3 +237,49 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 | `docs/drone_flight.md` | 13 장 PX4 SITL 연결, 14 장 PX4 내부 제어 식 |
 | `docs/PLAN.md` 5단계 5-A | 작업 순서 (A-0 ~ A-4), 정할 것, 완료 기준 |
 | `docs/architecture.md`, `docs/data_recording.md` | 전체 수집 흐름, 녹화 |
+
+---
+
+## 8. 돌려 본 결과 (2026-10-08, PLAN 5-A "A-1 ~ A-3 결과")
+
+**넘기기·되돌리기 규칙 (`drone_rc.DroneRc`, 루프마다)**
+
+| 상태 | 조건 | 동작 |
+|------|------|------|
+| 자동 (Offboard 호버) | 이륙·리셋이 끝남 + 조종기 신호 있음 + 네 축이 가운데 근처 (`handover_center` 0.1) | 조종기에 넘김 (`handover`) |
+| 자동 | 스틱이 가운데가 아님 / 신호 없음 | 넘기지 않고 터미널에 알림 (5 s 마다) |
+| 조종기 | 신호 끊김 (상태 값 ≠ 0), 값이 범위 밖, 줄이 0.2 s 안 옴 | 그 자리 Offboard 호버로 되돌림 (`takeback`) + 알림. 신호가 돌아오고 가운데면 다시 넘김 |
+| 어느 쪽이든 | `/sim/reset` | PX4 를 새로 띄우므로 자동으로 돌아감 → 재이륙 뒤 위 조건으로 다시 넘김 |
+| 어느 쪽이든 | `/sim/drone_kill` | 모터 정지. 다음 리셋까지 아무것도 안 함 |
+
+**`check_rc.py` (PX4 드론만, 스틱은 스크립트가 만든 값) → 6/6**
+
+| 시험 | 결과 |
+|------|------|
+| 넘기기 | 0.2 ~ 0.3 s 뒤 POSCTL, 그 뒤 10 s 동안 넘긴 위치에서 최대 30 mm |
+| 스틱 +0.6 을 2 s | 앞 229 mm (최고 0.41 m/s, 기울기 11.7°), 오른쪽 278 mm (0.45 m/s), 위 362 mm (0.30 m/s), yaw 오른쪽 38.8°. 놓으면 멈춤 |
+| 되돌리기 | 1.0 s 뒤 Offboard, 그 자리에서 16 mm |
+| `MANUAL_CONTROL` 송신을 멈춤 | 1.0 s 뒤 PX4 failsafe → AUTO.LAND. 다시 보내고 되돌리면 Offboard 로 돌아옴 |
+| 수동 모드에서 kill | disarm 33 ms |
+
+**`sim_ros2.py --drone-rc on` (가짜 직렬 장치)** → 자동 넘김, 스틱으로 이동 (오른쪽 스틱 위 = world +x 로 0.20 m), 신호 끊김 → 0.2 s 안에 되돌림 → 복귀 뒤 다시 넘김,
+스틱을 민 채 리셋 → 넘기지 않음 → 가운데에 두면 넘김, `/sim/drone_kill` (10/10)
+
+- `MANUAL_CONTROL` 은 한 번 보내기 시작하면 끊지 않는다 (넘기지 않은 동안은 가운데 값). 끊으면 1 s 뒤 PX4 가 착륙한다
+- 조종기를 쓸 때의 PX4 파라미터 (임시값): 스틱 끝 수평 0.5 m/s, yaw 60 °/s, 수직 0.5 m/s. **수직 한계는 Offboard 이륙에도 걸려 리셋이 약 24 → 29 s**
+- `--drone-rc` 없이는 지금까지와 같다: `check_px4.py` 5/5, `check_ros2.py` 9/9
+- sim 이 직렬 장치를 읽으려면 계정이 `dialout` 그룹이어야 한다 (`sudo usermod -aG dialout <계정>` 뒤 다시 로그인, 또는 그 터미널에서 `newgrp dialout`. sim 을 sudo 로 띄우지 않는다)
+
+**실물 조종기 (2026-10-08, 사용자, GUI)**
+
+| 스틱 | 드론 | 확인 |
+|------|------|------|
+| 왼쪽 위 / 아래 | 상승 / 하강 (가운데 = 높이 유지) | 맞음 |
+| 왼쪽 좌 / 우 | 왼쪽 / 오른쪽으로 회전 (yaw) | 맞음 |
+| 오른쪽 위 / 아래 / 좌 / 우 | 드론 기준 앞 / 뒤 / 왼쪽 / 오른쪽 (yaw 를 돌리면 "앞" 도 같이 돈다) | 맞음 |
+
+- 스틱 = 속도 (PX4 Position 모드): 밀고 있으면 그 속도로 가고 놓으면 멈춘다
+- 오른쪽 스틱 (수평 이동) 을 쓰는 동안에는 드론을 제자리에 세워 두기가 조금 어렵다 (사용자 관찰). 그대로 둔다: 모으려는 것은 날고 있는 드론이다. 원인은 재지 않았다
+- 조종기를 껐다 켰을 때, 드론을 잡은 채의 조종 느낌은 실물 조종기로 아직 보지 않았다 (가짜 입력으로만)
+- **RTF** (잡지 않은 상태): 조종기 때문에 느려지지 않는다. 헤드리스 자동 호버 0.96, 헤드리스 수동 모드 0.97 (프로펠러 회전 끔) / 0.94 (켬),
+  **GUI 에서 실물 조종기로 수동 비행 0.89 ~ 0.91** (프로펠러 회전 켬 = GUI 기본. 실제보다 약 10 % 느림). 올리려면 `--prop-spin off` (PLAN 5-A 표)

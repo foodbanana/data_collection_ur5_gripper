@@ -202,10 +202,11 @@ class Scene:
 
 def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_pos=None, mode="static", seed=0,
                 prop_spin=False, base="fixed", init_pose=None, extra_setup=None, flight=None, position_source=None,
-                report_dir=None, realtime=False, waypoints=None):
+                report_dir=None, realtime=False, waypoints=None, px4_params=None):
     """씬을 만들고 재생까지 한다. 로봇은 init_pose (기본 drive 설정 home_pose, 그리퍼 열림), 드론은 drone_pos 에서 비행 시작.
     flight: 드론 제어기 (None = 드론 설정 flight.backend). px4 면 테이블 위 이륙 지점에서 PX4 로 이륙 → (waypoints) → drone_pos 호버까지 마치고 돌려준다.
-    extra_setup(s): 재생 전에 호출할 함수 (예: 접촉 보고 켜기). Scene 을 돌려준다."""
+    extra_setup(s): 재생 전에 호출할 함수 (예: 접촉 보고 켜기). px4_params: 드론 설정 px4.params 에 합칠 PX4 파라미터 (조종기 텔레옵 등).
+    Scene 을 돌려준다."""
     import isaacsim.core.experimental.utils.app as app_utils
     from isaacsim.core.experimental.objects import DomeLight
 
@@ -221,6 +222,8 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     s.robot_cfg = ts.use_robot(robot_config)
     s.scene_cfg = load_scene_config(scene_config or DEFAULT_SCENE_CONFIG)
     s.drone_cfg = dr.load_drone_config(drone_config or dr.DEFAULT_DRONE_CONFIG)
+    if px4_params:
+        s.drone_cfg["px4"]["params"] = {**(s.drone_cfg["px4"]["params"] or {}), **px4_params}
     s.drive_cfg = ts.load_config()
     s.cam_cfg = ts.load_camera_config()
     s.tv_cfg = load_third_view_config(ts._abs(s.scene_cfg["third_view_camera_config"]))

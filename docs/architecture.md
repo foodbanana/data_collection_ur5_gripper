@@ -36,9 +36,9 @@
 |   DroneFlight + PX4Bridge  <== MAVLink TCP 4560, lockstep (HIL_SENSOR / HIL_ACTUATOR 120 Hz) ==>  PX4 SITL v1.16.0     |
 |   PX4Commander (offboard)  <== MAVLink UDP 14540 (position setpoint 20 Hz)                  ==>  (child process)       |
 |                                                                                                                        |
-|   stage 5-A: drone RC input (Radiolink transmitter -> Pi Pico -> USB serial /dev/ttyACM0)   <-- NOT BUILT YET          |
+|   stage 5-A: drone RC input (Radiolink transmitter -> Pi Pico -> USB serial), option --drone-rc on                     |
 |              -> PX4Commander -> MANUAL_CONTROL on UDP 14540 (after reset: Offboard takeoff, then hand-over to sticks)  |
-|              not a ROS command topic, NOT recorded                                                                     |
+|              not a ROS command topic, NOT recorded.  built, flown with the real transmitter (2026-10-08)               |
 |                                                                                                                        |
 |   publish queues: 3 s of messages per topic (ros2_iface.yaml publish_queue_sec)                                        |
 +------------------------------------------------------------------------------------------------------------------------+
@@ -123,7 +123,7 @@
 | 블록 | 무엇인가 | 상태 |
 |------|----------|------|
 | [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드는 아직 없다 (5단계 5-B, SpaceMouse).** 지금은 기록해 둔 명령을 재생하는 스크립트가 대신한다 |
-| 드론 조종 ([2] 안) | 실물 조종기로 sim 드론을 움직인다 | **아직 없다 (5단계 5-A, 먼저 한다).** 조종기 → Pico → USB 직렬 출력까지 있음. 지금 드론은 자동 (리셋 뒤 호버) 또는 `drone_cmd.py` |
+| 드론 조종 ([2] 안) | 실물 조종기로 sim 드론을 움직인다 (`sim_ros2.py --drone-rc on`) | **만듦 (5단계 5-A, 2026-10-08)**: `check_rc.py` 6/6, 실물 조종기로 sim 드론이 움직이는 것 확인. 옵션을 안 켜면 지금처럼 자동 (리셋 뒤 호버) 또는 `drone_cmd.py` |
 | [2] 시뮬레이터 | 로봇·카메라·드론을 계산하고 실물과 같은 토픽을 낸다 | 완성 (3단계, `check_ros2.py` 9/9) |
 | [3] 녹화 도구 | 키 입력으로 에피소드를 녹화한다 | 완성 (4단계) |
 | [4] stage1 | bag → 25 Hz 중간 파일 | 완성 (4단계) |
@@ -143,7 +143,7 @@
 |------|------|
 | 명령 토픽은 두 군데로 간다 | [1] 이 보낸 `/joint_command`·`/gripper/command` 는 [2] 가 받아 로봇을 움직이고, **동시에 [3] 도 같은 토픽을 받아 bag 에 넣는다**. 데이터셋의 팔 action 이 이 녹화된 명령에서 나온다 |
 | [3] → [2] 서비스 호출 | `r` → `/sim/reset`, `k` → `/sim/drone_kill`. 응답 (시드, 드론 위치, sim 설정, kill 시각) 을 `episode.json` 에 저장 |
-| 드론 조종기 → [2] (5-A, 계획) | 조종기 입력은 [2] 안의 `PX4Commander` 로만 간다. **[3] 은 받지 않는다: 드론 정보는 녹화하지 않는다** (2026-10-08 사용자 결정. 녹화는 로봇 팔·그리퍼·카메라만) |
+| 드론 조종기 → [2] (5-A) | 조종기 입력은 [2] 안의 `PX4Commander` 로만 간다. **[3] 은 받지 않는다: 드론 정보는 녹화하지 않는다** (2026-10-08 사용자 결정. 녹화는 로봇 팔·그리퍼·카메라만) |
 
 ---
 
@@ -170,8 +170,9 @@
 | 5-B | 팔 텔레옵 노드 | [1] 블록 | 3Dconnexion SpaceMouse Wireless (GELLO 는 대안) |
 
 **5-A 드론 텔레옵** (`docs/drone_teleop.md`)
-- 새 포트 없이 지금 명령 링크 (UDP 14540) 로 스틱 값 (`MANUAL_CONTROL`) 을 보낸다. 리셋·이륙은 지금처럼 자동, 그 뒤 조종기에 넘긴다
-- 녹화되지 않는다. 조종기 없이도 지금처럼 돌아야 한다 (`check_ros2.py`, `make_fake_episodes.py`)
+- 새 포트 없이 지금 명령 링크 (UDP 14540) 로 스틱 값 (`MANUAL_CONTROL`) 을 보낸다. 리셋·이륙은 지금처럼 자동, 그 뒤 스틱이 가운데면 조종기에 넘긴다
+- 녹화되지 않는다. 옵션을 안 켜면 지금과 같다 (`check_ros2.py` 9/9)
+- 만들었고 실물 조종기로 확인했다 (2026-10-08, 축 방향 맞음). 남은 것: `make_fake_episodes.py` 회귀, 스틱 끝 속도는 임시값 그대로
 
 **5-B 팔 텔레옵 노드**: 아래만 지키면 [2] ~ [6] 은 지금 그대로 동작한다.
 - `/joint_command` (팔 6 관절 목표 [rad]) 와 `/gripper/command` (raw 0 / 1150) 만 발행

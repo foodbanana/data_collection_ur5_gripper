@@ -7,6 +7,9 @@
 #       바닥에서 이륙도 같은 방식 (목표를 위로)
 #     - goto(target, yaw) = 목표 바꿈, hold() = 현재 추정 위치를 목표로, land() = AUTO.LAND, kill() = 공중 강제 정지
 #       (MAV_CMD_COMPONENT_ARM_DISARM, param2 21196 → 모터 즉시 정지. 실물: 잡은 뒤 모터를 끔)
+#     - 조종기에 넘기기 (PLAN 5단계 5-A, docs/drone_teleop.md): set_sticks() 로 스틱 값을 넣고 handover() → PX4 수동 모드 (POSCTL) 를 요청하고
+#       같은 링크로 MANUAL_CONTROL 을 보낸다 (위치 목표·Offboard 재요청은 멈춤). takeback() = 지금 추정 위치에서 Offboard 로 되돌림 (신호 끊김·리셋).
+#       MANUAL_CONTROL 은 한 번 보내기 시작하면 계속 보낸다 (넘기지 않은 동안은 가운데 값): 끊기면 PX4 가 조종 입력 상실 failsafe 로 간다
 #   좌표: world ENU (m, 로봇 base 기준 world) ↔ PX4 local NED. PX4 local 원점 = EKF 가 초기화된 위치 = 드론 시작 위치 (origin_enu)
 #     NED = (y − oy, x − ox, −(z − oz)), yaw_ned = π/2 − yaw_enu. PX4 가 추정한 위치(estimate_enu)는 실제 위치와 다를 수 있음 (실물과 같음)
 #   시간: tick(t) 를 sim 시간으로 부름 (씬 루프). lockstep 이라 PX4 시계 = sim 시간
@@ -110,6 +113,8 @@ class PX4Commander:
         self.sys = int(target_system)
         self.target, self.yaw = None, 0.0
         self.want_offboard, self.want_armed = False, False
+        self.want_manual = False    # 조종기에 넘김 (PX4 POSCTL + MANUAL_CONTROL)
+        self.sticks = None          # (pitch, roll, throttle, yaw) −1 ~ 1, 가운데 0. None = MANUAL_CONTROL 을 아직 보낸 적 없음
         self.armed, self.mode, self.landed = False, None, None
         self.estimate_enu, self.estimate_yaw = None, None
         self.messages = []          # (t, 심각도, 글) PX4 STATUSTEXT
@@ -123,6 +128,7 @@ class PX4Commander:
         self.armed, self.mode, self.landed = False, None, None
         self.estimate_enu, self.estimate_yaw = None, None
         self.target, self.want_offboard, self.want_armed = None, False, False
+        self.want_manual, self.sticks = False, None
         self._t_sp, self._t_req = -1e9, -1e9
 
     def close(self):
@@ -135,7 +141,7 @@ class PX4Commander:
         f = lambda a: None if a is None else [round(float(x), 4) for x in a]  # noqa: E731
         return {"t": round(self.t, 3), "connected": self.connected, "mode": self.mode, "armed": self.armed, "landed": self.landed,
                 "estimate": f(self.estimate_enu), "target": f(self.target), "yaw_deg": round(math.degrees(self.yaw), 2),
-                "external": self.external, "ready": self.cli_ready}
+                "external": self.external, "ready": self.cli_ready, "manual": self.want_manual}
 
     def _handle_cli(self, req):
         cmd = req.get("cmd")
@@ -209,6 +215,12 @@ class PX4Commander:
         self.conn.mav.set_position_target_local_ned_send(int(self.t * 1000), self.sys, 1, M.MAV_FRAME_LOCAL_NED, POS_YAW_MASK,
                                                          n[0], n[1], n[2], 0, 0, 0, 0, 0, 0, math.pi / 2 - self.yaw, 0)
 
+    def _send_manual(self):
+        # PX4 MANUAL_CONTROL: x = pitch (앞 +), y = roll (오른쪽 +), r = yaw (오른쪽 +) −1000 ~ 1000, z = 스로틀 0 ~ 1000 (가운데 500)
+        pitch, roll, thr, yaw = self.sticks if self.want_manual else (0.0, 0.0, 0.0, 0.0)
+        self.conn.mav.manual_control_send(self.sys, int(round(pitch * 1000)), int(round(roll * 1000)),
+                                          int(round((thr + 1.0) * 500)), int(round(yaw * 1000)), 0)
+
     def _send_gcs_heartbeat(self):
         self.conn.mav.heartbeat_send(M.MAV_TYPE_GCS, M.MAV_AUTOPILOT_INVALID, 0, 0, 0)
 
@@ -233,9 +245,34 @@ class PX4Commander:
         self.target = None
         self._command(M.MAV_CMD_DO_SET_MODE, M.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 4, 6)
 
+    def set_sticks(self, pitch, roll, throttle, yaw):
+        """조종기 스틱 값 (−1 ~ 1, 가운데 0. pitch 앞 +, roll 오른쪽 +, throttle 위 +, yaw 오른쪽 +). 범위 밖이면 에러."""
+        v = (float(pitch), float(roll), float(throttle), float(yaw))
+        if not all(math.isfinite(x) and -1.0 <= x <= 1.0 for x in v):
+            raise ValueError(f"스틱 값이 −1 ~ 1 밖: {v}")
+        self.sticks = v
+
+    def handover(self):
+        """조종기에 넘김: PX4 수동 모드 (POSCTL) 요청, 모드가 바뀌면 위치 목표 송신을 멈춘다. Offboard 로 날고 있을 때만."""
+        if self.sticks is None:
+            raise RuntimeError("스틱 값이 없음 (set_sticks 먼저)")
+        if not (self.connected and self.armed and self.mode == "OFFBOARD"):
+            raise RuntimeError(f"Offboard 로 비행 중이 아님: 모드 {self.mode}, armed {self.armed}")
+        self.want_manual, self.want_offboard = True, False
+        self.external = True
+        self._t_req = -1e9
+
+    def takeback(self):
+        """조종기에서 되돌림: 지금 추정 위치를 목표로 Offboard (신호 끊김, 리셋 전)."""
+        self.want_manual = False
+        self.hold()
+        self.want_offboard = True
+        self._t_req = -1e9
+
     def kill(self):
         """공중 강제 정지 (force disarm). 모터 즉시 정지."""
         self.want_offboard, self.want_armed = False, False
+        self.want_manual = False
         self.target = None
         self._command(M.MAV_CMD_COMPONENT_ARM_DISARM, 0, KILL_MAGIC)
 
@@ -252,12 +289,18 @@ class PX4Commander:
                 res = self._handle_cli(req)
                 self.cli_log.append((round(self.t, 3), req, res.get("ok"), res.get("error")))
                 self.server.reply(addr, res)
+        if self.sticks is not None and self.connected:
+            self._send_manual()
+        if self.want_manual and self.mode == "POSCTL":
+            self.target = None                      # 넘어갔음 → 위치 목표 송신 멈춤 (그 전까지는 Offboard 가 유지되게 계속 보냄)
         if self.target is not None and self.t - self._t_sp >= self.sp_period:
             self._send_setpoint()
             self._t_sp = self.t
         if self.t - self._t_req >= self.retry:
             self._send_gcs_heartbeat()
-            if self.connected and self.want_offboard and self.target is not None and self.mode != "OFFBOARD":
+            if self.connected and self.want_manual and self.armed and self.mode != "POSCTL":
+                self._command(M.MAV_CMD_DO_SET_MODE, M.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 3, 0)
+            elif self.connected and self.want_offboard and self.target is not None and self.mode != "OFFBOARD":
                 self._command(M.MAV_CMD_DO_SET_MODE, M.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 6, 0)
             elif self.connected and self.want_armed and self.mode == "OFFBOARD" and not self.armed:
                 self._command(M.MAV_CMD_COMPONENT_ARM_DISARM, 1)

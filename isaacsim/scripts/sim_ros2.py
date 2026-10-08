@@ -9,6 +9,7 @@
 #         /protective_stop (std_msgs/Bool, 30 Hz) — 보호 정지 흉내 (3-7, protective_stop.py)
 #   서비스: /sim/reset (std_srvs/Trigger) — 에피소드 리셋 (3-6, sim_reset.py). 끝날 때까지 sim 을 돌린 뒤 응답 (message = JSON)
 #   (/base/imu 는 8단계부터)
+#   --drone-rc on: 실물 조종기 (Pico USB 직렬) 로 PX4 드론을 조종 (5단계 5-A, drone_rc.py, config/rc_input.yaml). 조종 입력은 토픽이 아니고 녹화되지 않는다
 #   토픽·주기·렌더 설정: isaacsim/config/ros2_iface.yaml. stamp 는 모두 sim time
 #
 # 실행 (ROS 2 를 source 한 터미널):
@@ -17,6 +18,7 @@
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60
 #   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --seed --init-pose q1..q6
 #         --prop-spin on|off (기본 GUI on, headless off) --duration [sim s] (headless 는 없으면 Ctrl+C 까지)
+#         --drone-rc on|off (기본 off) --rc-port <직렬 장치> (기본 rc_input.yaml port)
 #         --protective-stop on|measure (기본 on. measure = 정지하지 않고 최댓값만 기록, 기준 여유 확인용)
 #         --reset-offset [m] (리셋 때 드론 호버 위치 랜덤 범위 ±값, 기본 ros2_iface.yaml reset.drone_offset. 0 = 항상 씬 drone_pos.
 #                             PX4 는 그래도 호버 흔들림 1~3 cm, 위치까지 거의 고정하려면 --flight geometric)
@@ -55,6 +57,9 @@ def parse():
     p.add_argument("--protective-stop", choices=("on", "measure"), default="on", help="보호 정지 (measure = 최댓값만 기록)")
     p.add_argument("--reset-offset", type=float, default=None,
                    help="리셋 드론 위치 랜덤 범위 ±[m] (기본 ros2_iface.yaml reset.drone_offset, 0 = 항상 기준 위치)")
+    p.add_argument("--drone-rc", choices=("on", "off"), default="off", help="실물 조종기로 PX4 드론 조종 (PLAN 5-A)")
+    p.add_argument("--rc-config", default=os.path.join(ts.CONFIG_DIR, "rc_input.yaml"))
+    p.add_argument("--rc-port", default=None, help="조종기 직렬 장치 (기본 rc_input.yaml port)")
     p.add_argument("--ros2-config", default=None)
     p.add_argument("--report-dir", default=ts.REPORT_DIR)
     args, _ = p.parse_known_args()
@@ -96,7 +101,8 @@ def episode_info(s, cfg, args, render, stop_mode):
         "drone": {"config": rel(s.drone_cfg["path"]), "backend": f.backend, "mode": f.ref.mode,
                   "position_source": f.position_source if f.backend == "px4" else None,
                   "nominal_pos": [float(x) for x in s.drone_pos],            # 리셋 기준 위치 (--drone-pos 또는 씬 설정). 리셋마다 ± reset.drone_offset
-                  "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on"},
+                  "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on",
+                  "rc_teleop": args.drone_rc == "on"},              # 사람이 조종기로 드론을 움직였는지 (조종 입력 자체는 녹화하지 않음)
         "cameras": {"tick_rate": float(cfg["cameras"]["tick_rate"]),
                     "wrist": {"prim": str(s.wrist_cam), "config": rel(ts.WRIST_CAMERA_CONFIG), "cam_tilt_deg": 0.0,
                               "intrinsics": s.cam_cfg["intrinsics"]},
@@ -122,13 +128,18 @@ def main():
     from isaacsim import SimulationApp
 
     app = SimulationApp(ri.app_config(cfg, args.headless))
-    ok, rclpy, node, bridges = False, None, None, []
+    ok, rclpy, node, bridges, rc = False, None, None, [], None
     try:
         import drone_scene as ds
         from isaacsim.core.rendering_manager import RenderingManager, ViewportManager
 
         rclpy = ri.enable_ros2(cfg)
         rclpy.init()
+        rc_cfg = None
+        if args.drone_rc == "on":
+            import rc_input
+
+            rc_cfg = rc_input.load_config(args.rc_config)
 
         def setup(s):
             RenderingManager.set_dt(1.0 / loop_hz)          # 앱 루프 = 카메라 주기 (물리는 120 Hz 그대로)
@@ -138,7 +149,12 @@ def main():
 
         s = ds.build_scene(drone_pos=args.drone_pos, mode=args.mode, seed=args.seed, prop_spin=args.prop_spin == "on",
                            init_pose=args.init_pose, extra_setup=setup, flight=args.flight,
-                           position_source=args.position_source, report_dir=args.report_dir, realtime=not args.headless)
+                           position_source=args.position_source, report_dir=args.report_dir, realtime=not args.headless,
+                           px4_params=None if rc_cfg is None else rc_cfg["px4_params"])
+        if rc_cfg is not None:
+            import drone_rc
+
+            rc = drone_rc.DroneRc(s.flight, rc_cfg, args.rc_port)
         ri.add_camera_publishers(s, cfg)
         node = rclpy.create_node(cfg["node_name"])
         arm = ri.ArmBridge(s, cfg, node)
@@ -173,6 +189,8 @@ def main():
         t_status, w_status, n_status = t0, wall0, 0
         while ds._running():
             step_paced()
+            if rc is not None:
+                rc.update()
             n_before = arm.n_cb
             ri.spin(rclpy, node, bridges)                   # (리셋 서비스는 이 안에서 끝날 때까지 돈다)
             reset.release()                                 # 리셋이 끝났으면 명령 받기 재개 (리셋 중 쌓인 명령은 방금 spin 이 버림)
@@ -185,6 +203,8 @@ def main():
                       f"/joint_states {arm.n_js - n_status} 개, /joint_command 누적 {arm.n_cmd} 개, 마지막 명령 {cmd}, "
                       f"그리퍼 present {grip.present_raw():.0f} target {grip.goal_raw:.0f} (명령 누적 {grip.n_cmd})", flush=True)
                 print(f"[sim_ros2]   {stop.summary()}, 정지 중 무시한 팔 명령 {arm.n_ignored} 개", flush=True)
+                if rc is not None:
+                    print(f"[sim_ros2]   {rc.summary()}", flush=True)
                 if reset.failed:
                     print("[sim_ros2]   마지막 리셋 실패 → 팔·그리퍼 명령 무시 중. /sim/reset 을 다시 호출하세요", flush=True)
                 t_status, w_status, n_status = s.flight.t, w, arm.n_js
@@ -203,6 +223,9 @@ def main():
             print(f"[sim_ros2] 끝: {bridges[2].summary()}, 정지 중 무시한 팔 명령 {bridges[0].n_ignored} 개", flush=True)
             c = np.bincount(bridges[0].cmd_per_loop) if bridges[0].cmd_per_loop else []
             print(f"[sim_ros2] 루프마다 받은 /joint_command 수 분포 (0 개, 1 개, 2 개, …): {list(c)}", flush=True)
+        if rc is not None:
+            print(f"[sim_ros2] 끝: {rc.summary()}", flush=True)
+            rc.close()
         for b in bridges:
             b.close()
         if node is not None:
