@@ -267,7 +267,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 
 - `MANUAL_CONTROL` 은 한 번 보내기 시작하면 끊지 않는다 (넘기지 않은 동안은 가운데 값). 끊으면 1 s 뒤 PX4 가 착륙한다
 - 조종기를 쓸 때의 PX4 파라미터 (임시값): 스틱 끝 수평 0.5 m/s, yaw 60 °/s, 수직 0.5 m/s. **수직 한계는 Offboard 이륙에도 걸려 리셋이 약 24 → 29 s**
-- `--drone-rc` 없이는 지금까지와 같다: `check_px4.py` 5/5, `check_ros2.py` 9/9
+- `--drone-rc` 없이는 지금까지와 같다: `check_px4.py` 5/5, `check_ros2.py` 9/9, `make_fake_episodes.py` 3/3 (첫 실행 2/3 은 조종기와 무관한 재생 스크립트 문제, PLAN 5-A 회귀 항목)
 - sim 이 직렬 장치를 읽으려면 계정이 `dialout` 그룹이어야 한다 (`sudo usermod -aG dialout <계정>` 뒤 다시 로그인, 또는 그 터미널에서 `newgrp dialout`. sim 을 sudo 로 띄우지 않는다)
 
 **실물 조종기 (2026-10-08, 사용자, GUI)**

@@ -7,6 +7,8 @@
 #   /joint_command (sensor_msgs/JointState, 팔 6 관절) 매 줄, /gripper/command (std_msgs/Float64) 는 값이 바뀔 때
 #   시각은 sim time 기준 (/clock): 시작 = 첫 /clock + --start-delay, 줄의 t 만큼 지난 뒤 보냄 (RTF 와 무관하게 sim 기준 같은 궤적)
 #   재생하는 동안 /gripper/joint_states·/gripper/target 을 받아 끝에 요약 (그리퍼 닫은 뒤 present 최종값·target)
+#   시작 전에 sim 노드 (--sim-node) 의 구독이 두 명령 토픽에 연결될 때까지 기다린다 (안 되면 에러). 연결 전에 보내기 시작하면 sim 이 앞부분을 못 받다가
+#     나중 명령부터 받아 팔 목표가 뛴다 (2026-10-08 make_fake_episodes: 처음 1.7 s 를 못 받고 36° 뛰어 보호 정지)
 # 실행:
 #   python3 isaacsim/scripts/replay_commands.py isaacsim/reports/grasp_demo_<시각>/commands_success.csv [--start-delay 1] [--tail 3]
 #   --out result.json : 요약을 JSON 으로
@@ -36,6 +38,8 @@ def main():
     p.add_argument("--start-delay", type=float, default=1.0, help="[sim s] 첫 /clock 뒤 재생 시작까지")
     p.add_argument("--tail", type=float, default=3.0, help="[sim s] 마지막 줄 뒤 더 기다림")
     p.add_argument("--clock-timeout", type=float, default=30.0, help="[wall s] /clock 기다리는 시간")
+    p.add_argument("--sim-node", default="isaac_sim", help="sim 의 ROS 2 노드 이름 (ros2_iface.yaml node_name). 이 노드의 구독이 연결된 뒤 시작")
+    p.add_argument("--connect-timeout", type=float, default=15.0, help="[wall s] sim 구독 연결을 기다리는 시간")
     p.add_argument("--out", default=None, help="요약 JSON")
     a = p.parse_args()
     with open(a.csv, encoding="utf-8") as f:
@@ -60,6 +64,17 @@ def main():
         rclpy.spin_once(n, timeout_sec=0.05)
         if time.time() > w_end:
             sys.exit(f"/clock 을 {a.clock_timeout} s 안에 받지 못함 (sim_ros2 실행 중?)")
+
+    def connected(pub, topic):
+        infos = n.get_subscriptions_info_by_topic(topic)
+        return any(i.node_name == a.sim_node for i in infos) and pub.get_subscription_count() >= len(infos)
+
+    w_end = time.time() + a.connect_timeout
+    while not (connected(p_arm, "/joint_command") and connected(p_grip, "/gripper/command")):
+        rclpy.spin_once(n, timeout_sec=0.05)
+        if time.time() > w_end:
+            seen = {t: [i.node_name for i in n.get_subscriptions_info_by_topic(t)] for t in ("/joint_command", "/gripper/command")}
+            sys.exit(f"sim 노드 '{a.sim_node}' 의 명령 구독이 {a.connect_timeout} s 안에 연결되지 않음 (보이는 구독자 {seen})")
 
     def spin_until(t):
         while clk[0] < t:
