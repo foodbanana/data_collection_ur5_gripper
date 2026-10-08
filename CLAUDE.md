@@ -8,6 +8,7 @@ LeRobot v2.1 데이터셋으로 만들고 openpi π0.5 를 파인튜닝하는 �
 1-5 drive 튜닝 정리 (확정값·근거·실행 명령): `docs/drive_tuning.md`
 그리퍼 파지력 (실물 전류 ↔ sim max_force·마찰, 전류를 바꿀 때): `docs/gripper_force.md`
 드론 비행 (Pegasus 방식: 추력 모델·기하 제어기·게인 환산, PX4 SITL 연결·센서·위치 정보, 식과 출처): `docs/drone_flight.md`
+드론 텔레옵 구조 (실물 조종기 → Pico → sim PX4 드론: 지금 포트·명령 경로, 넘겨받기 계획, 녹화할 때 구조. 5단계 5-A, 계획): `docs/drone_teleop.md`
 sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최적화·남은 후보): `docs/sim_performance.md`
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
