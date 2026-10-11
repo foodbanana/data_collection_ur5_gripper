@@ -161,8 +161,8 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 
 ```text
  PILOT                                        ARM OPERATOR
- Radiolink transmitter                        SpaceMouse Wireless
-        | radio                                      | USB
+ Radiolink transmitter                        PICO 4 Ultra controller
+        | radio                                      | headset -> PC (link to be checked)
         v                                            v
  receiver -> Pi Pico                          arm teleop node (5-B, NOT BUILT)
         | USB serial /dev/ttyACM0                    |
@@ -189,7 +189,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 - **녹화하는 것은 지금과 같다: 로봇 팔·그리퍼·카메라 (와 팔·그리퍼 명령).** 조종기 입력도, 에피소드 중 드론 위치도 bag 에 넣지 않는다 (2026-10-08 사용자 결정)
   → `record_toggle.py`·stage1·병합·검수·데이터셋 스키마 그대로. 에피소드 중 드론이 어떻게 움직였는지는 카메라 영상에만 남는다
 - 드론 조종 입력은 정책의 action 이 아니다 (정책은 팔·그리퍼만 움직인다)
-- 조종기는 두 손을 쓴다 → 드론 조종과 팔 조작 (SpaceMouse) 을 한 사람이 같이 하기 어렵다 (PLAN 5-A "정할 것" 5 번)
+- 조종기는 두 손을 쓴다 → 드론 조종과 팔 조작 (PICO 컨트롤러. 2026-10-11 에 SpaceMouse 에서 바꿈) 을 한 사람이 같이 하기 어렵다 (PLAN 5-A "정할 것" 5 번)
 
 ### 에피소드 한 번의 순서
 

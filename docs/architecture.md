@@ -1,6 +1,6 @@
 # 데이터 수집 전체 구조
 
-작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기)
+작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로
 
 명령 → 시뮬레이터 (또는 실물 로봇) → 녹화 → 변환 → 병합 → 검수까지, 지금 만들어져 있는 데이터 수집 흐름 전체를 한 장으로 보여 준다.
 부분별 자세한 내용은 맨 아래 "관련 문서".
@@ -14,7 +14,7 @@
 | [1] COMMAND SOURCE   (system python3 + ROS 2)                                                                          |
 |------------------------------------------------------------------------------------------------------------------------|
 | now    : isaacsim/scripts/replay_commands.py <commands.csv>   (replays a recorded grasp, paced by /clock)              |
-| stage 5-B: arm teleop node (SpaceMouse Wireless -> TCP velocity -> IK)   <-- NOT BUILT YET                             |
+| stage 5-B: arm teleop node (PICO 4 Ultra controller pose -> TCP target -> IK)   <-- NOT BUILT YET                      |
 | rule   : publishes only these two topics; /joint_command carries header.stamp = sim time at send                       |
 +------------------------------------------------------------------------------------------------------------------------+
       |  /joint_command     sensor_msgs/JointState   ~60 Hz (teleop rate)   6 arm joint targets [rad]
@@ -122,7 +122,7 @@
 
 | 블록 | 무엇인가 | 상태 |
 |------|----------|------|
-| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드는 아직 없다 (5단계 5-B, SpaceMouse).** 지금은 기록해 둔 명령을 재생하는 스크립트가 대신한다 |
+| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드는 아직 없다 (5단계 5-B, PICO 4 Ultra).** 지금은 기록해 둔 명령을 재생하는 스크립트가 대신한다 |
 | 드론 조종 ([2] 안) | 실물 조종기로 sim 드론을 움직인다 (`sim_ros2.py --drone-rc on`) | **만듦 (5단계 5-A, 2026-10-08)**: `check_rc.py` 6/6, 실물 조종기로 sim 드론이 움직이는 것 확인. 옵션을 안 켜면 지금처럼 자동 (리셋 뒤 호버) 또는 `drone_cmd.py` |
 | [2] 시뮬레이터 | 로봇·카메라·드론을 계산하고 실물과 같은 토픽을 낸다 | 완성 (3단계, `check_ros2.py` 9/9) |
 | [3] 녹화 도구 | 키 입력으로 에피소드를 녹화한다 | 완성 (4단계) |
@@ -162,12 +162,12 @@
 
 ## 5. 5단계에서 만들 것
 
-두 가지다 (2026-10-08 결정, `docs/PLAN.md` 5단계). [3] ~ [6] 은 어느 쪽에서도 바꾸지 않는다.
+두 가지다 (2026-10-08 결정, 팔 장치는 2026-10-11 에 PICO 4 Ultra 로 바꿈, `docs/PLAN.md` 5단계). [3] ~ [6] 은 어느 쪽에서도 바꾸지 않는다.
 
 | 순서 | 무엇 | 그림에서 | 장치 |
 |------|------|----------|------|
 | 5-A (먼저) | 드론 텔레옵 | [2] 안: 조종기 입력 → `PX4Commander` → PX4 | 실물 Radiolink 조종기 → Raspberry Pi Pico → USB 직렬 |
-| 5-B | 팔 텔레옵 노드 | [1] 블록 | 3Dconnexion SpaceMouse Wireless (GELLO 는 대안) |
+| 5-B | 팔 텔레옵 노드 | [1] 블록 | PICO 4 Ultra 컨트롤러 (2026-10-11 에 SpaceMouse 에서 바꿈. SpaceMouse·GELLO 는 대안) |
 
 **5-A 드론 텔레옵** (`docs/drone_teleop.md`)
 - 새 포트 없이 지금 명령 링크 (UDP 14540) 로 스틱 값 (`MANUAL_CONTROL`) 을 보낸다. 리셋·이륙은 지금처럼 자동, 그 뒤 스틱이 가운데면 조종기에 넘긴다
@@ -178,7 +178,8 @@
 - `/joint_command` (팔 6 관절 목표 [rad]) 와 `/gripper/command` (raw 0 / 1150) 만 발행
 - `/joint_command` 의 `header.stamp` 를 넣는다 (sim = sim time). 50 Hz 이상으로 일정하게
 - 리셋 뒤에는 로봇의 홈 자세에서 시작 (리셋 전 자세의 명령을 보내면 팔이 33 ms 만에 그 자세로 뛴다)
-- SpaceMouse 는 카테시안 입력이라 IK 가 필요하다. sim 안의 `arm_ik.py` (PhysX Jacobian) 는 sim 밖 노드에서 쓸 수 없어 URDF 에서 Jacobian 을 계산한다
+- PICO 컨트롤러는 자세 (위치·방향) 를 주는 카테시안 입력이라 IK 가 필요하다. sim 안의 `arm_ik.py` (PhysX Jacobian) 는 sim 밖 노드에서 쓸 수 없어 URDF 에서 Jacobian 을 계산한다
+- 컨트롤러 값을 PC 에서 읽는 방법은 아직 확인하지 않았다 (PLAN 5-B B-0). 연결이 끊기거나 추적을 잃으면 팔을 멈추고 알린다
 
 ---
 
