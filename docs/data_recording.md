@@ -132,6 +132,9 @@ source /opt/ros/jazzy/setup.bash
 
 sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N`, `--headless --duration <s>`.
 
+실물 조종기로 드론을 움직이며 녹화할 때 (`sim_ros2.py --drone-rc on`, 5단계 5-A, `docs/drone_teleop.md`): 녹화 도구와 녹화 토픽은 그대로다 (조종기 입력·드론 위치는 녹화하지 않는다).
+달라지는 것은 리셋이 약 29 s 인 것, 리셋 뒤 스틱이 가운데여야 조종기로 넘어가는 것 (sim 터미널의 `[drone_rc]` 줄), 조종기 신호가 끊긴 에피소드는 `d` 로 버리는 것.
+
 ### 4.2 실물
 
 `0_setup_network.sh` → `1_arm_driver.sh` → (freedrive 면 `2_arm_freedrive.sh`) → `3_gripper_node.sh` → `4_gripper_teleop.sh` → `5_cameras.sh` 뒤:
@@ -217,6 +220,7 @@ env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<
 | `isaacsim/scripts/replay_commands.py` | 명령 CSV 재생 (텔레옵 대신) |
 | `isaacsim/scripts/make_fake_episodes.py` | 녹화 → 변환 → 병합 → 검수 자동 확인 |
 | `docs/sim_ros2_interface.md` | sim 이 내는 토픽·주기·QoS, 리셋·보호 정지 |
+| `docs/drone_teleop.md` | 실물 조종기로 sim 드론을 움직일 때의 구조와 에피소드 순서 (녹화되지 않음) |
 | `docs/timestamp_sync.md` | 시각 (stamp) 동기화: sim 과 실물에서 stamp 를 누가 찍는지, 측정 결과, 모르는 것 |
 | `README.md`, `dataset_merge.md` | 변환·병합·검수 실행 방법과 옵션 |
 | `docs/PLAN.md` 4단계 | 4-0 ~ 4-5 결과, 결정과 이유, 남은 문제 |

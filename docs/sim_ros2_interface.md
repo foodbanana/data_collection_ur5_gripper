@@ -79,6 +79,8 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 - 녹화 도구 (`./6_record_bag.sh <작업명> --sim` = `record_toggle.py`, 4단계): `r` → `/sim/reset` → 성공 응답 뒤 녹화 시작, `k` → `/sim/drone_kill`,
   리셋 응답 (시드·드론 위치·에피소드 메타데이터) 을 bag 폴더의 `episode.json` 에 저장. 카메라는 RELIABLE 로 받는다. 자세한 것은 **`docs/data_recording.md`**
 - PX4 쪽 링크는 ROS 2 가 아니라 MAVLink (sim 내부). 드론의 위치 정보는 실내 모션캡처를 가정 (`docs/drone_flight.md` 13장)
+- `--drone-rc on` (5단계 5-A, 기본 off) 이면 실물 조종기 입력 (Pico USB 직렬) 을 sim 이 직접 읽어, 이륙·리셋 뒤 `PX4Commander` 가 위치 목표 대신
+  스틱 값 (`MANUAL_CONTROL`) 을 같은 UDP 14540 으로 보낸다. ROS 토픽이 아니고 녹화되지 않는다. 그림에는 없다 → **`docs/drone_teleop.md`**
 
 ---
 
@@ -115,7 +117,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | 링크 | 프로토콜 | 내용 |
 |------|----------|------|
 | sim ↔ PX4 | MAVLink, TCP 4560 (lockstep) | sim → PX4: HIL_SENSOR (IMU·기압·지자기, 물리 스텝마다 120 Hz), VISION_POSITION_ESTIMATE (모션캡처, 설정 100 Hz, 지연 20 ms). PX4 → sim: HIL_ACTUATOR_CONTROLS (모터 명령, 120 Hz, 이 명령이 와야 sim 이 다음 스텝으로 = lockstep) |
-| PX4Commander ↔ PX4 | MAVLink, UDP 14540 (offboard) | → PX4: SET_POSITION_TARGET 20 Hz, 모드·arm·kill 명령. ← PX4: LOCAL_POSITION_NED 30 Hz, ATTITUDE 60 Hz, HEARTBEAT 1 Hz, STATUSTEXT, COMMAND_ACK (안 쓰는 HIGHRES_IMU·ATTITUDE_QUATERNION·ODOMETRY 는 끔) |
+| PX4Commander ↔ PX4 | MAVLink, UDP 14540 (offboard) | → PX4: SET_POSITION_TARGET 20 Hz, 모드·arm·kill 명령. ← PX4: LOCAL_POSITION_NED 30 Hz, ATTITUDE 60 Hz, HEARTBEAT 1 Hz, STATUSTEXT, COMMAND_ACK (안 쓰는 HIGHRES_IMU·ATTITUDE_QUATERNION·ODOMETRY 는 끔). `--drone-rc on` 이면 → PX4: MANUAL_CONTROL (스틱 4 축, 앱 루프마다 30 Hz), 조종기에 넘긴 동안은 위치 목표를 보내지 않음 |
 | drone_cmd.py → sim | JSON, UDP 14600 (localhost) | 다른 터미널 CLI: goto / hold / land / kill / status |
 
 ---
@@ -145,6 +147,7 @@ source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 # sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] t ... 상태 줄이 나오면 준비 완료 (약 30 s)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 #   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure, --init-pose q1..q6
+#   --drone-rc on [--rc-port <직렬 장치>]: 실물 조종기로 PX4 드론 조종 (docs/drone_teleop.md. 리셋 약 29 s)
 
 # 다른 터미널
 ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw              # 카메라 보기
@@ -170,4 +173,5 @@ python3 isaacsim/scripts/check_ros2.py                                         #
 | `docs/sim_performance.md` | RTF 측정·최적화, 카메라 QoS, DLSS 비교 |
 | `docs/arm_command_interpolation.md` | 팔 명령 보간 (30 Hz 계단 문제, 다른 프로젝트 조사), PhysX 관절 속도, rclpy spin |
 | `docs/drone_flight.md` | 드론 비행 (Pegasus 방식, PX4 SITL 연결·센서) |
+| `docs/drone_teleop.md` | 실물 조종기로 sim 드론 조종 (`--drone-rc on`): 포트·명령 경로, 넘기기·되돌리기 규칙 |
 | `isaacsim/config/ros2_iface.yaml` | 토픽 이름·주기·렌더·보호 정지·리셋 설정 |

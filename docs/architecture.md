@@ -172,7 +172,7 @@
 **5-A 드론 텔레옵** (`docs/drone_teleop.md`)
 - 새 포트 없이 지금 명령 링크 (UDP 14540) 로 스틱 값 (`MANUAL_CONTROL`) 을 보낸다. 리셋·이륙은 지금처럼 자동, 그 뒤 스틱이 가운데면 조종기에 넘긴다
 - 녹화되지 않는다. 옵션을 안 켜면 지금과 같다 (`check_ros2.py` 9/9)
-- 만들었고 실물 조종기로 확인했다 (2026-10-08, 축 방향 맞음). 남은 것: `make_fake_episodes.py` 회귀, 스틱 끝 속도는 임시값 그대로
+- 만들었고 실물 조종기로 확인했다 (2026-10-08, 축 방향 맞음). `make_fake_episodes.py` 회귀 3/3. 남은 것: 스틱 끝 속도는 임시값 그대로
 
 **5-B 팔 텔레옵 노드**: 아래만 지키면 [2] ~ [6] 은 지금 그대로 동작한다.
 - `/joint_command` (팔 6 관절 목표 [rad]) 와 `/gripper/command` (raw 0 / 1150) 만 발행
@@ -188,7 +188,7 @@
 |------|------------------|
 | `docs/sim_ros2_interface.md` | [2] 시뮬레이터: 토픽·주기·QoS, 리셋·보호 정지 |
 | `docs/drone_flight.md` | [2] 안의 드론 (추력 모델, PX4 SITL) |
-| `docs/drone_teleop.md` | [2] 안의 드론을 실물 조종기로 움직이는 경로 (5단계 5-A 계획. 녹화되지 않음) |
+| `docs/drone_teleop.md` | [2] 안의 드론을 실물 조종기로 움직이는 경로 (5단계 5-A, 만듦. 녹화되지 않음) |
 | `docs/arm_command_interpolation.md` | [2] ArmBridge 의 명령 보간 |
 | `docs/data_recording.md` | [3] 녹화: 키, 녹화 토픽, `episode.json`, 녹화 순서 |
 | `README.md`, `dataset_merge.md` | [4] ~ [6] 변환·병합·검수 옵션, 실물 수집 순서 |

@@ -132,8 +132,9 @@ source /opt/ros/jazzy/setup.bash        # python.sh 안 rclpy 가 시스템 Jazz
 - **RELIABLE 이어도 시각 맞춤은 정확하다.** stage1 은 도착 시각이 아니라 `header.stamp` 로 프레임을 맞춘다 (`lerobot_stage1_extract_bag.py`).
   재전송으로 도착이 늦어져도 stamp 는 바뀌지 않는다
 - 오히려 BEST_EFFORT 가 위험하다: 이미지가 빠지면 stage1 `latest_at` 이 옛날 이미지를 조용히 골라 "옛 이미지 + 새 joint" 프레임이 생긴다
-- 후속 (PLAN 4단계): 녹화는 카메라를 RELIABLE 로 받기, stage1 에 이미지 나이 검사 추가. 실물 카메라가 30 Hz 설정에서 20~25 Hz 로 떨어지는 것도
-  같은 원인일 수 있음 (실물 PC 에서 `ros2 topic info -v /d435i/d435i/color/image_raw` 로 확인)
+- 후속 (PLAN 4단계, 끝남): 녹화는 카메라를 RELIABLE 로 받고, stage1 에 메시지 나이 검사 (66 ms) 를 넣었다.
+  "실물 카메라가 30 Hz 설정에서 20~25 Hz 로 떨어진다" 도 같은 종류였다 (2026-10-06 확인): 카메라는 30 Hz 로 발행하고,
+  `ros2 topic hz <image_raw>` 가 best effort 로 받아 낮게 보인 것. RELIABLE 녹화는 29.99 Hz → 주기는 `camera_info` 로 잰다 (`docs/data_recording.md` 7 장)
 
 ---
 

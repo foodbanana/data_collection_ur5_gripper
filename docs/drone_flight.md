@@ -692,7 +692,8 @@ PX4 비행 로그 `isaacsim/reports/px4_20261005_160728/log/2026-10-05/07_07_29.
 - 로그의 `trajectory_setpoint`: 위치·yaw 만 값이 있고 속도·가속도·yaw 속도는 NaN (표본의 98%)
 - 소스: `mavlink_receiver` 가 `SET_POSITION_TARGET_LOCAL_NED` 를 `trajectory_setpoint` 로 바로 발행하고, `mc_pos_control` 이 그것을 그대로 읽는다 (사이에 궤적 생성 없음)
 - `PX4Commander.goto` 도 목표를 한 번에 바꾼다 (`drone_cmd.py`, 속도 제한 없음). 따라서 **`goto` 는 위치 목표의 계단 입력**이고, 14-2 에 따라 속도 목표가 $0.95 \times$ 거리 [m/s] 로 뛴다
-  (0.1 m 이동 → 0.095 m/s, 1 m 이동 → 0.95 m/s). 부드럽게 움직이려면 보내는 쪽이 목표를 조금씩 옮겨야 한다 (조종기 연결 때도 같음)
+  (0.1 m 이동 → 0.095 m/s, 1 m 이동 → 0.95 m/s). 부드럽게 움직이려면 보내는 쪽이 목표를 조금씩 옮겨야 한다
+  (실물 조종기 텔레옵은 이 길을 쓰지 않는다: 스틱 값 `MANUAL_CONTROL` + PX4 Position 모드라 속도 목표를 PX4 가 만든다, `docs/drone_teleop.md`)
 
 **D. 로터 축**: `CA_ROTOR0_AX` 0, `CA_ROTOR0_AZ` −1 (몸체 위쪽), `CA_ROTOR0_CT` 6.5, `CA_ROTOR0_KM` 0.05, `CA_ROTOR0_PX/PY` 0.1032 / 0.1551 (sim 로터 위치),
 `MC_ROLLRATE_K` 0.2456, `MC_PITCHRATE_K`·`MC_YAWRATE_K` 0.1484, `MC_AIRMODE` 0, `THR_MDL_FAC` 0 — 14-7·14-8 에 적은 값과 같다
