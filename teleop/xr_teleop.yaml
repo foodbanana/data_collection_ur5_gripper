@@ -1,0 +1,56 @@
+# =============================================================
+# xr_teleop.yaml — PICO 4 Ultra 팔 텔레옵 노드 설정 (teleop/xr_teleop_node.py, docs/PLAN.md 5-B B-2)
+#
+# 값은 2026-10-12 결정 (PLAN 5-B). 항목이 빠지면 노드가 에러로 멈춘다 (기본값을 코드에 두지 않는다)
+# =============================================================
+
+rate_hz: 60.0                 # /joint_command 를 보내는 주기 (자기 타이머, wall). 요구: 50 Hz 이상으로 일정하게. 컨트롤러 값은 90 Hz 로 온다
+
+# /joint_command 의 header.stamp
+#   sim  : 가장 최근에 받은 /clock (sim time). sim 은 루프 (30 Hz) 마다 최신 명령을 쓰므로, 같은 루프 안에 보낸 명령은 stamp 가 같을 수 있다
+#   wall : PC 시각 (실물)
+stamp: sim
+
+topics:
+  joint_states: /joint_states
+  joint_command: /joint_command
+  gripper_command: /gripper/command
+  clock: /clock
+  protective_stop: /protective_stop     # sim 전용 (std_msgs/Bool). 발행자가 없으면 쓰지 않는다
+
+# 컨트롤러 → TCP
+hand: right                   # 오른손 컨트롤러 (A 버튼·오른쪽 트리거)
+scale: 1.0                    # 손 이동 : TCP 이동 (1 = 같은 거리)
+rotation: true                # 손목 회전도 TCP 가 따라감 (false = 위치만, 자세는 시작할 때 그대로)
+# A 를 누른 순간 컨트롤러 앞쪽 (자기 좌표계 −z) 을 수평면에 내린 방향이 "앞" = 로봇 base +x, 위 (+y) = base +z.
+# 컨트롤러 끝이 수평에서 이 각도보다 더 들리거나 숙여져 있으면 "앞" 을 정할 수 없어 시작을 거부한다
+max_start_elevation_deg: 60.0
+
+# IK (teleop/ik_model.py ik_step)
+max_joint_speed: 1.5          # [rad/s] 관절 목표가 움직이는 최대 속도 (한 주기 변화 = 이 값 / rate_hz. sim 관절 최대 π rad/s, 한 주기 0.063 rad 기준 아래)
+max_lead: 0.08                # [rad] 관절 목표가 측정 관절각보다 앞설 수 있는 최대 (4.6°. sim 보호 정지 위치 오차 5° 아래)
+damping: 0.02                 # damped least squares λ
+limit_margin: 0.05            # [rad] 관절 한계 안쪽 여유 (sim 은 한계 밖 명령을 받으면 에러로 끝난다)
+warn_pos_err: 0.05            # [m] TCP 목표가 명령 자세보다 이만큼 넘게 앞서 있으면 알림 (손이 팔보다 빠르거나 팔이 못 가는 곳)
+warn_manip: 0.01              # 특이점 지표 sqrt(det(J Jᵀ)) 가 이보다 작으면 알림 (under_drone 자세에서 약 0.087)
+
+# 테이블 보호: 손목 관절 (wrist_1·2·3) 원점의 높이 [m, 로봇 base 기준 z. base = 테이블 상판] 가 이 값 아래로 더 내려가는 관절 목표는 보내지 않고 알린다
+#   (올라가는 쪽은 막지 않는다). sim 측정 (2026-10-12): wrist_2 원점이 0.058 m 까지 내려오면 wrist_2 링크가 테이블에 닿아 보호 정지 (접촉 200 N)
+#   → 0.09 = 닿기 약 3 cm 전. 테이블이 없는 배치면 큰 음수로
+min_wrist_height: 0.09
+
+# 그리퍼: 트리거 (0 ~ 1) 를 이진으로. close 를 넘으면 닫힘, open 아래로 내려가면 열림 (그 사이는 그대로 = 히스테리시스)
+gripper:
+  close_above: 0.6
+  open_below: 0.4
+  raw_open: 0.0
+  raw_close: 1150.0
+
+# 입력·상태 확인 (wall 시간)
+xr_connect_timeout: 5.0       # [s] 시작할 때 헤드셋 데이터 (타임스탬프 증가, 쿼터니언 크기 1) 가 이 안에 와야 한다. 아니면 에러로 끝남
+xr_stale_warn: 0.5            # [s] 헤드셋 타임스탬프가 이만큼 멈추면 알림만 한다 (팔은 마지막 목표에 머문다. 자동 판정 안 함, PLAN 5-B 안전 장치)
+state_stale: 0.5              # [s] /joint_states (sim 이면 /clock 도) 가 이만큼 안 오면 시작을 거부하고, 텔레옵 중이면 멈춘다
+# 측정 관절각이 관절 목표와 이만큼 넘게 다르면 텔레옵을 멈춘다 (/sim/reset 이 팔을 순간이동했거나 보호 정지로 팔이 멈춤).
+# 계속 보내면 팔이 옛 목표로 뛴다. 정상 추종에서는 max_lead 를 넘지 않는다
+desync: 0.2                   # [rad]
+status_sec: 5.0               # [s] 텔레옵 중 상태 한 줄 출력 주기
