@@ -107,6 +107,7 @@ class ProtectiveStop:
                 if over and self.mode == "on":
                     self.stopped, self.reason, self.t_stop = True, "; ".join(over), t
                     self.s.drive.set_arm_targets(q)          # 그 순간 관절각에 고정 (Cat 2: 정지 유지)
+                    print(f"[protective_stop] 보호 정지 t {t:.2f} s: {self.reason} (단위 force N, error °, speed °/s). 해제는 /sim/reset", flush=True)
             k = round(t * self.hz)
             if abs(t - k / self.hz) <= 1e-6 and k != self._last_k:
                 self._last_k = k
