@@ -10,6 +10,7 @@
 #     fk(q)        → 4x4, base 좌표계의 tip 자세. q = 팔 6 관절 [rad] (arm_joints 순서)
 #     jacobian(q)  → 6 x 6 [v; ω], base 좌표계, 점 = tip 원점 (기하 Jacobian)
 #     limits       → (lo, hi) [rad]
+#     joint_origins(q) → 6 x 3, 팔 관절 원점 위치 (base 좌표계)
 #   ik_step(model, q_cmd, q_meas, p_target, R_target, ...)  → 새 관절 목표 (IkStep)
 #     e = [p* − p, log(R* Rᵀ)],  Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e,  |Δq| ≤ max_dq (관절별, 비율 유지)
 #     관절 목표 = 이전 목표 + Δq  (arm_ik.py 와 같은 규칙)
@@ -157,6 +158,13 @@ class ArmModel:
 
     def fk(self, q):
         return self._frames(q)[1]
+
+    def joint_origins(self, q):
+        """팔 관절 원점의 위치 (6 x 3, base 좌표계, arm_joints 순서). 텔레옵 노드가 손목 높이를 볼 때 쓴다."""
+        P = np.zeros((len(self.arm_joints), 3))
+        for idx, _, o in self._frames(q)[0]:
+            P[idx] = o
+        return P
 
     def jacobian(self, q):
         axes, T = self._frames(q)
