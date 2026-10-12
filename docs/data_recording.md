@@ -130,7 +130,8 @@ source /opt/ros/jazzy/setup.bash
 | 7 | 2 | (실패한 시연이면) 키 `d` → `y` | 방금 에피소드를 `bags/_discarded/` 로 | `[DISCARDED] → ...` |
 | 8 | 2 | 3 번부터 반복, 끝나면 `q` | | `[EXIT] 종료` |
 
-sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N`, `--headless --duration <s>`.
+sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N`, `--headless --duration <s>`,
+`--init-pose q1..q6 | <이름>` (팔 시작 자세. 리셋도 이 자세로 되돌린다. 텔레옵용: `--init-pose under_drone` = 그리퍼가 위를 보고 손목 카메라에 드론 전체가 보임, PLAN 5-B).
 
 실물 조종기로 드론을 움직이며 녹화할 때 (`sim_ros2.py --drone-rc on`, 5단계 5-A, `docs/drone_teleop.md`): 녹화 도구와 녹화 토픽은 그대로다 (조종기 입력·드론 위치는 녹화하지 않는다).
 달라지는 것은 리셋이 약 29 s 인 것, 리셋 뒤 스틱이 가운데여야 조종기로 넘어가는 것 (sim 터미널의 `[drone_rc]` 줄), 조종기 신호가 끊긴 에피소드는 `d` 로 버리는 것.
@@ -200,7 +201,7 @@ env -u PYTHONPATH python inspect_dataset_v21.py lerobot_dataset_v21/foodbanana/<
 | 녹화 시작 직후 메시지 누락 (고침) | 녹화가 시작된 직후 새 ROS 노드가 뜨면 0.4~1.5 s 동안 전달이 멈추고, 큐 깊이 10 (카메라 0.33 s 분량) 이 넘쳐 메시지가 버려졌다 (30 번 중 10 번). **발행 큐 (sim `publish_queue_sec`) 와 수신 큐 (녹화 도구 `QUEUE_SEC`) 를 모두 3 s 분량으로 늘려 고침** (90 번 중 0 번, PLAN "A1 추적"). 실물 드라이버의 발행 큐는 여기서 못 바꾸므로 실물에서는 남을 수 있다 → stage1 나이 검사가 잡고 `--skip-start 0.5` 로 살린다 |
 | 녹화 중 새 노드 | 녹화 중에 `ros2 topic echo`·rqt 같은 새 노드를 띄우면 같은 전달 멈춤이 생길 수 있다. 필요한 노드는 녹화 전에 띄울 것 |
 | 텔레옵 명령 주기 | 50 Hz 이상으로 일정하게, stamp 를 넣어서. 재생 스크립트는 `/clock` 을 받아 보내는 방식이라 4~6 % 가 25 ms 늦는다 (학습에 안 쓰는 가짜 데이터) |
-| 리셋 뒤 시작 자세 | 리셋은 팔을 홈으로 순간이동한다. 텔레옵 장치는 홈 자세에서 시작해야 한다 (리셋 전 자세의 명령을 보내면 팔이 33 ms 만에 그 자세로 뛴다) |
+| 리셋 뒤 시작 자세 | 리셋은 팔을 시작 자세 (`--init-pose`, 안 주면 홈) 로 순간이동한다. 텔레옵 장치는 그 자세에서 시작해야 한다 (리셋 전 자세의 명령을 보내면 팔이 33 ms 만에 그 자세로 뛴다) |
 | 드론 모터 정지 시점 | 정책의 action 은 아니지만 그 뒤의 이미지·관절 상태가 달라진다. 에피소드마다 일관되게 |
 | 잡은 채 RTF 0.69 | 드론을 잡은 뒤 sim 이 약 30 % 느려진다. stamp 는 sim time 이라 데이터 정합성은 문제없고 조작감만 영향 |
 | 실물 카메라 주기 | 실물 카메라는 30 Hz 로 발행한다. `ros2 topic hz <image_raw>` 가 20 Hz 로 보이는 것은 그 도구가 best effort 로 받기 때문 → **주기는 `camera_info` 로 잰다**. RELIABLE 녹화는 29.99 Hz, 변환에서 고른 이미지 나이 최대 33.4 ms |

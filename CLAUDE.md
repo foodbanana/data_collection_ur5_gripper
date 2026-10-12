@@ -112,7 +112,7 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
   **가상 센서에 주는 속도는 자세·위치 차분**: 그리퍼 접촉이 걸리면 PhysX 가 보고하는 강체 각속도가 실제 자세 변화와 다름 (잡힌 드론: 보고 29 °/s, 실제 0.5 °/s)
 - PX4 를 띄운 스크립트는 `PR_SET_PDEATHSIG` 로 같이 끝난다 (`simulation_app.close()` 는 atexit 을 건너뜀). 같은 instance PX4 가 남아 있으면 시작 전에 에러
 - **sim ROS 2 실행은 `isaacsim/scripts/sim_ros2.py`** (씬 + 토픽 + `/sim/reset`). 검사 `python3 isaacsim/scripts/check_ros2.py` → 9/9 PASS (약 8 분).
-  `/sim/reset` 은 항상 순간이동 + PX4 재시작 (약 24 s, 매 에피소드 같은 깨끗한 PX4). 리셋 실패면 sim 은 계속, 다음 성공까지 명령 무시.
+  `/sim/reset` 은 항상 순간이동 + PX4 재시작 (약 24 s, 매 에피소드 같은 깨끗한 PX4). 팔은 `--init-pose` 자세로 되돌린다 (안 주면 홈. 텔레옵은 `--init-pose under_drone` = `scene_drone.yaml` `init_poses`). 리셋 실패면 sim 은 계속, 다음 성공까지 명령 무시.
   응답 JSON 에 에피소드 메타데이터 (시드, 드론 위치 (world·base), git, 렌더·그리퍼·드론·카메라 설정). `/sim/drone_kill` = 드론 모터 정지 (PX4·기하 공통).
   보호 정지 흉내 (`protective_stop.py`): 접촉력 150 N (손가락은 환경과의 접촉만), 위치 오차 5°, 관절 속도 200 °/s
 - **조종기 텔레옵** (`sim_ros2.py --drone-rc on`, `docs/drone_teleop.md`): Pico USB 직렬은 sim 이 직접 읽는다 (표준 라이브러리 termios. Isaac Sim python 에 pyserial 없음, 계정이 `dialout` 그룹이어야 함).

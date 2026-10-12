@@ -109,7 +109,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 
 | 서비스 | 타입 | 동작 | 걸리는 시간 |
 |--------|------|------|-------------|
-| `/sim/reset` | std_srvs/Trigger | 에피소드 리셋 = 에피소드 시작 상태로: 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작 → 팔·그리퍼 홈·열림 순간이동 → 재이륙 → 새 호버 위치 (기준 위치 ± 5 cm, 시드 기록). 응답 message = JSON. 실패하면 `success=False` (sim 은 계속, 다음 성공까지 명령 무시) | 약 24 s (sim) |
+| `/sim/reset` | std_srvs/Trigger | 에피소드 리셋 = 에피소드 시작 상태로: 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작 → 팔·그리퍼를 시작 자세 (`--init-pose`, 안 주면 홈)·열림으로 순간이동 → 재이륙 → 새 호버 위치 (기준 위치 ± 5 cm, 시드 기록). 응답 message = JSON. 실패하면 `success=False` (sim 은 계속, 다음 성공까지 명령 무시) | 약 24 s (sim) |
 | `/sim/drone_kill` | std_srvs/Trigger | 드론 모터 정지 (잡은 뒤. PX4 = kill, 기하 제어기 = 로터 ω 0). 응답 message = JSON (sim 시각). 이미 꺼져 있으면 `success=False`. 다시 켜는 것은 `/sim/reset`. `record_toggle.py --sim` 의 `k` 키가 부르고 시각을 `episode.json` 에 기록 | 즉시 |
 
 ### sim 안 링크 (ROS 2 아님)
@@ -146,7 +146,9 @@ source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 
 # sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] t ... 상태 줄이 나오면 준비 완료 (약 30 s)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
-#   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure, --init-pose q1..q6
+#   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure
+#   --init-pose q1..q6 | <이름>: 팔 시작 자세 (관절각 6 개 [rad] 또는 scene_drone.yaml init_poses 의 이름). /sim/reset 도 이 자세로 되돌린다
+#     텔레옵: --init-pose under_drone (그리퍼가 위를 보고 손목 카메라에 드론 전체가 보임, PLAN 5-B "에피소드 시작 자세")
 #   --drone-rc on [--rc-port <직렬 장치>]: 실물 조종기로 PX4 드론 조종 (docs/drone_teleop.md. 리셋 약 29 s)
 
 # 다른 터미널
