@@ -164,7 +164,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
  Radiolink transmitter                        PICO 4 Ultra controller
         | radio                                      | headset -> Wi-Fi -> PC (XRoboToolkit)
         v                                            v
- receiver -> Pi Pico                          arm teleop node (5-B, NOT BUILT)
+ receiver -> Pi Pico                          arm teleop node (5-B, xr_teleop_node.py)
         | USB serial /dev/ttyACM0                    |
         v                                            | /joint_command
  RC input reader (5-A, inside sim)                   | /gripper/command

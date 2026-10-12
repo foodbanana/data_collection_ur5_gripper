@@ -131,7 +131,7 @@ source /opt/ros/jazzy/setup.bash
 | 8 | 2 | 3 번부터 반복, 끝나면 `q` | | `[EXIT] 종료` |
 
 sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N`, `--headless --duration <s>`,
-`--init-pose q1..q6 | <이름>` (팔 시작 자세. 리셋도 이 자세로 되돌린다. 텔레옵용: `--init-pose under_drone` = 그리퍼가 위를 보고 손목 카메라에 드론 전체가 보임, PLAN 5-B).
+`--init-pose q1..q6 | <이름>` (팔 시작 자세. 리셋도 이 자세로 되돌린다. 텔레옵용: `--init-pose under_drone` = 그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보임, PLAN 5-B).
 
 실물 조종기로 드론을 움직이며 녹화할 때 (`sim_ros2.py --drone-rc on`, 5단계 5-A, `docs/drone_teleop.md`): 녹화 도구와 녹화 토픽은 그대로다 (조종기 입력·드론 위치는 녹화하지 않는다).
 달라지는 것은 리셋이 약 29 s 인 것, 리셋 뒤 스틱이 가운데여야 조종기로 넘어가는 것 (sim 터미널의 `[drone_rc]` 줄), 조종기 신호가 끊긴 에피소드는 `d` 로 버리는 것.

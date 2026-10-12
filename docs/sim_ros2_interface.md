@@ -148,7 +148,7 @@ source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 #   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure
 #   --init-pose q1..q6 | <이름>: 팔 시작 자세 (관절각 6 개 [rad] 또는 scene_drone.yaml init_poses 의 이름). /sim/reset 도 이 자세로 되돌린다
-#     텔레옵: --init-pose under_drone (그리퍼가 위를 보고 손목 카메라에 드론 전체가 보임, PLAN 5-B "에피소드 시작 자세")
+#     텔레옵: --init-pose under_drone (그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보임, PLAN 5-B "에피소드 시작 자세")
 #   --drone-rc on [--rc-port <직렬 장치>]: 실물 조종기로 PX4 드론 조종 (docs/drone_teleop.md. 리셋 약 29 s)
 
 # 다른 터미널
