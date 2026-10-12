@@ -16,7 +16,7 @@
 #   source /opt/ros/jazzy/setup.bash
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py                    # GUI (메인 뷰포트 하나, 프로펠러 회전 켬). 창을 닫으면 종료
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60
-#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --seed --init-pose q1..q6
+#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --seed --init-pose q1..q6 | <이름> (예: under_drone)
 #         --prop-spin on|off (기본 GUI on, headless off) --duration [sim s] (headless 는 없으면 Ctrl+C 까지)
 #         --drone-rc on|off (기본 off) --rc-port <직렬 장치> (기본 rc_input.yaml port)
 #         --protective-stop on|measure (기본 on. measure = 정지하지 않고 최댓값만 기록, 기준 여유 확인용)
@@ -43,6 +43,11 @@ import ros2_iface as ri  # noqa: E402
 STATUS_SEC = 10.0      # 상태 출력 주기 (sim s)
 
 
+def _init_pose_action():
+    import drone_scene as ds          # 인자 검사만 쓴다 (Isaac Sim 모듈은 build_scene 안에서 import)
+    return ds.InitPoseAction
+
+
 def parse():
     p = argparse.ArgumentParser(description="sim ROS 2 인터페이스 (PLAN 3단계)")
     p.add_argument("--headless", action="store_true")
@@ -52,7 +57,8 @@ def parse():
     p.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="드론 위치 [m] world")
     p.add_argument("--mode", default="static", choices=("static", "hover"), help="드론 비행 모드")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q", help="팔 시작 자세 [rad] (기본 home_pose)")
+    p.add_argument("--init-pose", nargs="+", default=None, metavar="Q", action=_init_pose_action(),
+                   help="팔 시작 자세: 관절각 6 개 [rad] 또는 씬 설정 init_poses 의 이름 (예: under_drone). 기본 home_pose. /sim/reset 도 이 자세로 되돌린다")
     p.add_argument("--prop-spin", choices=("on", "off"), default=None, help="프로펠러 회전 표시 (기본 GUI on, headless off)")
     p.add_argument("--protective-stop", choices=("on", "measure"), default="on", help="보호 정지 (measure = 최댓값만 기록)")
     p.add_argument("--reset-offset", type=float, default=None,
@@ -95,7 +101,8 @@ def episode_info(s, cfg, args, render, stop_mode):
         "physics_hz": round(1.0 / ts.PHYSICS_DT), "loop_hz": float(cfg["loop_hz"]),
         "render": render,
         "robot": {"config": rel(s.robot_cfg["path"]), "base_world": [0.0, 0.0, float(s.scene_cfg["table"]["top_z"])],
-                  "home_pose": [float(x) for x in s.home], "command_interp_time": float(cfg["arm"]["command_interp_time"])},
+                  "home_pose": [float(x) for x in s.home], "init_pose": [float(x) for x in s.init_pose], "init_pose_name": s.init_pose_name,
+                  "command_interp_time": float(cfg["arm"]["command_interp_time"])},
         "gripper": {"joint": gname, "max_force_nm": float(gc["max_force"]), "profile_velocity": float(gc["profile_velocity"]),
                     "finger_friction": [float(c["finger_material"]["static_friction"]), float(c["finger_material"]["dynamic_friction"])]},
         "drone": {"config": rel(s.drone_cfg["path"]), "backend": f.backend, "mode": f.ref.mode,
@@ -148,7 +155,7 @@ def main():
             ps.enable_contact_report(s.stage)              # 보호 정지 접촉력 (재생 전)
 
         s = ds.build_scene(drone_pos=args.drone_pos, mode=args.mode, seed=args.seed, prop_spin=args.prop_spin == "on",
-                           init_pose=args.init_pose, extra_setup=setup, flight=args.flight,
+                           init_pose=ds.parse_init_pose(args.init_pose), extra_setup=setup, flight=args.flight,
                            position_source=args.position_source, report_dir=args.report_dir, realtime=not args.headless,
                            px4_params=None if rc_cfg is None else rc_cfg["px4_params"])
         if rc_cfg is not None:

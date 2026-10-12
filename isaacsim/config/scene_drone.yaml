@@ -17,6 +17,14 @@ table:
 #   실제로 닿는지는 2-4 (IK) 에서 확인
 drone_pos: [0.60, 0.0, 1.50]
 
+# 이름 붙인 팔 시작 자세 (--init-pose <이름>, sim_ros2.py·drone_scene.py). 팔 6 관절 [rad], shoulder_pan … wrist_3.
+#   sim_ros2.py 는 /sim/reset 도 이 자세로 되돌린다. 이름을 안 주면 drive 설정 home_pose
+#   under_drone: 드론 아래에서 그리퍼가 위를 보는 자세. 텔레옵 에피소드 시작 자세 (2026-10-12, PLAN 5-B "에피소드 시작 자세"). 그리퍼가 수직 위를 보고, 손목 카메라 렌즈가
+#     드론 기본 위치 (drone_pos) 바로 아래 0.50 m → 손목 영상에 드론 전체가 가운데에 보임. TCP 는 잡는 곳보다 0.40 m 아래.
+#     손목 관절이 테이블 위 12.6 cm 로 낮다. drone_pos 를 바꾸면 다시 구할 것
+init_poses:
+  under_drone: [-0.1524, -0.7192, 1.3904, 0.8997, -1.5677, 0.1496]
+
 # PX4 드론 (flight.backend px4 / --flight px4, PLAN 2단계 2번 P-7): 실물처럼 이륙해서 드론 위치로 감
 #   이륙 지점 = 테이블 위 로봇에서 먼 쪽 (x 1.2 m, 상판 위). 수직 상승 → 수평 이동 (로봇 위를 지나지 않게), 경로 내내 아래가 테이블 (거리 센서·flow)
 px4:

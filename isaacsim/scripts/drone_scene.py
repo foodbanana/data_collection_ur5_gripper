@@ -18,6 +18,7 @@
 #         --init-pose q1..q6 (팔 6 관절 시작 각도 [rad], 기본 drive 설정 home_pose. 그리퍼는 항상 완전 열림으로 시작)
 #   예: 그리퍼가 +z 를 보고 드론(기본 위치) 바로 아래 약 21 cm (손목 카메라로 드론이 보이는지 확인)
 #         --init-pose -0.1888 -0.7854 0.9599 1.3963 -1.5708 0.1888
+#         --init-pose under_drone   (씬 설정 init_poses 의 이름: 텔레옵 에피소드 시작 자세)
 #   미구현: --mode trajectory, --base kinematic (8단계) → 에러로 중단
 # =============================================================
 
@@ -62,6 +63,35 @@ def _running():
     return omni.kit.app.get_app().is_running()
 
 
+class InitPoseAction(argparse.Action):
+    """--init-pose: 개수·형식을 인자 파싱 때 (sim 을 띄우기 전에) 검사한다."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        try:
+            parse_init_pose(values)
+        except ValueError as e:
+            parser.error(str(e))
+        setattr(namespace, self.dest, values)
+
+
+def parse_init_pose(tokens):
+    """--init-pose 값: 관절각 6 개 [rad] → [q1..q6], 이름 1 개 → 그 이름 (씬 설정 init_poses 에서 build_scene 이 찾는다)."""
+    if tokens is None:
+        return None
+    if len(tokens) == 1:
+        try:
+            float(tokens[0])
+        except ValueError:
+            return tokens[0]
+    try:
+        v = [float(t) for t in tokens]
+    except ValueError:
+        v = []
+    if len(v) != 6:
+        raise ValueError(f"--init-pose 는 관절각 6 개 [rad] 또는 씬 설정 init_poses 의 이름 1 개: {' '.join(tokens)}")
+    return v
+
+
 def parse_waypoint(text):
     """'x,y,z' → [x, y, z] (argparse type)."""
     try:
@@ -89,8 +119,9 @@ def make_parser():
                         help="px4: 이륙 뒤 차례로 들를 위치 (world m, 'x,y,z'). 첫 점 높이까지 수직 상승 → 각 점 → --drone-pos 에서 호버")
     parser.add_argument("--prop-spin", choices=("on", "off"), default="off", help="프로펠러를 보여 주기용으로 돌림")
     parser.add_argument("--base", default="fixed", choices=BASE_CHOICES, help="로봇 베이스 (kinematic 은 8단계, 미구현)")
-    parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q",
-                        help="팔 6 관절 시작 각도 [rad] (shoulder_pan … wrist_3). 기본 drive 설정 home_pose. 그리퍼는 항상 열림")
+    parser.add_argument("--init-pose", nargs="+", default=None, metavar="Q", action=InitPoseAction,
+                        help="팔 6 관절 시작 각도 [rad] (shoulder_pan … wrist_3) 또는 씬 설정 init_poses 의 이름 (예: under_drone). "
+                             "기본 drive 설정 home_pose. 그리퍼는 항상 열림")
     parser.add_argument("--check", action="store_true", help="점검: 로봇 자세 유지·드론 비행·카메라 영상 확인 후 종료")
     parser.add_argument("--realtime", action="store_true", help="--check 도 실제 시간 속도로 (GUI 는 항상 실제 시간)")
     parser.add_argument("--report-dir", default=ts.REPORT_DIR)
@@ -260,6 +291,12 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     s.drive.apply()
     s.drive.start()
     s.home = np.asarray(s.drive_cfg["home_pose"], dtype=float)
+    s.init_pose_name = None
+    if isinstance(init_pose, str):                  # 이름 → 씬 설정 init_poses (없는 이름이면 에러)
+        named = s.scene_cfg.get("init_poses") or {}
+        if init_pose not in named:
+            raise ValueError(f"init_pose 이름 '{init_pose}' 이 씬 설정 init_poses 에 없음 (있는 이름: {sorted(named)})")
+        s.init_pose_name, init_pose = init_pose, named[init_pose]
     s.init_pose = s.home.copy() if init_pose is None else np.asarray(init_pose, dtype=float)
     if s.init_pose.shape != (len(ts.ARM_JOINTS),):
         raise ValueError(f"init_pose 는 팔 {len(ts.ARM_JOINTS)} 관절 값: {init_pose}")
@@ -372,7 +409,8 @@ def check(s, prop_spin, realtime, report_dir):
     log(f"drone_scene --check  {datetime.datetime.now().isoformat(timespec='seconds')}")
     log(f"로봇 설정 {s.robot_cfg['path']}, 드론 설정 {s.drone_cfg['path']}, 드론 위치 {s.drone_pos.tolist()}, "
         f"모드 {s.flight.ref.mode}, prop_spin {prop_spin}")
-    log(f"팔 시작 자세 [rad] {np.round(s.init_pose, 4).tolist()}" + (" (home_pose)" if np.allclose(s.init_pose, s.home) else ""))
+    log(f"팔 시작 자세 [rad] {np.round(s.init_pose, 4).tolist()}" + (" (home_pose)" if np.allclose(s.init_pose, s.home) else "")
+        + (f" (init_poses.{s.init_pose_name})" if s.init_pose_name else ""))
     log(f"third view 카메라: 렌즈 {s.tv_cfg['position']} → {s.tv_cfg['look_at']}, 받침대 높이 {s.mount_h * 1000:.0f} mm, "
         f"prim {s.third_cam}")
     sensors = camera_sensors(s)
@@ -459,7 +497,7 @@ def main():
     ok = False
     try:
         scene = build_scene(args.robot_config, args.scene_config, args.drone_config, args.drone_pos, args.mode, args.seed,
-                            args.prop_spin == "on", args.base, args.init_pose, flight=args.flight,
+                            args.prop_spin == "on", args.base, parse_init_pose(args.init_pose), flight=args.flight,
                             position_source=args.position_source, report_dir=args.report_dir,
                             realtime=not args.headless or args.realtime, waypoints=args.drone_waypoints)
         if args.check:

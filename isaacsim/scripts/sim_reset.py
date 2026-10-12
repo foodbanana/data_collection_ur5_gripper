@@ -9,7 +9,7 @@
 #   1. 팔·그리퍼 명령 무시, 보호 정지 해제
 #   2. 드론: PX4 — 날고 있으면 kill → 이륙 지점(테이블 위)으로 순간이동 → **PX4 새로 띄움** (매 에피소드 같은 깨끗한 상태: EKF·편향·적분값)
 #            기하 — 모터 끄고 새 호버 위치로 순간이동
-#   3. 팔·그리퍼를 홈·열림으로 순간이동 (RobotDrive.reset_pose: 위치·속도·목표를 한 번에. 리셋은 데이터에 안 들어가므로 실물처럼 움직일 필요 없음)
+#   3. 팔·그리퍼를 시작 자세 (--init-pose, 기본 = 홈)·열림으로 순간이동 (RobotDrive.reset_pose: 위치·속도·목표를 한 번에. 리셋은 데이터에 안 들어가므로 실물처럼 움직일 필요 없음)
 #   4. 드론: PX4 는 drone_scene.px4_takeoff 로 재이륙해 새 호버 위치로 (약 30 s), 기하는 그 자리에서 다시 켬
 #   새 호버 위치 = 씬 drone_pos + 균등분포 ±drone_offset (x, y, z 각각), 시드 = --seed + 리셋 횟수
 # 처음 (2026-10-05) 에는 날고 있는 드론은 이동 명령만 (약 7 s), 팔은 최소 jerk 궤적으로 돌렸으나 갈래마다 예외가 생김
@@ -40,7 +40,7 @@ class EpisodeReset:
         self.c, self.s, self.arm, self.grip, self.stop, self.step = c, s, arm, grip, stop, step
         self.seed0, self.realtime = int(seed), bool(realtime)
         self.count = 0
-        self.home = np.asarray(s.home, dtype=float)
+        self.home = np.asarray(s.init_pose, dtype=float)             # 에피소드 시작 자세 = --init-pose (안 주면 drive 설정 home_pose)
         self.nominal = np.asarray(s.drone_pos, dtype=float).copy()      # 리셋 기준 위치 = 시작할 때의 드론 위치 (--drone-pos 또는 씬 설정 drone_pos)
         # 로봇 base (최상위 prim = robot_mount, world 와 축이 같고 테이블 상판 높이만큼 위). 메타데이터 위치값은 base 기준 (CLAUDE.md)
         self.base = np.array([0.0, 0.0, float(s.scene_cfg["table"]["top_z"])])
@@ -77,7 +77,7 @@ class EpisodeReset:
             f.teleport(goal, yaw=0.0)
 
     def _arm_home(self):
-        """팔·그리퍼를 홈·열림으로 순간이동하고 보간 기준·그리퍼 브리지 goal 을 맞춘다."""
+        """팔·그리퍼를 시작 자세 (init_pose, 기본 = 홈)·열림으로 순간이동하고 보간 기준·그리퍼 브리지 goal 을 맞춘다."""
         self.s.drive.reset_pose(self.home, gripper=0.0)
         self.arm.set_now(self.home)                         # 보간·속도 차분 기준도 새 자세로 (순간이동 거리가 속도로 잡히지 않게)
         self.stop.resync(self.home)
