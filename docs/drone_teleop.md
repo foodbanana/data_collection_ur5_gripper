@@ -162,7 +162,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 ```text
  PILOT                                        ARM OPERATOR
  Radiolink transmitter                        PICO 4 Ultra controller
-        | radio                                      | headset -> PC (link to be checked)
+        | radio                                      | headset -> Wi-Fi -> PC (XRoboToolkit)
         v                                            v
  receiver -> Pi Pico                          arm teleop node (5-B, NOT BUILT)
         | USB serial /dev/ttyACM0                    |

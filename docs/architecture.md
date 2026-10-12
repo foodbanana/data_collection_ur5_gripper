@@ -1,6 +1,6 @@
 # 데이터 수집 전체 구조
 
-작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로
+작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인
 
 명령 → 시뮬레이터 (또는 실물 로봇) → 녹화 → 변환 → 병합 → 검수까지, 지금 만들어져 있는 데이터 수집 흐름 전체를 한 장으로 보여 준다.
 부분별 자세한 내용은 맨 아래 "관련 문서".
@@ -122,7 +122,7 @@
 
 | 블록 | 무엇인가 | 상태 |
 |------|----------|------|
-| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드는 아직 없다 (5단계 5-B, PICO 4 Ultra).** 지금은 기록해 둔 명령을 재생하는 스크립트가 대신한다 |
+| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드는 아직 없다 (5단계 5-B, PICO 4 Ultra).** 노드의 재료는 있다 (2026-10-12): 컨트롤러 값 읽기 (XRoboToolkit, 90 Hz), URDF 기구학·IK 한 스텝 (`teleop/ik_model.py`, sim 과 0.03 mm 이내). 지금은 기록해 둔 명령을 재생하는 스크립트가 대신한다 |
 | 드론 조종 ([2] 안) | 실물 조종기로 sim 드론을 움직인다 (`sim_ros2.py --drone-rc on`) | **만듦 (5단계 5-A, 2026-10-08)**: `check_rc.py` 6/6, 실물 조종기로 sim 드론이 움직이는 것 확인. 옵션을 안 켜면 지금처럼 자동 (리셋 뒤 호버) 또는 `drone_cmd.py` |
 | [2] 시뮬레이터 | 로봇·카메라·드론을 계산하고 실물과 같은 토픽을 낸다 | 완성 (3단계, `check_ros2.py` 9/9) |
 | [3] 녹화 도구 | 키 입력으로 에피소드를 녹화한다 | 완성 (4단계) |
@@ -179,7 +179,28 @@
 - `/joint_command` 의 `header.stamp` 를 넣는다 (sim = sim time). 50 Hz 이상으로 일정하게
 - 리셋 뒤에는 로봇의 홈 자세에서 시작 (리셋 전 자세의 명령을 보내면 팔이 33 ms 만에 그 자세로 뛴다)
 - PICO 컨트롤러는 자세 (위치·방향) 를 주는 카테시안 입력이라 IK 가 필요하다. sim 안의 `arm_ik.py` (PhysX Jacobian) 는 sim 밖 노드에서 쓸 수 없어 URDF 에서 Jacobian 을 계산한다
-- 컨트롤러 값을 PC 에서 읽는 방법은 아직 확인하지 않았다 (PLAN 5-B B-0). 연결이 끊기거나 추적을 잃으면 팔을 멈추고 알린다
+  → `teleop/ik_model.py` (numpy 만. `check_ik_model.py` 로 sim 과 대조 2/2 PASS, 2026-10-12)
+- 조작자가 같은 처음 자세에서 컨트롤러 A 버튼을 누르면 시작한다. 그 순간의 컨트롤러 방향이 수평 "앞" 이 된다. `/joint_command` 의 stamp 는 보내는 순간의 sim time (헤드셋 타임스탬프는 쓰지 않는다)
+- 추적 상실·연결 끊김은 자동으로 판정하지 않는다 (2026-10-12 사용자 결정): 조작자가 GUI 로 보고 그 에피소드를 `d` 로 버린다
+
+**PICO 입력 경로 (2026-10-12 설치·확인, PLAN 5-B "설치 결과"·"B-0 결과")** — 텔레옵 노드 안에서 [1] 블록의 앞부분이 된다
+
+```text
+ PICO 4 Ultra headset + right controller
+   app XRoboToolkit-PICO 1.1.1
+        | Wi-Fi -> router -> wired PC,  TCP 63901
+        v
+ PC service  RoboticsServiceProcess   (deb roboticsservice 1.0.0, /opt/apps/roboticsservice)
+        | TCP 127.0.0.1:60061
+        v
+ C++ SDK libPXREARobotSDK.so  ->  Python binding xrobotoolkit_sdk   (~/xrobotoolkit/venv, teleop/build_xr_binding.sh)
+        | latest value only: pose (x, y, z, qx, qy, qz, qw), trigger / grip 0..1, buttons, 90 Hz
+        v
+ arm teleop node (B-2, NOT BUILT):  pose change -> TCP target -> teleop/ik_model.py -> /joint_command, /gripper/command
+```
+
+- 바인딩은 최신값만 준다: 새 데이터가 안 와도 옛 값이 나오고, 서비스가 없으면 전부 0 인데 에러는 없다
+- 컨트롤러를 숨기거나 헤드셋을 벗어도 값은 90 Hz 로 계속 온다 (타임스탬프로는 추적 상실을 알 수 없다)
 
 ---
 
