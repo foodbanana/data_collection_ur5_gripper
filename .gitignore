@@ -22,3 +22,4 @@ isaacsim/reports/
 
 # sim 전용 Python 패키지 (pymavlink 등, pip install --target, ~/isaacsim 에 설치하지 않음)
 isaacsim/.pydeps/
+teleop/reports/
