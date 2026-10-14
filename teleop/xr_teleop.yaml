@@ -17,10 +17,11 @@ topics:
   gripper_command: /gripper/command
   clock: /clock
   protective_stop: /protective_stop     # sim 전용 (std_msgs/Bool). 발행자가 없으면 쓰지 않는다
+  request: /teleop/request              # 녹화 도구 요청 (std_msgs/String, 아래 buttons). 녹화하지 않는다 (record_toggle.py TELEOP_REQUEST_TOPIC 과 같아야 함)
 
 # 컨트롤러 → TCP
-hand: right                   # 오른손 컨트롤러 (A 버튼·오른쪽 트리거)
-scale: 1.0                    # 손 이동 : TCP 이동 (1 = 같은 거리)
+hand: right                   # 오른손 컨트롤러의 자세·트리거를 쓴다
+scale: 0.9                    # 손 이동 : TCP 이동 (1 = 같은 거리). 위치에만 적용, 회전은 1 : 1. 2026-10-14 사용자: 1.0 → 0.9 (조금 느리게)
 rotation: true                # 손목 회전도 TCP 가 따라감 (false = 위치만, 자세는 시작할 때 그대로)
 # A 를 누른 순간 컨트롤러 앞쪽 (자기 좌표계 −z) 을 수평면에 내린 방향이 "앞" = 로봇 base +x, 위 (+y) = base +z.
 # 컨트롤러 끝이 수평에서 이 각도보다 더 들리거나 숙여져 있으면 "앞" 을 정할 수 없어 시작을 거부한다
@@ -45,6 +46,18 @@ gripper:
   open_below: 0.4
   raw_open: 0.0
   raw_close: 1150.0
+
+# 컨트롤러 버튼 (2026-10-14 결정). A·B 는 오른손, X·Y 는 왼손 (헤드셋 앱에서 왼손 컨트롤러도 Send). 누르는 순간 한 번
+# 녹화 순서: B 리셋 → Y 텔레옵 시작 → 자세 유지 → A 녹화 시작 → 잡기 → X 모터 정지 → A 녹화 끝 → B 다음 에피소드
+teleop_button: Y             # 텔레옵 시작 / 멈춤 (누른 순간의 오른손 컨트롤러 자세가 기준. 녹화와 무관)
+# 녹화 도구 (record_toggle.py) 요청 (/teleop/request). 텔레옵 중이 아니어도 보낸다. 끄려면 {}
+#   record     : 녹화 시작 / 종료 (리셋하지 않는다. 시작은 리셋 뒤 아직 녹화하지 않았을 때만)
+#   reset      : 에피소드 리셋 (/sim/reset, 약 24 s). 녹화 중이면 실패로 보고 녹화를 끝내 bags/_discarded/ 로 옮긴 뒤 리셋
+#   drone_kill : 드론 모터 정지 (= 녹화 도구 k, 언제든. 녹화 중이면 시각이 episode.json 에 남는다)
+buttons:
+  record: A
+  reset: B
+  drone_kill: X
 
 # 입력·상태 확인 (wall 시간)
 xr_connect_timeout: 5.0       # [s] 시작할 때 헤드셋 데이터 (타임스탬프 증가, 쿼터니언 크기 1) 가 이 안에 와야 한다. 아니면 에러로 끝남
