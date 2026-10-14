@@ -12,7 +12,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (= `record_toggle.py`). 키 `r` 시작/종료, `k` 드론 모터 정지 (sim), `d` 버리기, `q` 종료 |
+| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (= `record_toggle.py`). 키 `r` 시작/종료, `k` 드론 모터 정지 (sim), `d` 버리기, `q` 종료. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`, 녹화하지 않음, 2026-10-14): A 녹화 시작 (리셋 뒤에만)·종료, B 리셋 (녹화 중이면 실패로 `_discarded/` 로), X 모터 정지 |
 | 단위 | `r` ~ `r` 구간 1 개 = bag 1 개 = 에피소드 1 개. 저장 `bags/<YYYYMMDD_HHMMSS>_<작업명>/` (`.mcap` + `metadata.yaml` + `episode.json`) |
 | 토픽 | 상태 7 개 (팔·그리퍼·카메라 2 대와 camera_info) + 명령 2 개, sim 은 2 개 더 (3 장) |
 | 녹화 전 검사 | 상태 토픽마다 발행자가 있는지, 카메라 발행자가 RELIABLE 인지. 문제가 있으면 **녹화를 시작하지 않는다** |
@@ -123,10 +123,10 @@ source /opt/ros/jazzy/setup.bash
 |------|--------|------|---------|-----------|
 | 1 | 1 | `~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py` | 씬 + ROS 2 토픽 + `/sim/reset`·`/sim/drone_kill`. 기본 = PX4 드론, 리셋마다 드론 위치 ±5 cm | `[sim_ros2] t ...` 상태 줄 (약 30 s) |
 | 2 | 2 | `./6_record_bag.sh <작업명> --sim` | 녹화 도구 대기 | `[IDLE] 대기 중...` |
-| 3 | 2 | 키 `r` | `/sim/reset` (팔 홈, 그리퍼 열림, 드론 재이륙, 약 24 s) → 성공하면 녹화 시작 | `[RESET] 완료 ...` → 벨 소리 + `[REC ●] 녹화 시작` |
+| 3 | 2 | 키 `r` (컨트롤러: B 리셋 → Y 텔레옵 시작 → A 녹화 시작) | `/sim/reset` (팔 `--init-pose` 자세 (안 주면 홈), 그리퍼 열림, 드론 재이륙, 약 24 s) → 성공하면 녹화 시작 | `[RESET] 완료 ...` → 벨 소리 + `[REC ●] 녹화 시작` |
 | 4 | 3 또는 텔레옵 | 시연 (텔레옵 장치. 장치가 없으면 `python3 isaacsim/scripts/replay_commands.py isaacsim/config/ros2_check/commands_success.csv`) | 팔·그리퍼 명령 | 드론을 잡음 |
-| 5 | 2 | 키 `k` | 드론 모터 정지 (`/sim/drone_kill`). 드론 무게가 그리퍼에 실린다 | `[KILL] 드론 모터 정지 (sim t ...)` |
-| 6 | 2 | 키 `r` | 녹화 종료, bag 마무리 | `[SAVED] .../bags/<이름> (..s)` |
+| 5 | 2 | 키 `k` (또는 컨트롤러 X) | 드론 모터 정지 (`/sim/drone_kill`). 드론 무게가 그리퍼에 실린다 | `[KILL] 드론 모터 정지 (sim t ...)` |
+| 6 | 2 | 키 `r` (또는 컨트롤러 A) | 녹화 종료, bag 마무리 | `[SAVED] .../bags/<이름> (..s)` |
 | 7 | 2 | (실패한 시연이면) 키 `d` → `y` | 방금 에피소드를 `bags/_discarded/` 로 | `[DISCARDED] → ...` |
 | 8 | 2 | 3 번부터 반복, 끝나면 `q` | | `[EXIT] 종료` |
 

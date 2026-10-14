@@ -13,6 +13,7 @@ sim 실행 속도 (RTF 측정·시간 내역·카메라 QoS·Python 콜백 최�
 sim 팔 명령 보간 (`/joint_command` 30 Hz 계단 문제, 다른 프로젝트 조사, PhysX 관절 속도·rclpy spin 문제): `docs/arm_command_interpolation.md`
 sim ROS 2 인터페이스 (토픽·주기·QoS 표, 구조도, 리셋·보호 정지, 실행·검사 명령): `docs/sim_ros2_interface.md`
 ROS 2 데이터 녹화 (녹화 도구 명령·키, 녹화 토픽·주기 표, 구조도, `episode.json`, 녹화 뒤 변환·병합·검수): `docs/data_recording.md`
+PICO VR 컨트롤러로 sim 데이터 수집 (조작자 안내: VR 연결, 터미널 명령, 버튼, 녹화 순서, 주의, 데이터 위치): `docs/pico_vr_data_collection.md`
 시각 (stamp) 동기화 (변환이 stamp 를 쓰는 방법, sim = 같은 물리 스텝, 실물 = 토픽마다 다른 프로그램이 찍음·측정 결과·모르는 것): `docs/timestamp_sync.md`
 변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
 
@@ -29,7 +30,7 @@ ROS 2 데이터 녹화 (녹화 도구 명령·키, 녹화 토픽·주기 표, �
 ## 원칙
 
 1. sim 은 실물과 같은 ROS 2 토픽 인터페이스를 흉내낸다. 녹화(`record_toggle.py`)와 변환(stage1 → v2.1)은 sim/실물 공유.
-2. 텔레옵 장치는 `/joint_command` + `/gripper/command` 만 발행한다 (장치 교체 가능).
+2. 텔레옵 장치는 `/joint_command` + `/gripper/command` 만 발행한다 (장치 교체 가능). 녹화 도구 요청 `/teleop/request` (컨트롤러 버튼 → 녹화 도구 키, 녹화하지 않음) 는 예외 (2026-10-14).
 3. 에셋(USD)과 씬을 분리한다.
 4. **조용한 fallback 금지.** 입력이 기대와 다르면 에러로 중단한다. 대체값은 명시적 옵션일 때만.
 
@@ -63,7 +64,7 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 
 | 단계 | 실행 | 환경 |
 |------|------|------|
-| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (`record_toggle.py`): r 시작/종료, d 버리기, q 종료. `--sim`: r → `/sim/reset` → 녹화, k = 드론 모터 정지. bag 폴더에 `episode.json` | 시스템 python3 + ROS |
+| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (`record_toggle.py`): r 시작/종료, d 버리기, q 종료. `--sim`: r → `/sim/reset` → 녹화, k = 드론 모터 정지. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`): B 리셋 → Y 텔레옵 → A 녹화 시작 → X 모터 정지 → A 녹화 끝, 녹화 중 B = 실패로 `_discarded/` 로 옮기고 리셋. A 는 리셋 뒤에만 녹화 시작. bag 폴더에 `episode.json` | 시스템 python3 + ROS |
 | stage1 | `python3 lerobot_stage1_extract_bag.py <bag> --arm-action command\|next_state --base-imu const\|topic` (둘 다 필수) → `bag_lerobot_intermediate/<bag>/` | 시스템 python3 + ROS |
 | 병합 | `python lerobot_merge_episodes_v21.py --manifest <txt> \| --all --repo-id <id>` (에피소드 1 개는 `lerobot_stage2_build_dataset_v21.py`) | conda `lerobot_v2` |
 | 검수 | `python inspect_dataset_v21.py <데이터셋> --load` → PASS/FAIL | conda `lerobot_v2` |
