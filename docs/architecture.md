@@ -1,6 +1,6 @@
 # 데이터 수집 전체 구조
 
-작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인
+작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인 · 2026-10-14 컨트롤러 버튼 (녹화·리셋·드론 정지), B-3·B-4 (텔레옵 녹화 → 검수)
 
 명령 → 시뮬레이터 (또는 실물 로봇) → 녹화 → 변환 → 병합 → 검수까지, 지금 만들어져 있는 데이터 수집 흐름 전체를 한 장으로 보여 준다.
 부분별 자세한 내용은 맨 아래 "관련 문서".
@@ -15,7 +15,8 @@
 |------------------------------------------------------------------------------------------------------------------------|
 | now    : isaacsim/scripts/replay_commands.py <commands.csv>   (replays a recorded grasp, paced by /clock)              |
 | stage 5-B: teleop/xr_teleop_node.py (PICO 4 Ultra controller pose -> TCP target -> IK), 60 Hz   <-- BUILT, see sec. 2  |
-| rule   : publishes only these two topics; /joint_command carries header.stamp = sim time at send                       |
+| rule   : data = only these two topics; /joint_command carries header.stamp = sim time at send                          |
+|          + /teleop/request (std_msgs/String, NOT recorded): buttons A/B/X -> [3] recorder (record / reset / kill)      |
 +------------------------------------------------------------------------------------------------------------------------+
       |  /joint_command     sensor_msgs/JointState   ~60 Hz (teleop rate)   6 arm joint targets [rad]
       |  /gripper/command   std_msgs/Float64         on change              raw 0 (open) / 1150 (close)
@@ -28,7 +29,7 @@
 |   ArmBridge        : latest /joint_command per loop -> linear interpolation 33 ms -> UR5 drive targets                 |
 |   GripperBridge    : raw goal -> GripperProfile (0.516 rad/s) -> rh_r1_joint ; publishes present / goal                |
 |   ProtectiveStop   : contact 150 N / tracking error 5 deg / joint speed 200 deg/s -> hold arm, ignore commands         |
-|   EpisodeReset     : service /sim/reset       (teleport arm home + restart PX4 + re-takeoff, ~24 s)                    |
+|   EpisodeReset     : service /sim/reset       (teleport arm to --init-pose + restart PX4 + re-takeoff, ~24 s)          |
 |                      service /sim/drone_kill  (drone motors off)                                                       |
 |   Camera Helper x2 : OmniGraph, RTX render (DLSS Performance), 640x480                                                 |
 |   PhysX scene      : table + UR5 + RH-P12-RN(A) gripper + wrist camera + third-view camera + drone (Iris 0.75x)        |
@@ -55,6 +56,8 @@
 |------------------------------------------------------------------------------------------------------------------------|
 | keys:  r = call /sim/reset, then start recording     r again = stop                                                    |
 |        k = call /sim/drone_kill (after the grasp)    d = move last episode to bags/_discarded/     q = quit            |
+| controller (/teleop/request, 2026-10-14): A = start / stop recording WITHOUT reset (start only after a reset),         |
+|         B = reset (if recording: stop, move to bags/_discarded/, then reset), X = same as k                            |
 |                                                                                                                        |
 |   1. before recording: every state topic has a publisher? camera publishers RELIABLE?  -> if not, refuse to record     |
 |   2. spawn "ros2 bag record": 11 topics (the 9 above incl. camera_info, + /joint_command + /gripper/command)           |
@@ -122,7 +125,7 @@
 
 | 블록 | 무엇인가 | 상태 |
 |------|----------|------|
-| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드를 만들었다 (5단계 5-B, 2026-10-12)**: `teleop/xr_teleop_node.py` (PICO 4 Ultra, XRoboToolkit 90 Hz → URDF IK `teleop/ik_model.py` → 60 Hz 명령). 만든 입력으로 시험 11/11 (`check_xr_teleop.py`). 실제 컨트롤러로 PX4 드론을 잡고 모터 정지·리셋까지 해 봤다 (B-3, 2026-10-14 사용자 확인). 컨트롤러 버튼 (Y 텔레옵, A 녹화, B 리셋, X 모터 정지) 으로 녹화 → 변환 → 검수 5/5 (B-4, 2026-10-14, 에피소드 2 개). 텔레옵 없이 확인할 때는 기록해 둔 명령을 재생하는 스크립트를 쓴다 |
+| [1] 명령 소스 | 팔·그리퍼 명령을 보내는 쪽 | **텔레옵 노드를 만들었다 (5단계 5-B, 2026-10-12)**: `teleop/xr_teleop_node.py` (PICO 4 Ultra, XRoboToolkit 90 Hz → URDF IK `teleop/ik_model.py` → 60 Hz 명령). 만든 입력으로 시험 12/12 (`check_xr_teleop.py`, 2026-10-14 버튼 항목 포함). 실제 컨트롤러로 PX4 드론을 잡고 모터 정지·리셋까지 해 봤다 (B-3, 2026-10-14 사용자 확인). 컨트롤러 버튼 (Y 텔레옵, A 녹화, B 리셋, X 모터 정지) 으로 녹화 → 변환 → 검수 5/5 (B-4, 2026-10-14, 에피소드 2 개). 텔레옵 없이 확인할 때는 기록해 둔 명령을 재생하는 스크립트를 쓴다 |
 | 드론 조종 ([2] 안) | 실물 조종기로 sim 드론을 움직인다 (`sim_ros2.py --drone-rc on`) | **만듦 (5단계 5-A, 2026-10-08)**: `check_rc.py` 6/6, 실물 조종기로 sim 드론이 움직이는 것 확인. 옵션을 안 켜면 지금처럼 자동 (리셋 뒤 호버) 또는 `drone_cmd.py` |
 | [2] 시뮬레이터 | 로봇·카메라·드론을 계산하고 실물과 같은 토픽을 낸다 | 완성 (3단계, `check_ros2.py` 9/9) |
 | [3] 녹화 도구 | 키 입력으로 에피소드를 녹화한다 | 완성 (4단계) |
@@ -182,16 +185,17 @@
   텔레옵은 그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보이는 자세에서 시작한다 (2026-10-12, PLAN 5-B "에피소드 시작 자세")
 - PICO 컨트롤러는 자세 (위치·방향) 를 주는 카테시안 입력이라 IK 가 필요하다. sim 안의 `arm_ik.py` (PhysX Jacobian) 는 sim 밖 노드에서 쓸 수 없어 URDF 에서 Jacobian 을 계산한다
   → `teleop/ik_model.py` (numpy 만. `check_ik_model.py` 로 sim 과 대조 2/2 PASS, 2026-10-12)
-- 조작자가 같은 처음 자세에서 컨트롤러 A 버튼을 누르면 시작한다. 그 순간의 컨트롤러 방향이 수평 "앞" 이 되고, 그 "앞" 을 로봇 base +x (드론 쪽) 에 맞춘다 (끝이 거의 수직이면 시작을 거부). `/joint_command` 의 stamp 는 보내는 순간의 sim time (헤드셋 타임스탬프는 쓰지 않는다)
+- 조작자가 같은 처음 자세에서 텔레옵 버튼 (Y, 왼손. 2026-10-12 에는 A 였다가 2026-10-14 에 옮김) 을 누르면 시작한다. 그 순간의 컨트롤러 방향이 수평 "앞" 이 되고, 그 "앞" 을 로봇 base +x (드론 쪽) 에 맞춘다 (끝이 거의 수직이면 시작을 거부). `/joint_command` 의 stamp 는 보내는 순간의 sim time (헤드셋 타임스탬프는 쓰지 않는다)
 - 추적 상실·연결 끊김은 자동으로 판정하지 않는다 (2026-10-12 사용자 결정): 조작자가 GUI 로 보고 그 에피소드를 `d` 로 버린다
-- A 토글 (다시 누르면 멈춤), 트리거 = 그리퍼 (0.6 / 0.4 이진), 배율 1 : 1, 손목 회전도 따라감. **명령은 텔레옵 중에만 보낸다** (녹화의 첫 명령 = A 를 누른 순간)
-- `/sim/reset` 으로 팔이 옮겨지면 노드가 스스로 멈춘다 (측정 관절각이 목표와 크게 다름). A 를 누르면 새 자세에서 다시 시작
+- Y 토글 (다시 누르면 멈춤, 녹화와 무관 → 녹화 중 손 위치를 다시 잡는 클러치), 트리거 = 그리퍼 (0.6 / 0.4 이진), 배율 0.9 (위치만, 2026-10-14), 손목 회전 1 : 1.
+  **명령은 텔레옵 중에만 보낸다.** 녹화 순서는 B 리셋 → Y 텔레옵 → A 녹화 → X 모터 정지 → A 녹화 끝 이라, 녹화 시작부터 명령이 들어간다 (조작자 안내 `docs/pico_vr_data_collection.md`)
+- `/sim/reset` 으로 팔이 옮겨지면 노드가 스스로 멈춘다 (측정 관절각이 목표와 크게 다름). Y 를 누르면 새 자세에서 다시 시작. 텔레옵이 스스로 멈춰도 녹화는 계속된다
 - 손목이 테이블에 가까워지면 (손목 관절 원점 높이 9 cm) 더 내려가는 목표는 보내지 않고 알린다 (테이블 보호)
 
 **PICO 입력 경로 (2026-10-12 설치·확인, PLAN 5-B "설치 결과"·"B-0 결과")** — 텔레옵 노드 안에서 [1] 블록의 앞부분이 된다
 
 ```text
- PICO 4 Ultra headset + right controller
+ PICO 4 Ultra headset + right / left controllers
    app XRoboToolkit-PICO 1.1.1
         | Wi-Fi -> router -> wired PC,  TCP 63901
         v
@@ -202,6 +206,7 @@
         | latest value only: pose (x, y, z, qx, qy, qz, qw), trigger / grip 0..1, buttons, 90 Hz
         v
  arm teleop node teleop/xr_teleop_node.py:  pose change -> TCP target -> teleop/ik_model.py -> /joint_command, /gripper/command
+                                            buttons: Y = teleop on/off, A / B / X -> /teleop/request -> record_toggle.py
 ```
 
 - 바인딩은 최신값만 준다: 새 데이터가 안 와도 옛 값이 나오고, 서비스가 없으면 전부 0 인데 에러는 없다
@@ -218,6 +223,7 @@
 | `docs/drone_teleop.md` | [2] 안의 드론을 실물 조종기로 움직이는 경로 (5단계 5-A, 만듦. 녹화되지 않음) |
 | `docs/arm_command_interpolation.md` | [2] ArmBridge 의 명령 보간 |
 | `docs/data_recording.md` | [3] 녹화: 키, 녹화 토픽, `episode.json`, 녹화 순서 |
+| `docs/pico_vr_data_collection.md` | [1] PICO 텔레옵으로 수집하는 조작자 안내: VR 연결, 명령, 버튼, 녹화 순서, 주의, 데이터 위치, 설정 |
 | `README.md`, `dataset_merge.md` | [4] ~ [6] 변환·병합·검수 옵션, 실물 수집 순서 |
 | `docs/timestamp_sync.md` | 모든 블록에 걸친 시각 (stamp) 동기화: sim 과 실물 |
 | `docs/PLAN.md` | 단계별 계획·결과·남은 문제 |
