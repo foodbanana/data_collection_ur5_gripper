@@ -5,17 +5,20 @@
 #   컨트롤러 입력을 스크립트가 만들어 (ScriptedInput) 진짜 노드 코드 (XrTeleop) 에 넣고, 실행 중인 sim 에서 결과를 잰다.
 #   TCP 위치·자세는 /joint_states 의 FK (ik_model, sim 과 0.03 mm 이내) 로 본다. 만든 컨트롤러는 좌표계 축에서 35° 돌아가 있고
 #   끝이 20° 들려 있다 (B-0 처럼 "앞" 이 축과 나란하지 않은 경우)
-#     1 수직 거부      끝을 80° 든 채 A → 명령이 나가지 않음
-#     2 시작           A → 명령이 나가고, 손을 안 움직이면 TCP 가 그대로
-#     3 앞으로 10 cm   → TCP base +x 10 cm
-#     4 위 8 cm·오른쪽 5 cm → TCP +z 8 cm, −y 5 cm
+#     (아래 "텔레옵 버튼" = 설정 teleop_button, 지금 Y)
+#     1 수직 거부      끝을 80° 든 채 텔레옵 버튼 → 명령이 나가지 않음
+#     2 시작           텔레옵 버튼 → 명령이 나가고, 손을 안 움직이면 TCP 가 그대로
+#     3 앞으로 10 cm   → TCP base +x 10 cm × 배율 (scale)
+#     4 위 8 cm·오른쪽 5 cm → TCP +z 8 cm, −y 5 cm (× 배율)
 #     5 왼쪽으로 20° 돌림 → TCP 가 base z 축으로 +20°, 위치 그대로
 #     5b 손목 비틀기 ±25° → TCP 가 25° 돌고 보호 정지 없음 (손목 마운트 ↔ 팔뚝 자기 충돌이 없는 시작 자세인지)
 #     6 그리퍼         트리거 1.0 → /gripper/target 1150, 0.5 → 그대로 (히스테리시스), 0.0 → 0
 #     7 명령 간격      보낸 간격 (wall) 중앙값 ≈ 1 / rate_hz, stamp 0 없음·뒤로 가지 않음
-#     8 멈춤·다시 시작 A → 명령 멈춤. 손을 30 cm 옮긴 뒤 A → TCP 가 뛰지 않음
+#     8 멈춤·다시 시작 텔레옵 버튼 → 명령 멈춤. 손을 30 cm 옮긴 뒤 텔레옵 버튼 → TCP 가 뛰지 않음
 #     9 리셋           텔레옵 중 /sim/reset → 노드가 스스로 멈추고, 리셋 뒤 팔이 시작 자세에 그대로
 #    10 보호 정지      전체 동안 /protective_stop true 0 번
+#    11 버튼 요청      설정 buttons 의 버튼 (A·B·X) 을 0.5 s 씩 누름 → /teleop/request 에 그 요청이 한 번씩 (누르고 있어도 한 번), 텔레옵은 그대로
+#                     (녹화 도구가 받아서 하는 일 (리셋·녹화·모터 정지) 은 이 시험에 없다)
 #
 # 실행 (sim 을 먼저 띄운다. 기하 제어기 드론이면 리셋이 약 2 s):
 #   source /opt/ros/jazzy/setup.bash
@@ -70,13 +73,15 @@ def Ry(a):
 class ScriptedInput:
     """만든 컨트롤러. 조작자 기준 (앞, 오른쪽, 위) 로 위치를, yaw·pitch 로 자세를 준다. 읽을 때마다 타임스탬프가 증가한다."""
 
-    def __init__(self, heading_deg=35.0, pitch_deg=20.0):
+    def __init__(self, teleop_button, heading_deg=35.0, pitch_deg=20.0):
+        self.tb = teleop_button
         self.h = math.radians(heading_deg)
         self.lock = threading.Lock()
         self.fru = np.zeros(3)             # 앞·오른쪽·위 [m]
         self.yaw, self.pitch = 0.0, math.radians(pitch_deg)   # yaw: 위 축으로 왼쪽 + [rad], pitch: 끝을 듦 + [rad]
         self.roll = 0.0                    # 손목 비틀기: 조작자가 볼 때 시계 방향 + [rad] (컨트롤러 앞 축 둘레)
-        self.trigger, self.a = 0.0, False
+        self.trigger, self.a = 0.0, False   # a: 텔레옵 버튼을 누름
+        self.buttons = {}                  # 그 밖의 버튼 {'B': True, ...}
         Rh = Ry(self.h)
         self.fwd = Rh @ np.array([0.0, 0.0, -1.0])
         self.right = np.cross(self.fwd, np.array([0.0, 1.0, 0.0]))
@@ -86,7 +91,7 @@ class ScriptedInput:
         with self.lock:
             pos = self.origin + self.fru[0] * self.fwd + self.fru[1] * self.right + self.fru[2] * np.array([0.0, 1.0, 0.0])
             R = Ry(self.h + self.yaw) @ Rx(self.pitch) @ Rz(-self.roll)
-            return tn.XrSample(time.monotonic_ns(), pos, km.R_to_quat(R), self.trigger, self.a)
+            return tn.XrSample(time.monotonic_ns(), pos, km.R_to_quat(R), self.trigger, {**self.buttons, self.tb: self.a})
 
     def set(self, **kw):
         with self.lock:
@@ -104,13 +109,13 @@ def main():
     import rclpy
     from rclpy.node import Node
     from sensor_msgs.msg import JointState
-    from std_msgs.msg import Bool
+    from std_msgs.msg import Bool, String
     from std_srvs.srv import Trigger
 
     rclpy.init()
     model = km.ArmModel()
     n = Node("check_xr_teleop")
-    st = {"q": None, "cmd": [], "grip_t": None, "pstop_true": 0, "pstop": None}
+    st = {"q": None, "cmd": [], "grip_t": None, "pstop_true": 0, "pstop": None, "req": []}
 
     def on_js(m):
         d = dict(zip(m.name, m.position))
@@ -128,6 +133,7 @@ def main():
     n.create_subscription(JointState, t["joint_command"], on_cmd, 1000)
     n.create_subscription(JointState, "/gripper/target", lambda m: st.__setitem__("grip_t", m.position[0]), 10)
     n.create_subscription(Bool, t["protective_stop"], on_ps, 10)
+    n.create_subscription(String, t["request"], lambda m: st["req"].append(m.data), 10)
     reset_cli = n.create_client(Trigger, "/sim/reset")
 
     def pump(sec, fn=None):
@@ -162,7 +168,7 @@ def main():
     q_init = st["q"].copy()
     T_init = model.fk(q_init)
 
-    inp = ScriptedInput()
+    inp = ScriptedInput(cfg["teleop_button"])
     node_log = []
     tele = tn.XrTeleop(cfg, inp, log=lambda m: (node_log.append(m), print("    " + m.replace("\a", ""), flush=True)))
     stop = threading.Event()
@@ -185,7 +191,7 @@ def main():
         inp.set(pitch=math.radians(80))
         press_a()
         pump(1.0)
-        result("1 수직 거부", len(st["cmd"]) == n0 and not tele.engaged, f"끝을 80° 든 채 A → 명령 {len(st['cmd']) - n0} 개 (기준 0)")
+        result("1 수직 거부", len(st["cmd"]) == n0 and not tele.engaged, f"끝을 80° 든 채 텔레옵 버튼 → 명령 {len(st['cmd']) - n0} 개 (기준 0)")
         inp.set(pitch=math.radians(20))
 
         # 2 시작
@@ -193,7 +199,7 @@ def main():
         pump(1.5)
         d = np.linalg.norm(tcp()[:3, 3] - T_init[:3, 3])
         result("2 시작", tele.engaged and len(st["cmd"]) - n0 > 50 and d < 1e-3,
-               f"A → 명령 {len(st['cmd']) - n0} 개 (1.8 s), 손을 안 움직였을 때 TCP 이동 {d * 1000:.2f} mm (기준 < 1)")
+               f"텔레옵 버튼 → 명령 {len(st['cmd']) - n0} 개 (1.8 s), 손을 안 움직였을 때 TCP 이동 {d * 1000:.2f} mm (기준 < 1)")
         i_start = n0
 
         # 3 앞으로 10 cm
@@ -206,15 +212,16 @@ def main():
         pump(2.0, lambda u: (inp.set(fru=np.array([0.10 * u, 0, 0])), track()))
         pump(1.5)
         dp = tcp()[:3, 3] - T_init[:3, 3]
-        result("3 앞으로 10 cm", np.linalg.norm(dp - [0.10, 0, 0]) < 3e-3,
-               f"TCP 이동 (base) [{dp[0] * 1000:+.1f}, {dp[1] * 1000:+.1f}, {dp[2] * 1000:+.1f}] mm (기준 [+100, 0, 0] ± 3), 이동 중 명령 − 측정 최대 {math.degrees(lead[0]):.2f}°")
+        k = float(cfg["scale"])                # 손 이동 × 배율 = TCP 이동
+        result("3 앞으로 10 cm", np.linalg.norm(dp - k * np.array([0.10, 0, 0])) < 3e-3,
+               f"TCP 이동 (base) [{dp[0] * 1000:+.1f}, {dp[1] * 1000:+.1f}, {dp[2] * 1000:+.1f}] mm (기준 [{100 * k:+.0f}, 0, 0] ± 3, 배율 {k:g}), 이동 중 명령 − 측정 최대 {math.degrees(lead[0]):.2f}°")
 
         # 4 위 8 cm, 오른쪽 5 cm
         pump(2.0, lambda u: inp.set(fru=np.array([0.10, 0.05 * u, 0.08 * u])))
         pump(1.5)
         dp = tcp()[:3, 3] - T_init[:3, 3]
-        result("4 위 8 cm·오른쪽 5 cm", np.linalg.norm(dp - [0.10, -0.05, 0.08]) < 3e-3,
-               f"TCP 이동 (base) [{dp[0] * 1000:+.1f}, {dp[1] * 1000:+.1f}, {dp[2] * 1000:+.1f}] mm (기준 [+100, −50, +80] ± 3)")
+        result("4 위 8 cm·오른쪽 5 cm", np.linalg.norm(dp - k * np.array([0.10, -0.05, 0.08])) < 3e-3,
+               f"TCP 이동 (base) [{dp[0] * 1000:+.1f}, {dp[1] * 1000:+.1f}, {dp[2] * 1000:+.1f}] mm (기준 [{100 * k:+.0f}, {-50 * k:+.0f}, {80 * k:+.0f}] ± 3)")
 
         # 5 왼쪽으로 20° 돌림
         p_before = tcp()[:3, 3].copy()
@@ -274,7 +281,7 @@ def main():
         pump(1.5)
         jump = np.linalg.norm(tcp()[:3, 3] - p_stop)
         result("8 멈춤·다시 시작", stopped == 0 and tele.engaged and jump < 2e-3,
-               f"A → 멈춘 1 s 동안 명령 {stopped} 개 (기준 0). 손을 30 cm 옮긴 뒤 A → TCP 이동 {jump * 1000:.2f} mm (기준 < 2)")
+               f"텔레옵 버튼 → 멈춘 1 s 동안 명령 {stopped} 개 (기준 0). 손을 30 cm 옮긴 뒤 다시 → TCP 이동 {jump * 1000:.2f} mm (기준 < 2)")
 
         # 9 리셋
         reset()
@@ -285,6 +292,21 @@ def main():
         result("9 리셋", not tele.engaged and len(st["cmd"]) == n2 and err < 1.0 and st["pstop"] is False,
                f"텔레옵 중 /sim/reset → 노드 텔레옵 {'중' if tele.engaged else '멈춤'}, 리셋 뒤 2 s 동안 명령 {len(st['cmd']) - n2} 개 (기준 0), "
                f"팔이 시작 자세에서 {err:.3f}° (기준 < 1), 보호 정지 {st['pstop']}")
+
+        # 11 버튼 요청 (리셋 뒤 텔레옵이 멈춘 상태에서. 요청은 텔레옵 중이 아니어도 나가야 한다)
+        got = {}
+        btns = sorted(cfg["buttons"].values())
+        for btn in btns:
+            n3 = len(st["req"])
+            inp.set(buttons={btn: True})
+            pump(0.5)
+            inp.set(buttons={})
+            pump(0.3)
+            got[btn] = st["req"][n3:]
+        want = {b: [r for r, bb in cfg["buttons"].items() if bb == b] for b in btns}
+        result("11 버튼 요청", got == want and not tele.engaged,
+               f"0.5 s 누름 → /teleop/request: {', '.join(f'{b} {got[b]}' for b in btns)} (기준 {', '.join(f'{b} {want[b]}' for b in btns)}), "
+               f"텔레옵 {'중' if tele.engaged else '멈춤 그대로'}")
 
         # 10 보호 정지
         result("10 보호 정지", st["pstop_true"] == 0, f"/protective_stop true {st['pstop_true']} 번 (기준 0)")
