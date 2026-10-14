@@ -7,6 +7,11 @@
 #   d (대기 중) : 방금 저장한 에피소드를 bags/_discarded/ 로 이동 (y 로 확인, 삭제는 안 함). 실패한 에피소드는 이렇게 버린다
 #   q           : 종료 (녹화 중이면 안전 종료 후 종료)
 #   r~r 구간 1개 = bag 1개 = 에피소드 1개
+#   텔레옵 컨트롤러 버튼 (2026-10-14, teleop/xr_teleop.yaml buttons): /teleop/request (std_msgs/String, 녹화하지 않음)
+#     record (A)     : 녹화 시작 / 종료. 리셋하지 않는다 → --sim 에서는 리셋 (B 또는 r) 뒤 아직 녹화하지 않았을 때만 시작 (episode.json 의 리셋 정보)
+#     reset (B)      : --sim 에피소드 리셋. 녹화 중이면 실패로 보고 녹화를 끝내 bags/_discarded/ 로 옮긴 뒤 리셋 (A 보다 우선)
+#     drone_kill (X) : k 와 같음
+#     리셋·녹화 종료·모터 정지를 처리하는 동안 온 요청은 버린다. 키보드 r·k·d·q 는 그대로
 #
 # 사용: python3 record_toggle.py [작업명] [--sim]     (보통 6_record_bag.sh 를 통해 실행)
 # 저장: <이 파일이 있는 폴더>/bags/<이름>/  (+ episode.json: 녹화 정보, 카메라 역할 → 장치, sim 은 리셋 응답)
@@ -43,6 +48,10 @@ SIM_RESET_SERVICE = '/sim/reset'
 SIM_KILL_SERVICE = '/sim/drone_kill'
 SIM_RESET_TIMEOUT = 120.0   # [s, 실제 시간] 리셋은 약 24 s (sim). 이 시간 안에 응답이 없으면 에러
 
+# 텔레옵 노드가 보내는 요청 (컨트롤러 버튼). teleop/xr_teleop.yaml topics.request·buttons 와 같아야 한다
+TELEOP_REQUEST_TOPIC = '/teleop/request'
+TELEOP_REQUESTS = ('record', 'reset', 'drone_kill')
+
 # 녹화기 수신 큐 길이 [s 분량]. 녹화기 (ros2 bag record) 는 뜬 직후 0.4~0.7 s 동안 메시지를 꺼내 가지 못할 때가 있고
 #   (다른 노드가 같이 뜰 때 30 번 중 10 번), 그동안 온 메시지는 수신 큐에 쌓인다. 큐가 짧으면 (기본 10 개 = 카메라 0.33 s) 넘쳐서 버려진다
 #   → 상태 토픽마다 이만큼의 메시지를 담을 수 있게 QoS override 로 큐를 늘린다 (docs/PLAN.md 4단계 남은 문제 A1)
@@ -73,6 +82,7 @@ class RosLink:
     def __init__(self, sim, cameras):
         import rclpy
         from rclpy.signals import SignalHandlerOptions
+        from std_msgs.msg import String
         from std_srvs.srv import Trigger
 
         self.rclpy, self.sim, self.cameras = rclpy, sim, cameras
@@ -82,6 +92,8 @@ class RosLink:
         self.reset_cli = self.node.create_client(Trigger, SIM_RESET_SERVICE) if sim else None
         self.kill_cli = self.node.create_client(Trigger, SIM_KILL_SERVICE) if sim else None
         self.Trigger = Trigger
+        self.requests = []           # 받은 텔레옵 요청 (콜백은 spin 할 때 돈다: 메인 루프·서비스 대기 중)
+        self.node.create_subscription(String, TELEOP_REQUEST_TOPIC, lambda m: self.requests.append(m.data), 10)
         self.image_topics = [r['topic'] for r in cameras['roles'].values()]
         self.info_topics = [r['info_topic'] for r in cameras['roles'].values()]
 
@@ -95,6 +107,21 @@ class RosLink:
 
     def spin(self, sec):
         self.rclpy.spin_once(self.node, timeout_sec=sec)
+
+    def pop_request(self):
+        """받은 텔레옵 요청 하나 (없으면 None)."""
+        self.spin(0)
+        return self.requests.pop(0) if self.requests else None
+
+    def drop_requests(self, sec=0.3):
+        """리셋·녹화 종료처럼 오래 걸리는 동작 동안 쌓인 요청을 버린다 (키의 tcflush 와 같음).
+        녹화 종료를 기다리는 동안은 spin 하지 않아 DDS 에 남아 있을 수 있으므로 잠시 더 받아서 버린다."""
+        t_end = time.monotonic() + sec
+        while time.monotonic() < t_end:
+            self.spin(0.02)
+        if self.requests:
+            say(f"\n[TELEOP] 처리 중에 온 컨트롤러 요청 {len(self.requests)} 개를 버림: {', '.join(self.requests)}")
+            self.requests.clear()
 
     def check_topics(self, wait=2.0):
         """상태 토픽마다 발행자가 있는지, 카메라 발행자가 RELIABLE 인지 확인. → 문제 목록 (비면 정상)"""
@@ -316,6 +343,42 @@ def reset_then_record(recorder, link):
     return recorder.start(reset_info=info)
 
 
+def request_record(recorder, link, pending):
+    """컨트롤러 record: 녹화 중이면 종료, 아니면 리셋 없이 녹화 시작. --sim 은 리셋 뒤 아직 녹화하지 않았을 때만 (pending['reset'] = 그 리셋 응답)."""
+    if recorder.recording:
+        recorder.stop()
+        return
+    if not link.sim:
+        recorder.start()
+        return
+    if pending['reset'] is None:
+        say("\n[TELEOP] 녹화 시작 거부: 리셋한 뒤에만 시작한다 (지난 녹화 뒤 리셋하지 않았거나 리셋이 실패함). 컨트롤러 B (리셋) 를 먼저")
+        say(IDLE_MSG)
+        return
+    if recorder.start(reset_info=pending['reset']):
+        pending['reset'] = None              # 한 리셋 = 한 에피소드
+
+
+def request_reset(recorder, link, pending):
+    """컨트롤러 reset (--sim): 녹화 중이면 실패로 보고 녹화를 끝내 _discarded/ 로 옮긴 뒤 /sim/reset. 성공하면 다음 record 가 이 응답으로 녹화한다."""
+    if recorder.recording:
+        say("\n[TELEOP] 녹화 중 리셋 → 이 에피소드를 실패로 보고 녹화를 끝내 _discarded/ 로 옮긴다")
+        before = recorder.last_saved
+        recorder.stop()
+        if recorder.last_saved is not None and recorder.last_saved != before:
+            recorder.discard_last()
+    pending['reset'] = None
+    say(f"\n[RESET] {SIM_RESET_SERVICE} 호출 (약 24 s: 팔 시작 자세, 그리퍼 열림, 드론 재이륙). 녹화는 하지 않음")
+    ok, info = link.sim_reset(on_tick=lambda el: say(f"\r[RESET] {el:5.1f} s ", end='', flush=True))
+    if not ok:
+        say(f"\n[ERROR] {info}")
+        say("        sim 터미널 로그를 확인하고 다시 리셋 (B 또는 r)")
+    else:
+        pending['reset'] = info
+        say(f"\n[RESET] 완료: 시드 {info.get('seed')}, 드론 {info.get('drone_pos')}, sim {info.get('duration_s')} s. 텔레옵 시작 (Y) → 자세 유지 → A 로 녹화 시작")
+    say(IDLE_MSG)
+
+
 def print_help(task_name, link):
     say()
     say("=== rosbag2 녹화 토글 ===")
@@ -328,6 +391,10 @@ def print_help(task_name, link):
         say("  'k' : 드론 모터 정지 (잡은 뒤)")
     say("  'd' : 방금 저장한 에피소드 버리기 → bags/_discarded/ 로 이동 ('y' 로 확인)")
     say("  'q' : 종료 (녹화 중이면 안전 종료 후 종료)")
+    say(f"  컨트롤러 버튼 ({TELEOP_REQUEST_TOPIC}, xr_teleop_node.py): A = 녹화 시작 / 종료 (리셋하지 않음"
+        + (", 리셋 뒤에만 시작), B = 리셋 (녹화 중이면 실패로 _discarded/ 로), X = 드론 모터 정지" if link.sim else ")"))
+    if link.sim:
+        say("  컨트롤러 순서: B 리셋 → Y 텔레옵 시작 → 자세 유지 → A 녹화 시작 → 잡기 → X 모터 정지 → A 녹화 끝 → B ...")
     say("=========================")
     say("(이 터미널에 포커스를 두고 키를 누르세요)")
     say(IDLE_MSG)
@@ -376,11 +443,30 @@ def main():
     old_attr = termios.tcgetattr(fd)
     last_status = 0.0
     confirm_discard = False   # 'd' 를 누른 뒤 'y' 확인을 기다리는 중
+    pending = {'reset': None}  # --sim: 컨트롤러 B 로 리셋한 뒤 아직 녹화하지 않은 리셋 응답 (컨트롤러 A 가 이것으로 녹화)
 
     try:
         tty.setcbreak(fd)
         while True:
             ch = read_key_nonblocking()
+            if ch is None:
+                req = link.pop_request()
+                if req is not None:
+                    if req not in TELEOP_REQUESTS:
+                        say(f"\n[TELEOP] 모르는 컨트롤러 요청: {req!r} (무시)")
+                    elif confirm_discard:
+                        say(f"\n[TELEOP] 버리기 확인 ('y') 을 기다리는 중이라 컨트롤러 요청 {req} 을 무시함")
+                    elif req in ('reset', 'drone_kill') and not args.sim:
+                        say(f"\n[TELEOP] 실물 모드에는 {req} 가 없음 (sim 전용). 요청 무시")
+                    else:
+                        say(f"\n[TELEOP] 컨트롤러 요청: {req}")
+                        if req == 'drone_kill':
+                            ch = 'k'
+                        else:
+                            (request_record if req == 'record' else request_reset)(recorder, link, pending)
+                            termios.tcflush(fd, termios.TCIFLUSH)
+                            link.drop_requests()
+                            last_status = time.monotonic()
             if confirm_discard and ch is not None:
                 # 'd' 다음 키: y 면 이동, 그 외 아무 키나 취소 (그 키는 다른 동작으로 이어지지 않음)
                 confirm_discard = False
@@ -406,15 +492,18 @@ def main():
                 if recorder.recording:
                     recorder.stop()
                 elif args.sim:
+                    pending['reset'] = None        # r 은 자기 리셋으로 녹화한다
                     reset_then_record(recorder, link)
                 else:
                     recorder.start()
-                # 키를 꾹 눌러 생긴 반복 입력 / 종료·리셋 대기 중 눌린 키는 버림
+                # 키를 꾹 눌러 생긴 반복 입력 / 종료·리셋 대기 중 눌린 키·컨트롤러 요청은 버림
                 termios.tcflush(fd, termios.TCIFLUSH)
+                link.drop_requests()
                 last_status = time.monotonic()   # 경과시간 표시는 recorder 시작 로그가 지나간 1초 뒤부터
             elif ch in ('k', 'K', 'ㅏ') and args.sim:   # 실물 드론은 조종자가 끈다 (실물 모드에는 k 없음)
                 recorder.kill_drone()
                 termios.tcflush(fd, termios.TCIFLUSH)
+                link.drop_requests()
             elif ch is not None:
                 say(f"\n지원하지 않는 키: {repr(ch)}")
 
