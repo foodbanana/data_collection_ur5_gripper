@@ -166,8 +166,8 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
         v                                            v
  receiver -> Pi Pico                          arm teleop node (5-B, xr_teleop_node.py)
         | USB serial /dev/ttyACM0                    |
-        v                                            | /joint_command
- RC input reader (5-A, inside sim)                   | /gripper/command
+        v                                            | /joint_command, /gripper/command
+ RC input reader (5-A, inside sim)                   | /teleop/request (buttons A/B/X -> recorder only)
         |                                            |
         | (drone only, NOT recorded)        +--------+--------+
         v                                   v                 v
@@ -180,6 +180,7 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
         | /clock, /protective_stop                     |                           |
         +--------------------------------------------->|   key r -> /sim/reset     |
                                                        |   key k -> /sim/drone_kill|
+                                                       |   (PICO A/B/X: same calls)|
                                                        +---------------------------+
                                                                    |
                                                                    v
@@ -195,12 +196,13 @@ kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Comma
 
 | 순서 | 누가 | 하는 일 |
 |------|------|---------|
-| 1 | 녹화 담당 | `r` → `/sim/reset` (약 24 s): 팔 홈, 드론은 Offboard 로 자동 이륙·호버 |
-| 2 | sim | 리셋이 끝나면 녹화 시작. 스틱이 가운데 근처면 조종기에 넘김 (아니면 넘기지 않고 알림. 가운데에 두면 넘어감) |
-| 3 | 조종사 | 드론을 작업 영역 안에서 움직이거나 세움 |
-| 4 | 팔 조작자 | 접근해 잡음 |
-| 5 | 녹화 담당 | 드론 모터 정지 (`k`. 조종기에 스위치가 없다) |
-| 6 | 녹화 담당 | `r` → 저장. 실패했거나 조종기 신호가 끊긴 에피소드는 `d` |
+| 1 | 녹화 담당 또는 팔 조작자 | `r` (리셋 → 녹화) 또는 PICO **B** (리셋만): `/sim/reset` (조종기를 쓰면 약 29 s): 팔 시작 자세 (`--init-pose`), 드론은 Offboard 로 자동 이륙·호버 |
+| 2 | sim | 리셋이 끝나면 스틱이 가운데 근처일 때 조종기에 넘김 (아니면 넘기지 않고 알림. 가운데에 두면 넘어감). `r` 이면 녹화도 이때 시작 |
+| 3 | 팔 조작자 | (PICO 버튼이면) **Y** 텔레옵 시작 → **A** 녹화 시작 (`docs/pico_vr_data_collection.md`) |
+| 4 | 조종사 | 드론을 작업 영역 안에서 움직이거나 세움 |
+| 5 | 팔 조작자 | 접근해 잡음 |
+| 6 | 녹화 담당 또는 팔 조작자 | 드론 모터 정지 (`k` 또는 PICO **X**. 조종기에는 스위치가 없다) |
+| 7 | 녹화 담당 또는 팔 조작자 | `r` 또는 PICO **A** → 저장. 실패했거나 조종기 신호가 끊긴 에피소드는 `d` (또는 녹화 중 PICO **B** = 버리고 리셋) |
 
 ---
 

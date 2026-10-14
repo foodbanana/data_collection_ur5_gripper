@@ -28,7 +28,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
                                               app loop 30 Hz (render) | physics 120 Hz | real-time paced
                                               +-----------------------------------------------------------------+
  +----------------------+  /joint_command     |  ArmBridge                                                      |
- | Teleop device (st.5) |  JointState ~60 Hz  |    last cmd per loop -> linear interp 33 ms                     |
+ | xr_teleop_node (5-B) |  JointState ~60 Hz  |    last cmd per loop -> linear interp 33 ms                     |
  |  or                  |-------------------->|    (every physics step) -> UR5 arm drive targets                |
  | replay_commands.py   |  /gripper/command   |  GripperBridge                                                  |
  |                      |  Float64, on change |    raw 0..1150 -> GripperProfile -> rh_r1_joint                 |
@@ -36,7 +36,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
                                               |    every physics step; stop = hold arm)                         |
  +----------------------+  /sim/reset         |  EpisodeReset                                                   |
  | record_toggle (st.4) |  std_srvs/Trigger   |    kill drone -> teleport + PX4 restart                         |
- |  or user CLI         |-------------------->|    -> teleport arm home -> re-takeoff (~24 s)                   |
+ |  or user CLI         |-------------------->|    -> teleport arm to --init-pose -> re-takeoff (~24 s)         |
  +----------------------+<-- JSON response ---|                                                                 |
                                               |  OmniGraph Camera Helper x2 (RTX, DLSS Performance)             |
                                               |                                                                 |
@@ -75,9 +75,11 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 ```
 
 - 화살표 위 글자 = 토픽(또는 링크) 이름, 메시지 타입, 주기. 주기는 **sim 시간 기준** (실제 시간 기준은 RTF 만큼 느림)
-- 왼쪽 위 텔레옵 장치는 5단계에서 만든다. 지금은 `replay_commands.py` 가 명령 CSV 를 `/joint_command`·`/gripper/command` 로 재생한다
+- 왼쪽 위 텔레옵 장치 = PICO 컨트롤러 텔레옵 노드 `teleop/xr_teleop_node.py` (5단계 5-B, 2026-10-12. 조작자 안내 **`docs/pico_vr_data_collection.md`**).
+  장치 없이 확인할 때는 `replay_commands.py` 가 명령 CSV 를 `/joint_command`·`/gripper/command` 로 재생한다
 - 녹화 도구 (`./6_record_bag.sh <작업명> --sim` = `record_toggle.py`, 4단계): `r` → `/sim/reset` → 성공 응답 뒤 녹화 시작, `k` → `/sim/drone_kill`,
   리셋 응답 (시드·드론 위치·에피소드 메타데이터) 을 bag 폴더의 `episode.json` 에 저장. 카메라는 RELIABLE 로 받는다. 자세한 것은 **`docs/data_recording.md`**
+  PICO 컨트롤러 버튼도 녹화 도구를 거친다 (텔레옵 노드 → `/teleop/request` → 녹화 도구: A 녹화, B 리셋, X 드론 정지. 2026-10-14). sim 은 이 토픽을 모른다
 - PX4 쪽 링크는 ROS 2 가 아니라 MAVLink (sim 내부). 드론의 위치 정보는 실내 모션캡처를 가정 (`docs/drone_flight.md` 13장)
 - `--drone-rc on` (5단계 5-A, 기본 off) 이면 실물 조종기 입력 (Pico USB 직렬) 을 sim 이 직접 읽어, 이륙·리셋 뒤 `PX4Commander` 가 위치 목표 대신
   스틱 값 (`MANUAL_CONTROL`) 을 같은 UDP 14540 으로 보낸다. ROS 토픽이 아니고 녹화되지 않는다. 그림에는 없다 → **`docs/drone_teleop.md`**

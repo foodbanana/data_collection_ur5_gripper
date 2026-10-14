@@ -32,6 +32,7 @@
  sim : sim_ros2.py (node "isaac_sim")          6_record_bag.sh -> record_toggle.py
  real: UR driver, rh_gripper_node, RealSense   keys: r start/stop, k drone kill (sim),
                                                      d discard, q quit
+                                               PICO buttons (5-B): A record, B reset, X kill
  +---------------------------+                 +-----------------------------------+
  | arm (measured)            |  /joint_states                 JointState 120 Hz    |
  |                           |---------------->|                                   |
@@ -51,13 +52,15 @@
  +---------------------------+---------------->|                                   |         episodes)
                                                |                                   |
  +---------------------------+                 |                                   |
- | teleop device (stage 5)   |  /joint_command                JointState ~60 Hz    |
+ | xr_teleop_node.py (5-B)   |  /joint_command                JointState ~60 Hz    |
  |  or replay_commands.py    |---------------->|                                   |
  |                           |  /gripper/command              Float64  on change   |
- +---------------------------+---------------->|                                   |
+ |                           |---------------->|                                   |
+ |                           |  /teleop/request  String A/B/X (NOT recorded)       |
+ +---------------------------+---------------->|  A record, B reset, X = key k     |
             | (same commands also go to the robot / sim)                           |
             v                                  |                                   |
- +---------------------------+  /sim/reset        Trigger  key r  (~24 s)          |
+ +---------------------------+  /sim/reset        Trigger  key r / B  (~24 s)      |
  | sim_ros2.py services      |<----------------|  reply JSON -> episode.json       |
  |  (sim only)               |  /sim/drone_kill   Trigger  key k                   |
  |                           |<----------------|  time     -> episode.json         |
@@ -70,6 +73,9 @@
 - 화살표 위 글자 = 토픽 (또는 서비스) 이름, 메시지 타입, 주기. 주기는 sim 시간 기준 (실제 시간으로는 RTF 만큼 느리다)
 - 명령 토픽 (`/joint_command`, `/gripper/command`) 은 텔레옵 장치가 로봇 (sim) 에 보내는 것을 녹화기가 같이 받는다
 - `--sim` 일 때만: `r` 을 누르면 `/sim/reset` 을 부르고 **성공 응답이 온 뒤** 녹화를 시작한다. 실물 모드에는 서비스 호출과 `k` 키가 없다
+- PICO 텔레옵 (5-B, 2026-10-14): 텔레옵 노드가 컨트롤러 버튼을 `/teleop/request` (std_msgs/String, **녹화하지 않음**) 로 보낸다.
+  A = 리셋 없이 녹화 시작 / 종료 (리셋 뒤에만 시작), B = 리셋만 (녹화 중이면 실패로 보고 저장 뒤 `bags/_discarded/` 로 옮기고 리셋), X = `k`.
+  조작 순서·주의는 **`docs/pico_vr_data_collection.md`**
 
 ---
 
@@ -84,7 +90,7 @@
 | `/cam/third_view/color/image_raw` | sensor_msgs/Image | RealSense / sim | 30 Hz | 상태 | `observation.images.third_view` (640x480) |
 | `/cam/wrist/color/camera_info` | sensor_msgs/CameraInfo | RealSense / sim | 30 Hz | 상태 | 안 씀 (기록만) |
 | `/cam/third_view/color/camera_info` | sensor_msgs/CameraInfo | RealSense / sim | 30 Hz | 상태 | 안 씀 (기록만) |
-| `/joint_command` | sensor_msgs/JointState | 텔레옵 장치 | 텔레옵 주기 (재생 스크립트 60 Hz) | 명령 | `action[0:6]` (`--arm-action command`) |
+| `/joint_command` | sensor_msgs/JointState | 텔레옵 장치 | 텔레옵 주기 (PICO 텔레옵 노드·재생 스크립트 60 Hz) | 명령 | `action[0:6]` (`--arm-action command`) |
 | `/gripper/command` | std_msgs/Float64 | 텔레옵 장치 | 값이 바뀔 때 | 명령 | 안 씀 (참고용. 그리퍼 action 은 `/gripper/target`) |
 | `/protective_stop` | std_msgs/Bool | sim | 30 Hz | 상태 (`--sim`) | `meta.json` 에 발생 여부·시각, 병합에서 기본 제외 |
 | `/clock` | rosgraph_msgs/Clock | sim | 120 Hz | 상태 (`--sim`) | header 없는 토픽 (`/protective_stop`) 의 시각을 sim time 으로 환산 |
@@ -124,7 +130,7 @@ source /opt/ros/jazzy/setup.bash
 | 1 | 1 | `~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py` | 씬 + ROS 2 토픽 + `/sim/reset`·`/sim/drone_kill`. 기본 = PX4 드론, 리셋마다 드론 위치 ±5 cm | `[sim_ros2] t ...` 상태 줄 (약 30 s) |
 | 2 | 2 | `./6_record_bag.sh <작업명> --sim` | 녹화 도구 대기 | `[IDLE] 대기 중...` |
 | 3 | 2 | 키 `r` (컨트롤러: B 리셋 → Y 텔레옵 시작 → A 녹화 시작) | `/sim/reset` (팔 `--init-pose` 자세 (안 주면 홈), 그리퍼 열림, 드론 재이륙, 약 24 s) → 성공하면 녹화 시작 | `[RESET] 완료 ...` → 벨 소리 + `[REC ●] 녹화 시작` |
-| 4 | 3 또는 텔레옵 | 시연 (텔레옵 장치. 장치가 없으면 `python3 isaacsim/scripts/replay_commands.py isaacsim/config/ros2_check/commands_success.csv`) | 팔·그리퍼 명령 | 드론을 잡음 |
+| 4 | 3 또는 텔레옵 | 시연 (텔레옵 장치 = `teleop/xr_teleop_node.py`, `docs/pico_vr_data_collection.md`. 장치가 없으면 `python3 isaacsim/scripts/replay_commands.py isaacsim/config/ros2_check/commands_success.csv`) | 팔·그리퍼 명령 | 드론을 잡음 |
 | 5 | 2 | 키 `k` (또는 컨트롤러 X) | 드론 모터 정지 (`/sim/drone_kill`). 드론 무게가 그리퍼에 실린다 | `[KILL] 드론 모터 정지 (sim t ...)` |
 | 6 | 2 | 키 `r` (또는 컨트롤러 A) | 녹화 종료, bag 마무리 | `[SAVED] .../bags/<이름> (..s)` |
 | 7 | 2 | (실패한 시연이면) 키 `d` → `y` | 방금 에피소드를 `bags/_discarded/` 로 | `[DISCARDED] → ...` |
