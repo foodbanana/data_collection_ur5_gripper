@@ -4,7 +4,7 @@
         string creator = "URDF USD Converter v0.3.2"
     }
     defaultPrim = "ur5_rh_p12_d435i"
-    doc = """Generated from Composed Stage of root layer /home/taeung/data_collection_ur5_gripper/isaacsim/assets/robots/ur5_rh_p12_d435i/payloads/base.usd
+    doc = """Generated from Composed Stage of root layer /home/taeung/usd_import_t10/ur5_rh_p12_d435i/payloads/base.usd
 """
     endTimeCode = 1000000
     kilogramsPerUnit = 1
@@ -24,7 +24,7 @@ def Xform "ur5_rh_p12_d435i" (
     kind = "component"
 )
 {
-    float3[] extentsHint = [(-0.0733658, -0.11, -0.04826885), (0.89175797, 0.32693163, 0.15807469), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-0.07357944, -0.11000011, -0.04826886), (0.89175797, 0.32693163, 0.15802363)]
+    float3[] extentsHint = [(-0.0733658, -0.11, -0.04826885), (0.90666765, 0.32693163, 0.15807469), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-0.07357944, -0.11000011, -0.04826886), (0.9066638, 0.32693163, 0.15802363)]
 
     def Scope "Materials"
     {
@@ -359,12 +359,12 @@ def Xform "ur5_rh_p12_d435i" (
                                                         double3 xformOp:translate = (0, 0, 0)
                                                         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-                                                        def Xform "wrist_mount" (
+                                                        def Xform "wrist_mount_t10" (
                                                             instanceable = true
-                                                            prepend references = @./instances.usda@</Instances/wrist_mount>
+                                                            prepend references = @./instances.usda@</Instances/wrist_mount_t10>
                                                         )
                                                         {
-                                                            quatd xformOp:orient = (0.7071054578, -0.7071080804, 0, 0)
+                                                            quatd xformOp:orient = (1, 0, 0, 0)
                                                             double3 xformOp:scale = (0.001000000047, 0.001000000047, 0.001000000047)
                                                             double3 xformOp:translate = (0, 0, 0)
                                                             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -601,7 +601,7 @@ def Xform "ur5_rh_p12_d435i" (
 
                                                         def Xform "wrist_camera_mount"
                                                         {
-                                                            quatf xformOp:orient = (1, 0, 0, 0)
+                                                            quatf xformOp:orient = (0.9961947, 0.08715549, 0, 0)
                                                             float3 xformOp:scale = (1, 1, 1)
                                                             double3 xformOp:translate = (0, 0.0575, 0.005)
                                                             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -610,7 +610,7 @@ def Xform "ur5_rh_p12_d435i" (
                                                             {
                                                                 quatf xformOp:orient = (-0.49999815, 0.5, 0.5, 0.50000185)
                                                                 float3 xformOp:scale = (1, 1, 1)
-                                                                double3 xformOp:translate = (0, -0.0125, 0.01015)
+                                                                double3 xformOp:translate = (-0.0325, -0.0125, 0.01015)
                                                                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
                                                                 def Xform "wrist_camera_link"
@@ -956,18 +956,14 @@ def Xform "ur5_rh_p12_d435i" (
                                                             }
                                                         }
 
-                                                        def Cylinder "cylinder" (
-                                                            prepend apiSchemas = ["PhysicsCollisionAPI"]
+                                                        def Xform "wrist_mount_collision_plate" (
+                                                            instanceable = true
+                                                            prepend references = @./instances.usda@</Instances/wrist_mount_collision_plate>
                                                         )
                                                         {
-                                                            uniform token axis = "Z"
-                                                            float3[] extent = [(-0.0375, -0.0375, -0.0025), (0.0375, 0.0375, 0.0025)]
-                                                            double height = 0.005
-                                                            uniform token purpose = "guide"
-                                                            double radius = 0.0375
-                                                            quatf xformOp:orient = (1, 0, 0, 0)
-                                                            float3 xformOp:scale = (1, 1, 1)
-                                                            double3 xformOp:translate = (0, 0, 0.0025)
+                                                            quatd xformOp:orient = (1, 0, 0, 0)
+                                                            double3 xformOp:scale = (0.001000000047, 0.001000000047, 0.001000000047)
+                                                            double3 xformOp:translate = (0, 0, 0)
                                                             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                                                         }
 
@@ -979,8 +975,8 @@ def Xform "ur5_rh_p12_d435i" (
                                                             uniform token purpose = "guide"
                                                             double size = 1
                                                             quatf xformOp:orient = (1, 0, 0, 0)
-                                                            float3 xformOp:scale = (0.085, 0.018, 0.0114)
-                                                            double3 xformOp:translate = (-0.015, 0.0544, -0.0007)
+                                                            float3 xformOp:scale = (0.0848, 0.013, 0.01145)
+                                                            double3 xformOp:translate = (-0.0474, 0.0569, -0.000725)
                                                             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
                                                         }
                                                     }

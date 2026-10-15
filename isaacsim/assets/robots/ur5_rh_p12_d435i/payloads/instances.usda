@@ -543,16 +543,16 @@ def Scope "Instances"
         }
     }
 
-    def Xform "wrist_mount" (
-        prepend references = @./geometries.usd@</Geometries/wrist_mount>
+    def Xform "wrist_mount_t10" (
+        prepend references = @./geometries.usd@</Geometries/wrist_mount_t10>
     )
     {
-        over "wrist_mount" (
+        over "wrist_mount_t10" (
             apiSchemas = ["MaterialBindingAPI"]
         )
         {
             custom rel material:binding
-            prepend rel material:binding = </Instances/wrist_mount/VisualMaterials/mount_black>
+            prepend rel material:binding = </Instances/wrist_mount_t10/VisualMaterials/mount_black>
         }
 
         def Scope "VisualMaterials"
@@ -1157,6 +1157,19 @@ def Scope "Instances"
             )
             {
             }
+        }
+    }
+
+    def Xform "wrist_mount_collision_plate" (
+        prepend references = @./geometries.usd@</Geometries/wrist_mount_collision_plate>
+    )
+    {
+        over "wrist_mount_collision_plate" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "PhysicsMeshCollisionAPI", "NewtonMeshCollisionAPI"]
+        )
+        {
+            token physics:approximation = "convexHull"
+            token purpose = "guide"
         }
     }
 

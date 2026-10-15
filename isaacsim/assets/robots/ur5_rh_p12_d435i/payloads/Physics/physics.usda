@@ -106,11 +106,11 @@ over "ur5_rh_p12_d435i"
                                                         prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "NewtonMassAPI"]
                                                     )
                                                     {
-                                                        double[] newton:inertia = [0.00004455, 0.000023075000000000002, 0.00006659500000000001, 0.0000032, 1.55e-7, 6.100000000000001e-7]
-                                                        point3f physics:centerOfMass = (-0.0019, 0.0224, 0.0001)
-                                                        float3 physics:diagonalInertia = (0.000022600629, 0.000045013992, 0.000066605375)
-                                                        float physics:mass = 0.05
-                                                        quatf physics:principalAxes = (0.0013401237, 0.6541542, 0.7563117, -0.008548707)
+                                                        double[] newton:inertia = [0.000023507922, 0.0000313377476, 0.000054147988, 0.000012413296, -4.575704e-7, 4.51422e-7]
+                                                        point3f physics:centerOfMass = (-0.0266, 0.0249, -0.00031)
+                                                        float3 physics:diagonalInertia = (0.000014396654, 0.000040438204, 0.000054158798)
+                                                        float physics:mass = 0.03236
+                                                        quatf physics:principalAxes = (0.9503325, -0.0057257335, -0.006541455, -0.3111149)
 
                                                         over "gripper_bracket" (
                                                             prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "NewtonMassAPI"]
@@ -211,12 +211,6 @@ over "ur5_rh_p12_d435i"
                                                                     }
                                                                 }
                                                             }
-                                                        }
-
-                                                        over "cylinder" (
-                                                            prepend apiSchemas = ["NewtonCollisionAPI"]
-                                                        )
-                                                        {
                                                         }
 
                                                         over "box" (
