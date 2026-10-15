@@ -19,6 +19,8 @@
 #
 # 실행 (레포 밖 venv, CadQuery):  ~/cad/venv/bin/python isaacsim/ur5_rh_p12_description/cad/wrist_mount_cad.py [--tilts 0 7 10]
 # 결과: cad/out/wrist_mount_t<기울기>.step, .stl, preview_t<기울기>.png
+#       cad/out/wrist_mount_collision_plate.stl: sim 충돌 형상용 판 (외곽 그대로, z 0 ~ 5 = 플랜지 면 위만. 기울기와 무관).
+#       STL 전체를 충돌 형상으로 쓰면 PhysX 볼록 껍질이 플랜지 홈·가운데 구멍을 메워 손목 끝과 겹친다 (원래 마운트도 단순 도형을 씀)
 # =============================================================
 
 import argparse
@@ -72,6 +74,17 @@ def cam_frame(tilt_deg):
     t = math.radians(tilt_deg)
     z = (0.0, -math.sin(t), math.cos(t))
     return cq.Plane(origin=(CAM_S, CAM_D, PLATE_T), xDir=(1, 0, 0), normal=z)
+
+
+def outline_pts():
+    circ = [(DISK_R * math.cos(a), DISK_R * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 180, endpoint=False)]
+    rect = [(TAB_X[0], TAB_Y[0]), (TAB_X[1], TAB_Y[0]), (TAB_X[1], TAB_Y[1]), (TAB_X[0], TAB_Y[1])]
+    return hull2d(circ + rect)
+
+
+def collision_plate():
+    """충돌 형상용 볼록 판: 마운트 외곽 그대로, z 0 ~ PLATE_T (구멍 없음)."""
+    return cq.Workplane("XY").polyline(outline_pts()).close().extrude(PLATE_T)
 
 
 def build(tilt_deg):
@@ -159,6 +172,7 @@ def main():
     ap.add_argument("--tilts", type=float, nargs="+", default=[0.0, 7.0, 10.0])
     args = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
+    cq.exporters.export(collision_plate(), os.path.join(OUT, "wrist_mount_collision_plate.stl"), tolerance=0.05, angularTolerance=0.1)
     for t in args.tilts:
         part = build(t)
         name = f"wrist_mount_t{t:g}"

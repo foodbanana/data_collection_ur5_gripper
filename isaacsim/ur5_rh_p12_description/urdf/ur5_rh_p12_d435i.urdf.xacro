@@ -19,7 +19,15 @@
   <!-- tip: pass your real calibration for sim/real consistency:
        kinematics_params:=$HOME/my_robot_calibration.yaml -->
 
-  <!-- ===== wrist mount: "Realsense Support UniversalRobots" (meshes/mount/wrist_mount.stl, mm) =====
+  <!-- ===== wrist mount variant (2026-10-15, docs/PLAN.md 5-B "손목 카메라 마운트") =====
+       mount_variant selects the mount mesh, collision, mass/inertia AND the camera pose together (they must match):
+         t10 (default) : cad/wrist_mount_cad.py, tab moved -32.5 mm in x (RGB lens on the gripper centre line), camera tilted 10 deg
+                         toward the tool axis. Printed and checked on the real robot (PLA 15 % infill, 32.36 g).
+         t7, t0        : same mount with 7 / 0 deg tilt (CAD only, not printed; mass assumed equal to t10)
+         original      : the downloaded mount below, no lateral shift, no tilt
+       The camera pose and the mount mass come only from the variant (no separate override, so the camera always matches the mount). -->
+  <xacro:arg name="mount_variant" default="t10"/>
+  <!-- ===== original wrist mount: "Realsense Support UniversalRobots" (meshes/mount/wrist_mount.stl, mm) =====
        Measured from the STL:
          - 5.0 mm base plate sandwiched between UR flange and gripper (flange face = mesh y=0, gripper face = mesh y=-5)
          - 6.45 mm rim (inner D63.5) wraps around the UR flange (behind the flange face, no offset)
@@ -27,7 +35,6 @@
          - camera tab: 2x M3 clearance holes, 45 mm apart (= D435 rear M3 spacing), 57.5 mm from flange axis
        wrist_mount frame = tool0 frame (origin on flange face, +z toward the gripper). Tab points to +y. -->
   <xacro:arg name="mount_thickness" default="0.005"/>   <!-- plate thickness: flange face -> gripper face [m] -->
-  <xacro:arg name="mount_mass" default="0.05"/>         <!-- MEASURE: 45.1 cm^3; PLA 100% ~0.056 kg, Al ~0.122 kg -->
   <xacro:arg name="mount_yaw" default="0.0"/>           <!-- CHECK vs real: rotation of mount(+camera+gripper) about tool0 z -->
   <!-- RH-P12-RN-UR bracket (FRP42-A120K) between mount and gripper: mount face -> gripper mesh z=0.
        ~10 mm estimated from the RH-P12-RN-UR manual side view (scale from the 54 mm body width):
@@ -49,15 +56,31 @@
        flipped (camera top toward the tool axis):         xyz="0 0.0125 0.01015"  rpy="1.5708 -1.5708 0" -->
   <!-- wrist_camera_mount frame: centre of the two rear M3 holes on the tab face, tilted about x by cam_tilt.
        cam_tilt > 0 pitches the camera toward the tool axis (for evaluating a tilted mount; 0 = downloaded mount). -->
-  <xacro:arg name="cam_tilt" default="0.0"/>             <!-- [rad] -->
-  <xacro:arg name="cam_xyz" default="0.0 -0.0125 0.01015"/>  <!-- screw frame in wrist_camera_mount (top away from axis) -->
+  <!-- cam_tilt and the screw-frame xyz come from mount_variant (MV below):
+       t*: tilt 10 / 7 / 0 deg, xyz "-0.0325 -0.0125 0.01015" (32.5 mm sideways = D435 tripod centre line -> RGB lens, 17.5 + 15, D400 datasheet Fig. 4-7)
+       original: tilt 0, xyz "0.0 -0.0125 0.01015" -->
   <xacro:arg name="cam_rpy" default="-1.5708 -1.5708 0.0"/>
 
   <!-- absolute path of this package (build_urdf.sh passes it automatically) -->
   <xacro:arg name="pkg_dir" default=""/>
   <xacro:property name="pkg_dir" value="$(arg pkg_dir)"/>
   <xacro:property name="t_mount" value="$(arg mount_thickness)"/>
-  <xacro:property name="m_mount" value="$(arg mount_mass)"/>
+  <!-- per-variant values. COM [m] and per-kg inertia [kg m^2 / kg] about the COM in the wrist_mount frame, from the STL (uniform density) -->
+  <xacro:property name="MV" value="${dict(
+      original=dict(mesh='wrist_mount.stl', rpy='-1.5708 0 0', mass=0.05, tilt=0.0, cam_xyz='0.0 -0.0125 0.01015',
+                    com='-0.0019 0.0224 0.0001', I=(8.910e-04, 6.40e-05, 3.1e-06, 4.615e-04, 1.22e-05, 1.3319e-03)),
+      t0=dict(mesh='wrist_mount_t0.stl', rpy='0 0 0', mass=0.03236, tilt=0.0, cam_xyz='-0.0325 -0.0125 0.01015',
+              com='-0.02677 0.02534 -0.00022', I=(7.2038e-04, 3.788e-04, -1.316e-05, 9.6429e-04, 1.199e-05, 1.6629e-03)),
+      t7=dict(mesh='wrist_mount_t7.stl', rpy='0 0 0', mass=0.03236, tilt=radians(7), cam_xyz='-0.0325 -0.0125 0.01015',
+              com='-0.02665 0.02504 -0.00029', I=(7.2460e-04, 3.821e-04, -1.388e-05, 9.6710e-04, 1.345e-05, 1.6702e-03)),
+      t10=dict(mesh='wrist_mount_t10.stl', rpy='0 0 0', mass=0.03236, tilt=radians(10), cam_xyz='-0.0325 -0.0125 0.01015',
+               com='-0.0266 0.0249 -0.00031', I=(7.2645e-04, 3.836e-04, -1.414e-05, 9.6841e-04, 1.395e-05, 1.6733e-03)))}"/>
+  <xacro:property name="mv" value="$(arg mount_variant)"/>
+  <xacro:unless value="${mv in MV}">${xacro.fatal('mount_variant must be one of ' + str(sorted(MV)) + ': ' + mv)}</xacro:unless>
+  <xacro:property name="M" value="${MV[mv]}"/>
+  <xacro:property name="m_mount" value="${M['mass']}"/>     <!-- original: estimate (45.1 cm^3); t*: printed t10 weighed 32.36 g (PLA, 15 % infill) -->
+  <xacro:property name="cam_tilt" value="${M['tilt']}"/>
+  <xacro:property name="cam_xyz" value="${M['cam_xyz']}"/>
 
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
   <xacro:include filename="$(find realsense2_description)/urdf/_d435i.urdf.xacro"/>
@@ -96,26 +119,41 @@
 
   <link name="wrist_mount">
     <visual>
-      <!-- mesh frame -> wrist_mount: Rx(-90deg) (mesh -y -> +z, mesh +z -> +y) -->
-      <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
-      <geometry><mesh filename="${pkg_dir}/meshes/mount/wrist_mount.stl" scale="0.001 0.001 0.001"/></geometry>
+      <!-- original mesh frame -> wrist_mount: Rx(-90deg) (mesh -y -> +z, mesh +z -> +y). t* meshes are already in the wrist_mount frame -->
+      <origin xyz="0 0 0" rpy="${M['rpy']}"/>
+      <geometry><mesh filename="${pkg_dir}/meshes/mount/${M['mesh']}" scale="0.001 0.001 0.001"/></geometry>
       <material name="mount_black"><color rgba="0.1 0.1 0.1 1"/></material>
     </visual>
-    <!-- simple collision (a convex hull of the mesh would fill the bore and the rim) -->
-    <collision>
-      <origin xyz="0 0 ${t_mount/2}" rpy="0 0 0"/>
-      <geometry><cylinder radius="0.0375" length="${t_mount}"/></geometry>
-    </collision>
-    <collision>
-      <origin xyz="-0.015 0.0544 -0.0007" rpy="0 0 0"/>
-      <geometry><box size="0.085 0.018 0.0114"/></geometry>
-    </collision>
+    <!-- simple collision, only on the gripper side of the flange face (z >= 0) except the tab beyond the flange:
+         a convex hull of the whole mesh would fill the flange pocket and the bore and overlap the wrist -->
+    <xacro:if value="${mv == 'original'}">
+      <collision>
+        <origin xyz="0 0 ${t_mount/2}" rpy="0 0 0"/>
+        <geometry><cylinder radius="0.0375" length="${t_mount}"/></geometry>
+      </collision>
+      <collision>
+        <origin xyz="-0.015 0.0544 -0.0007" rpy="0 0 0"/>
+        <geometry><box size="0.085 0.018 0.0114"/></geometry>
+      </collision>
+    </xacro:if>
+    <xacro:unless value="${mv == 'original'}">
+      <!-- plate: the mount outline (disk + diagonal wing + tab), z 0 ~ 5 mm (cad/out/wrist_mount_collision_plate.stl, convex) -->
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry><mesh filename="${pkg_dir}/meshes/mount/wrist_mount_collision_plate.stl" scale="0.001 0.001 0.001"/></geometry>
+      </collision>
+      <!-- camera tab, full thickness (z -6.45 ~ 5 mm), x -89.8 ~ -5.0, y 50.4 ~ 63.4 mm (tilted top up to +1 mm ignored) -->
+      <collision>
+        <origin xyz="-0.0474 0.0569 -0.000725" rpy="0 0 0"/>
+        <geometry><box size="0.0848 0.013 0.01145"/></geometry>
+      </collision>
+    </xacro:unless>
     <inertial>
       <!-- COM and per-kg inertia computed from the STL (uniform density) -->
-      <origin xyz="-0.0019 0.0224 0.0001" rpy="0 0 0"/>
+      <origin xyz="${M['com']}" rpy="0 0 0"/>
       <mass value="${m_mount}"/>
-      <inertia ixx="${m_mount*8.910e-04}" ixy="${m_mount*6.40e-05}" ixz="${m_mount*3.1e-06}"
-               iyy="${m_mount*4.615e-04}" iyz="${m_mount*1.22e-05}" izz="${m_mount*1.3319e-03}"/>
+      <inertia ixx="${m_mount*M['I'][0]}" ixy="${m_mount*M['I'][1]}" ixz="${m_mount*M['I'][2]}"
+               iyy="${m_mount*M['I'][3]}" iyz="${m_mount*M['I'][4]}" izz="${m_mount*M['I'][5]}"/>
     </inertial>
   </link>
 
@@ -166,12 +204,12 @@
   <joint name="wrist_camera_mount_joint" type="fixed">
     <parent link="wrist_mount"/>
     <child link="wrist_camera_mount"/>
-    <origin xyz="0 0.0575 ${t_mount}" rpy="$(arg cam_tilt) 0 0"/>
+    <origin xyz="0 0.0575 ${t_mount}" rpy="${cam_tilt} 0 0"/>
   </joint>
   <link name="wrist_camera_mount"/>
 
   <xacro:sensor_d435i parent="wrist_camera_mount" name="wrist_camera" use_nominal_extrinsics="true" add_plug="false" use_mesh="true">
-    <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
+    <origin xyz="${cam_xyz}" rpy="$(arg cam_rpy)"/>
   </xacro:sensor_d435i>
 
 </robot>
