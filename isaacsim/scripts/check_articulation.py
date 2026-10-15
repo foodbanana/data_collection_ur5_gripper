@@ -63,7 +63,9 @@ FRAMES = ["rh_p12_rn_tcp", "wrist_camera_color_optical_frame"]
 # 기구학 기준값 (URDF FK, 참고용 비교: 어긋나면 WARN)
 EXPECTED_REL = {
     "rh_p12_rn_tcp": ("tool0", (0.0, 0.0, 0.125)),
-    "wrist_camera_color_optical_frame": ("wrist_mount", (0.0325, 0.0575, 0.02575)),
+    # 손목 카메라 마운트 t10 (2026-10-15, xacro mount_variant 기본): 렌즈가 그리퍼 중심선 (x 0), 10° 기울임.
+    # 예전 마운트 (mount_variant:=original) 는 (0.0325, 0.0575, 0.02575)
+    "wrist_camera_color_optical_frame": ("wrist_mount", (0.0, 0.0539, 0.02543)),
 }
 REL_TOL = 1e-3  # m
 

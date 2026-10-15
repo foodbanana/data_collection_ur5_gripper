@@ -86,6 +86,25 @@ def _git_state():
             "dirty": bool(git("status", "--porcelain", "--untracked-files=no"))}
 
 
+def wrist_camera_mount_info(stage, cam_cfg):
+    """로봇 USD 에서 손목 카메라 장착을 읽는다 (설정 파일에 따로 적지 않음 → USD 와 어긋나지 않게). 2026-10-15 마운트 t10 부터.
+    cam_tilt_deg = wrist_mount → wrist_camera_mount 의 x 축 회전 (xacro mount_variant 의 기울기, + = 공구 축 쪽),
+    optical_in_wrist_mount = 렌즈 (color optical frame) 위치 [m], mount_mesh = 마운트 겉모습 메시 이름 (예: wrist_mount_t10)."""
+    from pxr import Usd, UsdGeom
+
+    cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    W = lambda path: np.array(cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path))).T  # noqa: E731  (열벡터 규약)
+    wm = ts.find_link_path(stage, "wrist_mount")
+    inv = np.linalg.inv(W(wm))
+    R = (inv @ W(ts.find_link_path(stage, ts.CAMERA_TILT_PIVOT)))[:3, :3]
+    opt = (inv @ W(ts.find_link_path(stage, cam_cfg["frame"])))[:3, 3]
+    meshes = sorted({p.GetName() for p in Usd.PrimRange(stage.GetPrimAtPath(wm)) if p.GetName().startswith("wrist_mount_")
+                     and "collision" not in p.GetName()})
+    return {"cam_tilt_deg": round(float(np.degrees(np.arctan2(R[2, 1], R[1, 1]))), 3),
+            "optical_in_wrist_mount": [round(float(x), 5) for x in opt],
+            "mount_mesh": meshes[0] if meshes else "wrist_mount (original)"}
+
+
 def episode_info(s, cfg, args, render, stop_mode):
     """에피소드 메타데이터용 고정 정보 (PLAN 4-2). /sim/reset 응답의 "sim" → record_toggle 의 episode.json → stage1 meta.json.
     경로는 레포 기준, 위치는 world [m] (로봇 base 는 robot_base_world)."""
@@ -111,7 +130,8 @@ def episode_info(s, cfg, args, render, stop_mode):
                   "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on",
                   "rc_teleop": args.drone_rc == "on"},              # 사람이 조종기로 드론을 움직였는지 (조종 입력 자체는 녹화하지 않음)
         "cameras": {"tick_rate": float(cfg["cameras"]["tick_rate"]),
-                    "wrist": {"prim": str(s.wrist_cam), "config": rel(ts.WRIST_CAMERA_CONFIG), "cam_tilt_deg": 0.0,
+                    "wrist": {"prim": str(s.wrist_cam), "config": rel(ts.WRIST_CAMERA_CONFIG),
+                              **wrist_camera_mount_info(s.stage, s.cam_cfg),          # cam_tilt_deg 등은 로봇 USD 에서 읽음
                               "intrinsics": s.cam_cfg["intrinsics"]},
                     "third_view": {"prim": str(s.third_cam), "config": rel(ts._abs(s.scene_cfg["third_view_camera_config"])),
                                    "position": [float(x) for x in s.tv_cfg["position"]], "look_at": [float(x) for x in s.tv_cfg["look_at"]],
