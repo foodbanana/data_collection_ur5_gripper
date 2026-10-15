@@ -14,6 +14,7 @@
 #     5b 손목 비틀기 ±25° → TCP 가 25° 돌고 보호 정지 없음 (손목 마운트 ↔ 팔뚝 자기 충돌이 없는 시작 자세인지)
 #     6 그리퍼         트리거 1.0 → /gripper/target 1150, 0.5 → 그대로 (히스테리시스), 0.0 → 0
 #     7 명령 간격      보낸 간격 (wall) 중앙값 ≈ 1 / rate_hz, stamp 0 없음·뒤로 가지 않음
+#     7b 필터          손을 가만히 두고 떨림 (위치 1 mm, 자세 0.3° 표준편차) 을 섞음 → 명령 TCP 떨림: 필터 켬이 끔의 0.7 배 아래 (설정 filter.enabled 일 때)
 #     8 멈춤·다시 시작 텔레옵 버튼 → 명령 멈춤. 손을 30 cm 옮긴 뒤 텔레옵 버튼 → TCP 가 뛰지 않음
 #     9 리셋           텔레옵 중 /sim/reset → 노드가 스스로 멈추고, 리셋 뒤 팔이 시작 자세에 그대로
 #    10 보호 정지      전체 동안 /protective_stop true 0 번
@@ -82,6 +83,8 @@ class ScriptedInput:
         self.roll = 0.0                    # 손목 비틀기: 조작자가 볼 때 시계 방향 + [rad] (컨트롤러 앞 축 둘레)
         self.trigger, self.a = 0.0, False   # a: 텔레옵 버튼을 누름
         self.buttons = {}                  # 그 밖의 버튼 {'B': True, ...}
+        self.noise_pos, self.noise_rot = 0.0, 0.0   # 손 떨림 흉내: 위치 [m]·자세 [rad] 표준편차
+        self.rng = np.random.default_rng(0)
         Rh = Ry(self.h)
         self.fwd = Rh @ np.array([0.0, 0.0, -1.0])
         self.right = np.cross(self.fwd, np.array([0.0, 1.0, 0.0]))
@@ -91,6 +94,11 @@ class ScriptedInput:
         with self.lock:
             pos = self.origin + self.fru[0] * self.fwd + self.fru[1] * self.right + self.fru[2] * np.array([0.0, 1.0, 0.0])
             R = Ry(self.h + self.yaw) @ Rx(self.pitch) @ Rz(-self.roll)
+            if self.noise_pos > 0 or self.noise_rot > 0:
+                pos = pos + self.rng.normal(0, self.noise_pos, 3)
+                w = self.rng.normal(0, self.noise_rot, 3)
+                a = np.linalg.norm(w)
+                R = R @ (km.axis_angle_R(w / a, a) if a > 1e-12 else np.eye(3))
             return tn.XrSample(time.monotonic_ns(), pos, km.R_to_quat(R), self.trigger, {**self.buttons, self.tb: self.a})
 
     def set(self, **kw):
@@ -270,6 +278,27 @@ def main():
                f"{len(c)} 개, 받은 간격 (wall) 중앙값 {np.median(dw):.2f} ms·95 % {np.percentile(dw, 95):.2f}·최대 {dw.max():.2f} (기준 중앙값 {1000 / cfg['rate_hz']:.2f} ± 2), "
                f"stamp 0 인 것 {int(np.sum(stamps <= 0))} 개, stamp 간격 최대 {ds.max():.1f} ms (40 ms 넘은 것 {int(np.sum(ds > 40))} 번), 뒤로 간 것 {int(np.sum(ds < 0))} 번, "
                f"한 주기 관절 변화 최대 {dq:.4f} rad (한계 {tele.max_dq:.4f})")
+
+        # 7b 필터: 같은 떨림을 넣고 필터 켬 / 끔 의 명령 TCP 떨림 비교
+        if cfg["filter"]["enabled"]:
+            def cmd_jitter(sec):
+                n0 = len(st["cmd"])
+                pump(sec)
+                P = np.array([model.fk(c[2])[:3, 3] for c in st["cmd"][n0:]])
+                return float(np.mean(np.std(P, axis=0))) * 1000, len(P)
+            inp.set(noise_pos=0.001, noise_rot=math.radians(0.3))
+            pump(0.5)
+            j_on, n_on = cmd_jitter(2.0)
+            filt, tele.filt = tele.filt, None      # 필터를 잠시 끔
+            j_off, n_off = cmd_jitter(2.0)
+            s0 = inp.read()                         # 다시 켤 때 지금 값으로 초기화 (노드가 시작할 때와 같게)
+            filt.reset(s0.pos, tn.quat_to_R(s0.quat))
+            tele._t_filt = time.monotonic()
+            tele.filt = filt
+            inp.set(noise_pos=0.0, noise_rot=0.0)
+            pump(1.0)
+            result("7b 필터", j_on < 0.7 * j_off and tele.engaged,
+                   f"손 떨림 1 mm·0.3° 일 때 명령 TCP 떨림 (축별 표준편차 평균): 필터 켬 {j_on:.3f} mm ({n_on} 개) / 끔 {j_off:.3f} mm ({n_off} 개) = {j_on / j_off:.2f} 배 (기준 < 0.7)")
 
         # 8 멈춤·다시 시작
         press_a()
