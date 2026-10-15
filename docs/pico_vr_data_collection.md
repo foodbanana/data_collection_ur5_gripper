@@ -125,11 +125,14 @@ ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw
 ```bash
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash
-./6_record_bag.sh <작업명> --sim             # 예: ./6_record_bag.sh drone_grasp --sim
+./6_record_bag.sh <작업명> --sim             # 예: ./6_record_bag.sh drone_grasp_f1 --sim
 ```
 
 - 첫 줄 `~/realsense_ws/install/setup.bash: No such file or directory` 는 무시해도 된다 (실물 PC 용 줄)
 - 도움말에 `컨트롤러 버튼 (/teleop/request ...)` 줄이 나오면 준비 끝
+- **작업명은 설정 (필터·배율·시작 자세·드론 움직임) 이 같은 데이터끼리 같게, 설정이 바뀌면 새 이름으로.** bag 이름은 `<날짜_시각>_<작업명>` 이 되고,
+  나중에 병합할 때 작업명으로 골라 모은다 (10 장). 예: 필터를 켠 지금 설정 = `drone_grasp_f1`.
+  (`xr_test` 로 녹화한 bag 에는 필터 끔 (2026-10-14) 과 켬 (2026-10-15) 이 섞여 있어 날짜로만 구분된다)
 
 ---
 
@@ -147,7 +150,7 @@ source /opt/ros/jazzy/setup.bash
 `r` (리셋 → 바로 녹화), `k` (드론 모터 정지) 도 그대로 된다.
 
 **손 → 팔 방향**: Y 를 누른 순간 컨트롤러가 가리키는 수평 방향 = 로봇 base +x (드론 쪽). 그 왼쪽 = +y, 위 = +z.
-로봇 뒤에 서서 로봇과 같은 방향을 보고 컨트롤러 끝을 앞으로 향하게 든다. 손 이동 10 cm → 팔 9 cm (배율 0.9), 손목 회전은 1 : 1.
+로봇 뒤에 서서 로봇과 같은 방향을 보고 컨트롤러 끝을 앞으로 향하게 든다. 손 이동 10 cm → 팔 9 cm (배율 0.9), 손목 회전은 1 : 1. 손의 작은 떨림은 필터가 줄인다 (8 장 `filter`).
 
 ---
 
@@ -227,6 +230,10 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 | `rotation` | `true` | 손목 회전도 그리퍼가 따라감 (1 : 1) | `false` = 위치만 따라가고 그리퍼 자세는 시작할 때 그대로 (회전 실수가 줄지만 기울여 잡을 수 없음) |
 | `max_joint_speed` | `1.5` [rad/s] | 관절 목표가 움직일 수 있는 최대 속도. 손을 빨리 움직여도 팔은 이 속도까지만 | 낮추면 팔이 더 천천히·부드럽게 따라옴 (손보다 늦어져 `TCP 목표가 팔보다 .. 앞서 있음` 이 자주 뜰 수 있음). **`max_joint_speed / rate_hz` ≤ 0.063** (60 Hz 면 3.78 까지. sim 관절 최대 속도 기준) |
 | `max_start_elevation_deg` | `60` [°] | Y 를 누를 때 컨트롤러 끝이 수평에서 이보다 더 들리거나 숙여져 있으면 시작 거부 | 시작 거부가 잦으면 조금 키움 (70 등). 90 에 가까우면 "앞" 방향이 불안정해진다 |
+| `filter.enabled` | `true` | 컨트롤러 자세에 One Euro 필터. 손이 멈춰 있으면 떨림을 잡고, 빠를수록 약하게 걸려 지연을 줄인다 | `false` = 필터 없음 (손 그대로) |
+| `filter.pos_min_cutoff_hz` | `1.5` [Hz] | 손이 멈췄을 때의 위치 필터 세기 (작을수록 강함) | 떨림이 남으면 낮춤 (1.0). 느린 접근이 굼뜨면 올림 (2~3). 0 보다 커야 한다 (노드가 검사) |
+| `filter.pos_beta` | `40` [Hz/(m/s)] | 손이 빠를수록 필터를 얼마나 약하게 할지 | 빠르게 움직일 때 늦게 느껴지면 올림 |
+| `filter.rot_min_cutoff_hz`, `rot_beta` | `1.5`, `10` | 손목 회전에 거는 같은 값 | 위치와 같은 방식 |
 | `gripper.close_above` | `0.6` | 트리거를 이 값 넘게 당기면 닫기 | 살짝만 당겨도 닫히게 하려면 낮춤 |
 | `gripper.open_below` | `0.4` | 트리거를 이 값 아래로 놓으면 열기 | `open_below < close_above` 여야 한다 (노드가 검사. 그 사이는 그대로 = 떨림 방지) |
 
@@ -264,12 +271,13 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 | `hand` | 지금 `right` 만 된다 |
 | `gripper.raw_open`·`raw_close` | 그리퍼 명령 값 (0 / 1150). 데이터셋 스키마와 같아야 한다 |
 | `damping` | IK 계산 값. 바꾸면 시험을 다시 돌린다 |
+| `filter.d_cutoff_hz` (1.0) | 필터가 손 속도를 추정할 때 쓰는 값. 보통 바꾸지 않는다 |
 | `xr_connect_timeout`, `xr_stale_warn`, `state_stale`, `status_sec` | 연결 확인·알림 주기. 필요할 때만 |
 
 ### 8.5 바꾼 뒤
 
-- **수집 도중에는 조작감 값 (`scale`·`rotation`·`max_joint_speed`) 을 바꾸지 않는다.** 한 데이터셋 안에서 조작 방식이 섞이면 동작 분포가 달라진다. 바꿀 거면 새 작업명 (`./6_record_bag.sh <새 작업명> --sim`) 으로 모은다
-- 안전 항목이나 IK 항목을 바꿨으면 헤드셋 없이 시험한다 (12/12 PASS 여야 함, 11 장 끝의 명령)
+- **수집 도중에는 조작감 값 (`scale`·`rotation`·`max_joint_speed`·`filter`) 을 바꾸지 않는다.** 지금 필터는 켜져 있다 (`filter.enabled: true`, 2026-10-15 실제 손으로 써 보고 결정. 노드 시작 줄에 `필터 One Euro ...`). 한 데이터셋 안에서 조작 방식이 섞이면 동작 분포가 달라진다. 바꿀 거면 새 작업명 (`./6_record_bag.sh <새 작업명> --sim`) 으로 모은다
+- 안전 항목이나 IK 항목을 바꿨으면 헤드셋 없이 시험한다 (13/13 PASS 여야 함, 11 장 끝의 명령)
 - 바꾼 값과 이유를 `docs/PLAN.md` 5-B 에 적어 두면 나중에 데이터를 볼 때 헷갈리지 않는다 (bag 의 `episode.json` 에는 텔레옵 설정이 들어가지 않는다)
 
 ---
@@ -283,7 +291,7 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 | 녹화한 에피소드 | `bags/<YYYYMMDD_HHMMSS>_<작업명>/` | ros2 bag (`*.mcap`, `metadata.yaml`) + `episode.json` (리셋 시드·드론 위치·kill 시각·sim 설정·git commit) |
 | 버린 에피소드 | `bags/_discarded/<이름>/` | B (녹화 중) 나 `d` 로 버린 것. 되살리려면 폴더를 `bags/` 로 옮긴다 |
 | stage1 중간 파일 | `bag_lerobot_intermediate/<bag 이름>/` | `states.npy`, `actions.npy`, `base_imu.npy`, `timestamps.npy`, `wrist/*.png`, `third_view/*.png`, `meta.json` |
-| LeRobot v2.1 데이터셋 | `lerobot_dataset_v21/<repo-id>/` | 병합 결과 (parquet + mp4 + `meta/`). 예: `lerobot_dataset_v21/local/xr_test_20261014/` |
+| LeRobot v2.1 데이터셋 | `lerobot_dataset_v21/<repo-id>/` | 병합 결과 (parquet + mp4 + `meta/`). 이름은 병합할 때 `--repo-id` 로 정한다 (bag 은 그대로). 예: `local/xr_test_20261014` (필터 끔 2 개), `local/xr_filter_20261015` (필터 켬 1 개) |
 | PX4 비행 로그 | `isaacsim/reports/px4_<시각>/` | 리셋마다의 PX4 로그 (`episode.json` 의 `px4_log`) |
 | 텔레옵 시험 리포트 | `teleop/reports/` | `check_xr_teleop.py` 결과 |
 | PC 서비스 로그 | `~/.local/share/PICOBusinessSuitData/log/<날짜>.txt` | 헤드셋 연결 기록 |
@@ -304,7 +312,7 @@ python3 lerobot_stage1_extract_bag.py bags/<bag 이름> --arm-action command --b
 
 # 2) 병합 (conda lerobot_v2). 매니페스트 = bag_lerobot_intermediate/ 안의 폴더 이름을 한 줄에 하나 (경로 없이)
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate lerobot_v2
-ls bag_lerobot_intermediate/ | grep <작업명> > merge_<이름>.txt
+ls bag_lerobot_intermediate/ | grep <작업명> > merge_<이름>.txt    # 설정이 같은 작업명끼리만 (필터 켬·끔 등을 섞지 않는다)
 env -u PYTHONPATH python lerobot_merge_episodes_v21.py --manifest merge_<이름>.txt --repo-id local/<이름>
 #   중간 파일 전부: --all.  앞뒤 정지 자르기: --trim-idle both
 
@@ -335,7 +343,7 @@ conda deactivate
 | 팔이 갑자기 멈추고 sim 에 `[protective_stop]` | 이유 줄 (force·error·speed 와 링크 이름) 을 보고 B 로 리셋 |
 | stage1 이 `메시지 나이` 에러 | 녹화 중 새 노드를 띄웠는지. `--skip-start 0.5` 로 앞부분을 빼고 살릴 수 있다 |
 
-설정을 바꾼 뒤에는 헤드셋 없이 시험할 수 있다 (12/12 PASS):
+설정을 바꾼 뒤에는 헤드셋 없이 시험할 수 있다 (13/13 PASS):
 
 ```bash
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --flight geometric --init-pose under_drone   # 터미널 1

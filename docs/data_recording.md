@@ -13,7 +13,7 @@
 | 항목 | 내용 |
 |------|------|
 | 녹화 | `./6_record_bag.sh <작업명> [--sim]` (= `record_toggle.py`). 키 `r` 시작/종료, `k` 드론 모터 정지 (sim), `d` 버리기, `q` 종료. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`, 녹화하지 않음, 2026-10-14): A 녹화 시작 (리셋 뒤에만)·종료, B 리셋 (녹화 중이면 실패로 `_discarded/` 로), X 모터 정지 |
-| 단위 | `r` ~ `r` 구간 1 개 = bag 1 개 = 에피소드 1 개. 저장 `bags/<YYYYMMDD_HHMMSS>_<작업명>/` (`.mcap` + `metadata.yaml` + `episode.json`) |
+| 단위 | `r` ~ `r` 구간 1 개 = bag 1 개 = 에피소드 1 개. 저장 `bags/<YYYYMMDD_HHMMSS>_<작업명>/` (`.mcap` + `metadata.yaml` + `episode.json`). `episode.json` 에는 텔레옵 설정 (필터·배율) 이 들어가지 않으므로 설정이 바뀌면 작업명을 바꾼다 |
 | 토픽 | 상태 7 개 (팔·그리퍼·카메라 2 대와 camera_info) + 명령 2 개, sim 은 2 개 더 (3 장) |
 | 녹화 전 검사 | 상태 토픽마다 발행자가 있는지, 카메라 발행자가 RELIABLE 인지. 문제가 있으면 **녹화를 시작하지 않는다** |
 | 카메라 수신 | RELIABLE (best effort 면 640x480 이미지가 통째로 버려진다, `docs/sim_performance.md` 5장) |
