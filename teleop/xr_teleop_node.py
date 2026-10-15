@@ -14,6 +14,7 @@
 #     - 녹화 도구 요청 (설정 buttons, 텔레옵과 무관하게 누르는 순간 한 번): A = record (리셋 없이 녹화 시작 / 종료. 시작은 리셋 뒤에만),
 #       B = reset (에피소드 리셋. 녹화 중이면 실패로 보고 녹화를 끝내 _discarded/ 로 옮긴 뒤 리셋), X (왼손) = drone_kill (드론 모터 정지)
 #     - 녹화 순서: B 리셋 → Y 텔레옵 시작 → 자세 유지 → A 녹화 시작 → 잡기 → X 모터 정지 → A 녹화 끝 → B 다음 에피소드
+#   컨트롤러 자세는 One Euro 필터 (설정 filter, 2026-10-14) 를 거친다: 손이 멈춰 있으면 강하게 (떨림 제거), 빠르면 약하게 (지연 줄임). 텔레옵 시작 때 그 자리 값으로 초기화
 #   손목이 테이블에 가까워지면 (min_wrist_height) 더 내려가는 목표는 보내지 않고 알린다 (2026-10-12: 손을 7 cm 내리자 wrist_2 가 테이블에 닿아 보호 정지)
 #   시작을 거부하는 경우 (이유를 출력): 컨트롤러 끝이 수직에 가까움, /joint_states·/clock 이 안 옴, 보호 정지 중
 #   스스로 멈추는 경우 (이유를 출력): 측정 관절각이 관절 목표와 크게 다름 (/sim/reset 의 순간이동, 보호 정지), /protective_stop true,
@@ -44,7 +45,7 @@ import ik_model as km  # noqa: E402
 
 DEFAULT_CONFIG = os.path.join(HERE, "xr_teleop.yaml")
 REQUIRED = ("rate_hz", "stamp", "topics", "hand", "scale", "rotation", "max_start_elevation_deg", "max_joint_speed", "max_lead",
-            "damping", "limit_margin", "warn_pos_err", "warn_manip", "min_wrist_height", "gripper", "teleop_button", "buttons", "xr_connect_timeout",
+            "damping", "limit_margin", "warn_pos_err", "warn_manip", "min_wrist_height", "gripper", "filter", "teleop_button", "buttons", "xr_connect_timeout",
             "xr_stale_warn", "state_stale", "desync", "status_sec")
 REQUESTS = ("record", "reset", "drone_kill")    # 녹화 도구 (record_toggle.py TELEOP_REQUESTS) 가 아는 요청
 BUTTONS = ("A", "B", "X", "Y")                  # A·B 오른손, X·Y 왼손 컨트롤러
@@ -68,6 +69,15 @@ def load_config(path):
         raise ValueError(f"{path}: stamp 는 sim 또는 wall: {c['stamp']}")
     if c["hand"] != "right":
         raise ValueError(f"{path}: hand 는 지금 right 만 (오른손 자세·트리거): {c['hand']}")
+    for k in ("enabled", "pos_min_cutoff_hz", "pos_beta", "rot_min_cutoff_hz", "rot_beta", "d_cutoff_hz"):
+        if k not in c["filter"]:
+            raise KeyError(f"{path}: 'filter.{k}' 항목이 없습니다")
+    for k in ("pos_min_cutoff_hz", "rot_min_cutoff_hz", "d_cutoff_hz"):
+        if not float(c["filter"][k]) > 0:
+            raise ValueError(f"{path}: filter.{k} 는 0 보다 커야 함: {c['filter'][k]}")
+    for k in ("pos_beta", "rot_beta"):
+        if float(c["filter"][k]) < 0:
+            raise ValueError(f"{path}: filter.{k} 는 0 이상: {c['filter'][k]}")
     if not c["gripper"]["open_below"] < c["gripper"]["close_above"]:
         raise ValueError(f"{path}: gripper.open_below < close_above 여야 함")
     b = c["buttons"] or {}
@@ -108,6 +118,44 @@ def heading_map(R_ctrl, max_elev_deg):
     fh /= np.linalg.norm(fh)
     right = np.cross(fh, XR_UP)
     return np.array([fh, -right, XR_UP]), elev
+
+
+# ---------------------------------------------------------------- 필터 (One Euro, Casiez et al. CHI 2012)
+def _alpha(cutoff_hz, dt):
+    """1 차 저역 필터의 한 스텝 계수 (차단 주파수 cutoff_hz, 시간 간격 dt)."""
+    tau = 1.0 / (2.0 * math.pi * cutoff_hz)
+    return 1.0 / (1.0 + tau / dt)
+
+
+def _rotvec_to_R(w):
+    a = float(np.linalg.norm(w))
+    return np.eye(3) if a < 1e-12 else km.axis_angle_R(w / a, a)
+
+
+class OneEuroPose:
+    """위치·자세용 One Euro 필터. 차단 주파수 = min_cutoff + beta × 속도 (속도도 d_cutoff 로 거른 값).
+    위치: 속도 [m/s], beta [Hz/(m/s)]. 자세: 각속도 [rad/s], beta [Hz/(rad/s)]. 자세는 지난 출력에서 새 자세 쪽으로 alpha 만큼 회전 (회전 벡터)."""
+
+    def __init__(self, cfg):
+        self.c = {k: float(v) for k, v in cfg.items() if k != "enabled"}
+        self.p = self.R = None
+
+    def reset(self, p, R):
+        self.p, self.R = np.array(p, float), np.array(R, float)
+        self.v, self.w = 0.0, 0.0                   # 거른 속력·각속력
+
+    def __call__(self, p, R, dt):
+        if self.p is None or dt <= 0:
+            self.reset(p, R)
+            return self.p.copy(), self.R.copy()
+        c, ad = self.c, _alpha(self.c["d_cutoff_hz"], dt)
+        dp = np.asarray(p, float) - self.p
+        self.v += ad * (np.linalg.norm(dp) / dt - self.v)
+        self.p = self.p + _alpha(c["pos_min_cutoff_hz"] + c["pos_beta"] * self.v, dt) * dp
+        dw = km.R_to_rotvec(self.R.T @ R)             # 지난 출력 → 새 자세 (자기 좌표계)
+        self.w += ad * (np.linalg.norm(dw) / dt - self.w)
+        self.R = self.R @ _rotvec_to_R(_alpha(c["rot_min_cutoff_hz"] + c["rot_beta"] * self.w, dt) * dw)
+        return self.p.copy(), self.R.copy()
 
 
 # ---------------------------------------------------------------- 입력
@@ -204,6 +252,8 @@ class XrTeleop:
         self.engaged = False
         self.q_cmd = None
         self.ref = None                              # (p_ctrl0, R_ctrl0, M, T_tcp0)
+        self.filt = OneEuroPose(cfg["filter"]) if cfg["filter"]["enabled"] else None   # 컨트롤러 자세 필터
+        self._t_filt = None                          # 필터에 지난번 값을 넣은 시각 (monotonic)
         self.grip_closed = False
         self.tb = cfg["teleop_button"]               # 텔레옵 시작·멈춤 버튼
         self.btn_prev = {b: True for b in BUTTONS}   # 노드를 띄울 때 눌려 있던 버튼은 누름으로 보지 않는다
@@ -287,6 +337,9 @@ class XrTeleop:
             return
         self.q_cmd = q_meas.copy()
         self.ref = (s.pos.copy(), quat_to_R(s.quat), M, self.model.fk(self.q_cmd))
+        if self.filt is not None:                    # 필터를 지금 값으로 초기화 → 시작할 때 지난 값으로 끌려가지 않는다
+            self.filt.reset(s.pos, quat_to_R(s.quat))
+            self._t_filt = time.monotonic()
         self.engaged, self.last = True, None
         self._t_status = time.monotonic()
         p = self.ref[3][:3, 3]
@@ -334,8 +387,12 @@ class XrTeleop:
             return self._disengage(f"측정 관절각이 관절 목표와 {math.degrees(dev):.1f}° 다름 (리셋으로 팔이 옮겨졌거나 팔이 멈춤)")
 
         p0, R0, M, T0 = self.ref
-        p_t = T0[:3, 3] + float(self.cfg["scale"]) * (M @ (s.pos - p0))
-        R_t = (M @ (quat_to_R(s.quat) @ R0.T) @ M.T) @ T0[:3, :3] if self.cfg["rotation"] else T0[:3, :3]
+        p_h, R_h = s.pos, quat_to_R(s.quat)          # 손 (컨트롤러) 자세
+        if self.filt is not None:
+            p_h, R_h = self.filt(p_h, R_h, now - self._t_filt)
+            self._t_filt = now
+        p_t = T0[:3, 3] + float(self.cfg["scale"]) * (M @ (p_h - p0))
+        R_t = (M @ (R_h @ R0.T) @ M.T) @ T0[:3, :3] if self.cfg["rotation"] else T0[:3, :3]
         st = km.ik_step(self.model, self.q_cmd, q_meas, p_t, R_t, max_dq=self.max_dq, damping=float(self.cfg["damping"]),
                         max_lead=float(self.cfg["max_lead"]), limit_margin=float(self.cfg["limit_margin"]))
         # 테이블 보호: 손목 관절 원점이 한계 높이 아래로 더 내려가는 목표는 보내지 않는다 (지난 목표를 그대로 보냄)
@@ -420,7 +477,10 @@ def main():
         print(f"\a[xr_teleop] 경고: 왼손 컨트롤러 데이터가 오지 않음 → 왼손 버튼 {', '.join(left)} 이 동작하지 않는다. "
               "헤드셋 앱에서 왼손 컨트롤러도 골라 Send 한 뒤 노드를 다시 띄울 것", flush=True)
     node = XrTeleop(cfg, inp, urdf=args.urdf)
-    print(f"[xr_teleop] 준비: {cfg['rate_hz']:g} Hz, stamp {cfg['stamp']}, 배율 {cfg['scale']:g}, 회전 {'따라감' if cfg['rotation'] else '안 함'}. "
+    fc = cfg["filter"]
+    filt = (f"필터 One Euro (위치 {fc['pos_min_cutoff_hz']:g} Hz + {fc['pos_beta']:g}·속도, 자세 {fc['rot_min_cutoff_hz']:g} Hz + {fc['rot_beta']:g}·각속도)"
+            if fc["enabled"] else "필터 끔")
+    print(f"[xr_teleop] 준비: {cfg['rate_hz']:g} Hz, stamp {cfg['stamp']}, 배율 {cfg['scale']:g}, 회전 {'따라감' if cfg['rotation'] else '안 함'}, {filt}. "
           f"같은 처음 자세로 오른손 컨트롤러를 앞으로 향하게 들고 {cfg['teleop_button']} → 텔레옵 시작 / 다시 {cfg['teleop_button']} → 멈춤. 트리거 = 그리퍼. "
           f"녹화 도구 요청: {', '.join(f'{b} = {r}' for r, b in cfg['buttons'].items()) or '없음'}. Ctrl+C 로 종료", flush=True)
     try:
