@@ -1628,8 +1628,24 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 - **실물 확인 (2026-10-15 사용자, 10° 출력, 그리퍼 닫음, 전원 없이 카메라만 USB)**: 실물 손목 RGB 를 sim 10° 영상과 나란히 봄 (D435i RGB = UVC `/dev/video4`, YUYV 640 × 480. 이 PC 에는 realsense-viewer·realsense2_camera 없음)
   - 닫힌 손가락이 화면 아래 가운데, 그리퍼 끝이 TCP 자리 (332, 446) 근처, 위아래·좌우 방향 sim 과 같다
   - 손가락 가운데 선이 주점보다 약 10 px 왼쪽 (손가락 거리 약 10 cm 에서 약 1.6 mm. 출력·조립 공차와 RGB 렌즈 위치의 공장 캘리브레이션 차이 수준, 그대로 둠)
-- **다음: sim 반영 (아직 안 함)**: 10° STL 을 마운트 메시로 (원래 STL 은 인자로 계속 고를 수 있게) → 마운트 충돌 형상·질량·관성 → 카메라 기본값 `cam_tilt` 10°, `cam_xyz` x −32.5 mm →
-  URDF 빌드 → 로봇 USD 재import (importer 스크립트 `URDFImporter`, 1-3 과 같은 옵션, 임시 폴더에서 먼저 비교) → 회귀 검사 → 시작 자세 `under_drone` 다시 맞추기 → `episode.json` 카메라 기울기 → 문서
+- **sim 반영 (2026-10-15)** — 이 날부터 sim 의 손목 카메라는 **t10 마운트**. 이전 데이터 (`xr_test`, `xr_filter`) 와 섞지 않는다 (작업명에 `t10`)
+  1. `meshes/mount/` 에 `wrist_mount_t0·t7·t10.stl` + 충돌 판 `wrist_mount_collision_plate.stl` (원래 `wrist_mount.stl` 그대로)
+  2. xacro `mount_variant` (기본 `t10`, 그 밖 `t7`·`t0`·`original`) 하나로 마운트 메시·충돌·질량·관성·카메라 기울기·옆 위치를 같이 고름.
+     따로 바꾸던 `cam_tilt`·`cam_xyz`·`mount_mass` 인자는 없앰 (사용자: 배포에 불필요, 마운트와 카메라가 어긋날 수 있음). 없는 이름이면 xacro 에러
+     - 충돌 = 충돌 판 (외곽 그대로, z 0 ~ 5 mm) + 탭 상자 (z −6.45 ~ 5 mm). STL 전체를 쓰면 볼록 껍질이 플랜지 홈·가운데 구멍을 메워 손목과 겹친다 (`original` 도 단순 도형)
+     - 질량 32.36 g (10° 출력물 실측, PLA 채움 15 %), 무게중심·관성은 STL 에서 (균일 밀도)
+     - `mount_variant:=original` 로 빌드하면 예전 URDF 와 **완전히 같음** (주석 빼고) 확인
+  3. URDF 빌드 (`build_urdf.sh`, 실물 보정값) → 예전과 다른 곳은 마운트·카메라뿐, URDF 로 계산한 카메라 위치 = C4 후보 (TCP 영상 (332, 446)), TCP 위치 변화 0
+  4. **로봇 USD 재import = 사용자 GUI** (1-3 과 같은 옵션, USD Output 은 레포 밖 `~/usd_import_t10`) → 레포 USD 와 비교:
+     텍스트 `.usda` 8 개 중 5 개 같음, 3 개 (`physics.usda` 질량·관성, `instances.usda` 메시 이름·충돌 판, `base.usda` 카메라 마운트 10° 쿼터니언·카메라 x −0.0325·충돌 형상) 는 예상한 차이뿐.
+     `geometries.usd` 메시 48 개 중 47 개 같음 (팔·그리퍼·카메라), 마운트 메시만 교체 + 충돌 판 추가 → 교체 (빈 `Textures/` 빼고)
+  5. 회귀 검사 (헤드리스): `check_articulation` **8/8** (카메라 기준값을 새 마운트 값 (0, 53.9, 25.4) mm 로 고침, 마운트 0.0324 kg),
+     `check_self_collision` 제외 쌍 0 (가까운 쌍은 예전과 같은 손가락끼리), `wrist_camera_clearance` 10.7 mm·겹침 0/58, `check_wrist_camera` intrinsics 최대 0.10 px·TCP (332, 446)·닫힌 손가락 7.4 %,
+     `check_ik_model` **2/2** (TCP 최대 0.027 mm), `drone_scene --check` **3/3**, `check_xr_teleop` **13/13** (새 시작 자세, 보호 정지 0), `check_ros2` **9/9** (대기 RTF 0.953, 리셋 23.8 s.
+     6 번 잡은 채 RTF 가 처음 0.416 이었는데 검사 도중 같은 GPU 로 다른 시험을 겹쳐 돌린 탓: A 부분만 다시 돌려 **0.646** (예전 0.65 ~ 0.68), 파지 신호 present 297.6 (예전 약 297) → 새 카메라·마운트가 잡힌 드론에 닿지 않음)
+  6. 시작 자세 `under_drone` 다시 구함 (아래 "에피소드 시작 자세"): 드론 기준 위치가 손목 영상 주점에
+  7. `episode.json` 의 손목 카메라 기록: 전에는 `cam_tilt_deg` 0.0 을 코드에 박아 두었음 → 로봇 USD 에서 읽음 (`sim_ros2.wrist_camera_mount_info`: `cam_tilt_deg` 10.0,
+     `optical_in_wrist_mount` (0, 0.0539, 0.02543), `mount_mesh` wrist_mount_t10)
 
 **B-4 데이터셋의 VLA 학습 관점 점검 (2026-10-14)** — `lerobot_dataset_v21/local/xr_test_20261014` (25 Hz, 에피소드 2 개) parquet 와 bag 으로 확인. **결론: 학습을 막는 문제 없음, 정책 25 Hz 로 문제없음**
 | 항목 | 결과 | 판단 |
@@ -1675,7 +1691,11 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 
 **에피소드 시작 자세 (2026-10-12 사용자 결정)** — 홈 자세는 그리퍼가 아래를 향해 손목 카메라에 테이블만 보이고 드론 (위쪽) 이 안 보인다 (2-3).
 홈에서 시작하면 매 에피소드가 "드론이 안 보이는 화면에서 그리퍼를 뒤집어 올리는 동작" 으로 시작한다 → **그리퍼가 수직 위 (+z) 를 보고 드론 아래에 있는 자세에서 시작한다**
-- **시작 자세 `under_drone`**: `--init-pose under_drone` (= `-0.1553 -1.2195 1.9541 -2.3059 1.5703 -2.9904` rad. 값은 `isaacsim/config/scene_drone.yaml` `init_poses.under_drone`)
+- **시작 자세 `under_drone`**: `--init-pose under_drone` (= `-0.1889 -1.0776 1.7304 -2.2242 1.5700 -2.9566` rad, 2026-10-15 t10 마운트에 맞춰 다시 구함. 값은 `isaacsim/config/scene_drone.yaml` `init_poses.under_drone`)
+  - **2026-10-15 다시 구함**: 그리퍼 수직 위·TCP 높이 (잡는 곳보다 0.305 m 아래)·손목을 뒤집은 팔 자세는 그대로, TCP 수평 위치만 옮겨 드론 기준 위치가 손목 영상 주점 (332, 239) 에 오게.
+    TCP 는 드론 기준에서 수평 17 mm (광축이 기울어 드론 높이에서 그리퍼 축을 약 2 cm 지나감), 렌즈 → 드론 0.41 m, 손목 관절 원점 22.6 cm (같음), 관절 한계 여유 1.41 rad,
+    텔레옵 범위 29 자세 × 그리퍼 2 자기 충돌 0 (새 마운트). 렌더링: 드론 중심 (329, 228), 드론 몸체·팔·모터 모두 보임, 잡는 순간 손가락 7.4 %
+    (`isaacsim/reports/compare_wrist_camera_20261015_172322/grid.png`). 아래는 예전 마운트로 고른 내용 (예전 값 `-0.1553 -1.2195 1.9541 -2.3059 1.5703 -2.9904`, 새 카메라에서는 드론이 (281, 125))
   - 손목 카메라 **렌즈가 드론 기본 위치 (0.60, 0, 1.50) 바로 아래**, TCP 는 잡는 곳보다 30 cm 아래 (world z 1.195), 렌즈 → 드론 0.42 m. 손가락 닫는 방향 = 드론 폭 (y) 방향
   - 손목 영상에 **드론 몸체·팔 4 개·모터가 화면 가운데에** 보인다 (프로펠러 끝은 화면 밖, `isaacsim/reports/drone_scene_20261012_173344/wrist.png`). `drone_scene.py --headless --check` 3/3 (자세 유지 편차 0.027°)
   - 잡으려면 수직 30 cm + 옆으로 약 6.6 cm (렌즈가 공구 축에서 벗어나 있는 만큼. 리셋마다 드론이 ±5 cm 바뀌므로 옆 이동은 어차피 필요)
@@ -1914,7 +1934,14 @@ cd ~/data_collection_ur5_gripper
 ```bash
 # 1-2 URDF 빌드 (xacro → out/, git 제외). 기구학 yaml 은 실물 로봇 값으로
 isaacsim/ur5_rh_p12_description/scripts/build_urdf.sh kinematics_params:=$HOME/my_robot_calibration.yaml
-# 1-3 import 는 Isaac Sim GUI (URDF importer, 1-3 의 옵션) → isaacsim/assets/robots/ur5_rh_p12_d435i/
+#   손목 카메라 마운트: mount_variant:=t10 (기본) | t7 | t0 | original  (마운트 메시·충돌·질량·카메라 위치를 같이, 5-B "손목 카메라 마운트")
+# 1-3 import 는 Isaac Sim GUI (URDF importer, 1-3 의 옵션). USD Output 은 레포 밖 임시 폴더 → 레포 USD 와 비교 → isaacsim/assets/robots/ur5_rh_p12_d435i/ 교체
+#     (순서: isaacsim/ur5_rh_p12_description/README.md "Isaac Sim 으로 가져오기")
+# 손목 카메라 마운트 CAD (레포 밖 venv ~/cad/venv, CadQuery) → isaacsim/ur5_rh_p12_description/cad/out/
+~/cad/venv/bin/python isaacsim/ur5_rh_p12_description/cad/wrist_mount_cad.py
+# 손목 카메라 후보 비교 (렌더링 카메라만 옮김) / 카메라 몸체 여유
+~/isaacsim/python.sh isaacsim/scripts/compare_wrist_camera.py --headless [--cand "이름:s,d,b,t" ...]
+~/isaacsim/python.sh isaacsim/scripts/wrist_camera_clearance.py --headless [--cand ...]
 
 # 1-4 구조 회귀 검사 (로봇 USD 재import 할 때마다) → 8/8 PASS
 ~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless

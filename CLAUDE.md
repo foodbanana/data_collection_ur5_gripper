@@ -103,6 +103,9 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
   빈손으로 끝까지 닫으면 손가락이 64.233° 에서 서로 닿아 멈춘다 (관절 한계 65.04° 까지 가지 않음). 근거는 PLAN 1-6
 - 팔 drive 는 높은 stiffness(중력 보상 feedforward 없음)로 확정 (`isaacsim/config/drive_gains.yaml`). ω ≥ 70 rad/s (텔레옵 추종 지연 < 40 ms)
 - 테스트 씬에서 로봇은 바닥에서 띄워 배치한다 (관절 0 자세에서 팔이 바닥에 닿음). 높이는 씬 스크립트의 값이고 로봇 USD 에는 넣지 않는다
+- **손목 카메라 마운트 = t10** (2026-10-15, PLAN 5-B "손목 카메라 마운트"): xacro `mount_variant` (기본 `t10`, `t7`·`t0`·`original`) 하나로 마운트 메시·충돌·질량·카메라 기울기 (10°)·옆 위치 (−32.5 mm) 를 같이 고른다 (카메라 값만 따로 바꾸는 인자 없음).
+  CAD `isaacsim/ur5_rh_p12_description/cad/wrist_mount_cad.py` (CadQuery, 레포 밖 venv `~/cad/venv`). 로봇 USD 재import 는 GUI 로 레포 밖 임시 폴더에 → 비교 → 교체 (description README).
+  **기울기가 다른 데이터는 섞지 않는다** (`episode.json` `cameras.wrist.cam_tilt_deg`·`mount_mesh` 는 로봇 USD 에서 읽어 기록). 마운트를 바꾸면 시작 자세 `under_drone` 을 다시 구한다
 - **구조 회귀 검사**: 로봇 USD 재import 후 `~/isaacsim/python.sh isaacsim/scripts/check_articulation.py --headless` → 8/8 PASS 확인 (리포트는 `isaacsim/reports/`, git 제외)
 - **그리퍼**: 명령은 `rh_r1_joint` 하나에만. mimic(`rh_r2`, `rh_l1`, `rh_l2`)은 `NewtonMimicAPI` 로 들어왔고 PhysX 에서 동작 확인.
   mimic 조인트 3개에는 drive stiffness 를 주지 않는다. 한계 1.1351 rad(65.04°), 손가락 접촉 ≈ 64.2°. raw 0~1150 ↔ 0~1.1351 rad 선형
