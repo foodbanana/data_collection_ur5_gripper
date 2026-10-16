@@ -71,7 +71,7 @@ protective_stop:
 reset:
   service: /sim/reset
   kill_service: /sim/drone_kill   # 드론 모터 정지 (std_srvs/Trigger, 잡은 뒤. record_toggle.py --sim 의 k 키). 다시 켜는 것은 리셋
-  drone_offset: 0.05              # [m]. sim_ros2 --reset-offset 으로 바꿀 수 있음 (0 = 항상 기준 위치)
+  drone_offset: 0.03              # [m]. sim_ros2 --reset-offset 으로 바꿀 수 있음 (0 = 항상 기준 위치). 2026-10-16 0.05 → 0.03 (기준 위치 목록이 다양성을 맡음, 여유 상자를 줄여 닿는 점을 늘림)
   kill_timeout: 3.0               # [s] 날고 있는 PX4 드론 kill 뒤 disarm 확인까지
 
 cameras:

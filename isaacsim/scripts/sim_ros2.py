@@ -16,12 +16,13 @@
 #   source /opt/ros/jazzy/setup.bash
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py                    # GUI (메인 뷰포트 하나, 프로펠러 회전 켬). 창을 닫으면 종료
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60
-#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --hover small|mid|big --seed --init-pose q1..q6 | <이름> (예: under_drone)
+#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --hover small|mid|big --seed (안 주면 시작 시각) --init-pose q1..q6 | <이름> (예: under_drone)
 #   --mode hover --hover <프리셋>: 리셋마다 사인파 주파수·위상을 새로 뽑아 이륙 뒤 기준 위치 둘레를 움직임 (조종자 없이 수집). 잡은 뒤에도 계속 움직이고
 #     (실물 드론처럼, 2026-10-16 사용자 결정) 모터 정지 (X) 때 멈춤. --drone-rc on 과 같이 쓰면 에러 (PLAN 6단계 "드론 사인파")
 #         --prop-spin on|off (기본 GUI on, headless off) --duration [sim s] (headless 는 없으면 Ctrl+C 까지)
 #         --drone-rc on|off (기본 off) --rc-port <직렬 장치> (기본 rc_input.yaml port)
 #         --protective-stop on|measure (기본 on. measure = 정지하지 않고 최댓값만 기록, 기준 여유 확인용)
+#         --drone-targets (리셋마다 드론 기준 위치를 씬 drone_targets_base 목록 25 점에서 섞어 한 바퀴씩 고름, PLAN 6단계. --drone-pos 와 같이 쓰면 에러)
 #         --reset-offset [m] (리셋 때 드론 호버 위치 랜덤 범위 ±값, 기본 ros2_iface.yaml reset.drone_offset. 0 = 항상 씬 drone_pos.
 #                             PX4 는 그래도 호버 흔들림 1~3 cm, 위치까지 거의 고정하려면 --flight geometric)
 #   손목·third view 화면은 ROS 토픽으로 본다 (예: ros2 run rqt_image_view rqt_image_view). 카메라 뷰포트 창은 렌더 비용이 커서 띄우지 않음
@@ -43,6 +44,7 @@ import sim_reset as sr  # noqa: E402
 import ros2_iface as ri  # noqa: E402
 
 STATUS_SEC = 10.0      # 상태 출력 주기 (sim s)
+SEED_AUTO_MOD = 1_000_000   # --seed 를 안 주면 시작 시각 (초) % 이 값 (sim_reset.HOVER_SEED_OFFSET 보다 작게)
 
 
 def _init_pose_action():
@@ -58,8 +60,11 @@ def parse():
     p.add_argument("--position-source", default=None, choices=("mocap", "flow", "gps"), help="px4 위치 정보 (기본 px4_sitl.yaml)")
     p.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="드론 위치 [m] world")
     p.add_argument("--mode", default="static", choices=("static", "hover"), help="드론 비행 모드")
+    p.add_argument("--drone-targets", action="store_true",
+                   help="리셋마다 드론 기준 위치를 씬 drone_targets_base 목록에서 (섞어 한 바퀴씩) 고름 (--drone-pos 와 같이 쓰지 않음)")
     p.add_argument("--hover", default=None, help="hover 모드 사인파 프리셋 (드론 설정 flight.hover_presets: small·mid·big). hover 모드면 필수")
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=None,
+                   help="리셋 순서·흔들림·사인파 seed (재현·평가·검사용). 안 주면 시작 시각으로 정하고 터미널·episode.json 에 남김 (수집할 때 세션마다 달라지게)")
     p.add_argument("--init-pose", nargs="+", default=None, metavar="Q", action=_init_pose_action(),
                    help="팔 시작 자세: 관절각 6 개 [rad] 또는 씬 설정 init_poses 의 이름 (예: under_drone). 기본 home_pose. /sim/reset 도 이 자세로 되돌린다")
     p.add_argument("--prop-spin", choices=("on", "off"), default=None, help="프로펠러 회전 표시 (기본 GUI on, headless off)")
@@ -131,7 +136,9 @@ def episode_info(s, cfg, args, render, stop_mode):
                   "hover_preset": f.ref.preset,                                # hover 사인파 프리셋 이름 (static 이면 null). 뽑힌 값은 리셋 응답 drone_ref
                   "position_source": f.position_source if f.backend == "px4" else None,
                   "nominal_pos": [float(x) for x in s.drone_pos],            # 리셋 기준 위치 (--drone-pos 또는 씬 설정). 리셋마다 ± reset.drone_offset
-                  "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on",
+                  "targets": sorted(s.scene_cfg["drone_targets_base"]) if args.drone_targets else None,   # --drone-targets 목록 이름 (고른 점은 리셋 응답 drone_target)
+                  "seed_base": int(args.seed), "seed_auto": bool(args.seed_auto),     # seed_auto: --seed 를 안 줘서 시작 시각으로 정함
+                  "prop_spin": args.prop_spin == "on",
                   "grasp_marker": s.drone_info["grasp_marker"],             # 잡는 곳 빨간 테이프 (색·크기·면적, 없으면 null)
                   "rc_teleop": args.drone_rc == "on"},              # 사람이 조종기로 드론을 움직였는지 (조종 입력 자체는 녹화하지 않음)
         "cameras": {"tick_rate": float(cfg["cameras"]["tick_rate"]),
@@ -149,6 +156,12 @@ def episode_info(s, cfg, args, render, stop_mode):
 
 def main():
     args = parse()
+    args.seed_auto = args.seed is None
+    if args.seed_auto:
+        args.seed = int(time.time()) % SEED_AUTO_MOD             # 시작 시각 (초). hover seed (+1 000 000) 와 겹치지 않게 이보다 작게
+        print(f"[sim_ros2] seed {args.seed} (--seed 를 안 줘서 시작 시각으로 정함. 같은 조건을 다시 만들려면 --seed {args.seed})", flush=True)
+    if args.drone_targets and args.drone_pos is not None:
+        raise ValueError("--drone-targets 와 --drone-pos 는 같이 쓸 수 없음 (기준 위치를 어디서 고를지 둘 중 하나)")
     if args.mode == "hover" and args.drone_rc == "on":
         raise ValueError("--mode hover 와 --drone-rc on 은 같이 쓸 수 없음 (드론을 움직이는 쪽이 둘이 됨: 사인파 목표 ↔ 조종기)")
     cfg = ri.load_ros2_config(args.ros2_config)
@@ -206,17 +219,24 @@ def main():
                 if ahead > 0:
                     time.sleep(ahead)                       # 실제 시간 속도 (텔레옵)
 
-        reset = sr.EpisodeReset(s, cfg, node, arm, grip, stop, step_paced, seed=args.seed)
+        targets = None
+        if args.drone_targets:
+            tb = s.scene_cfg.get("drone_targets_base")
+            if not tb:
+                raise KeyError("--drone-targets: 씬 설정에 drone_targets_base 목록이 없거나 비었음")
+            top = float(s.scene_cfg["table"]["top_z"])
+            targets = [(n, np.asarray(p, dtype=float) + np.array([0.0, 0.0, top])) for n, p in tb.items()]
+        reset = sr.EpisodeReset(s, cfg, node, arm, grip, stop, step_paced, seed=args.seed, targets=targets)
         bridges = [arm, grip, stop, reset]
         ds.run(s, 0.5)                                       # 카메라 렌더가 한 번 돈 뒤 렌더 설정 확인
         render = ri.check_render_settings(cfg)
         reset.sim_info = episode_info(s, cfg, args, render, args.protective_stop)
         if not args.headless:
             ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
-        print(f"[sim_ros2] 준비: 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
+        print(f"[sim_ros2] 준비: seed {args.seed}{' (시작 시각)' if args.seed_auto else ''}, 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
               f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']}, "
               f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "
-              f"서비스 {cfg['reset']['service']} (드론 위치 ±{cfg['reset']['drone_offset']:g} m), "
+              f"서비스 {cfg['reset']['service']} (드론 위치 {'목록 ' + str(len(targets)) + ' 점' if targets else '기준 위치'} ±{cfg['reset']['drone_offset']:g} m), "
               f"카메라 {[cfg['cameras'][n]['topic'] for n in ri.CAMERA_NAMES]}", flush=True)
 
         t0, wall0 = s.flight.t, time.monotonic()

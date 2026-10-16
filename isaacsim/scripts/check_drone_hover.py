@@ -9,6 +9,7 @@
 #   H3 drone_cmd.py goto: 기준 위치만 옮기고 사인파는 계속
 #   H4 그리퍼 닫기 명령에는 사인파가 계속 (실물 드론처럼, 2026-10-16 사용자 결정), 모터 정지 → 목표 멈춤·응답 hover_freeze = kill
 #   H5 다음 리셋: 주파수·위상이 새로 뽑히고 (앞 리셋과 다름) 멈춤이 풀려 다시 움직임
+#   H6 --drone-targets: 리셋마다 목록 (씬 drone_targets_base) 에서 다른 점을 고르고, 기준 위치 = 그 점 ± drone_offset, 응답에 이름·위치 기록
 #
 # 실행:
 #   source /opt/ros/jazzy/setup.bash
@@ -99,7 +100,12 @@ def main():
            f"종료 코드 {r.returncode}, 에러 문구 {'있음' if '같이 쓸 수 없음' in txt else '없음'}")
 
     rclpy.init()
-    sim = cr.Sim(["--mode", "hover", "--hover", a.hover], os.path.join(out_dir, "sim.log"))
+    sim = cr.Sim(["--mode", "hover", "--hover", a.hover, "--drone-targets"], os.path.join(out_dir, "sim.log"))
+    with open(os.path.join(cr.SIM_ROOT, "config", "ros2_iface.yaml"), encoding="utf-8") as f:
+        offset = float(yaml.safe_load(f)["reset"]["drone_offset"])
+    with open(os.path.join(cr.SIM_ROOT, "config", "scene_drone.yaml"), encoding="utf-8") as f:
+        sc = yaml.safe_load(f)
+    tlist = {n: np.array(p, dtype=float) + np.array([0, 0, float(sc["table"]["top_z"])]) for n, p in sc["drone_targets_base"].items()}
     ros, ex = None, None
     try:
         ros = cr.Ros()
@@ -170,6 +176,27 @@ def main():
         R.item("H5 다음 리셋: 사인파 새로 뽑힘, 멈춤 풀림", new and bool(np.any(ptp4 >= amp * CRIT["moving_frac"])) and rms4 <= CRIT["track_rms_mm"] / 1000,
                f"리셋 {ok2} {res2.get('duration_s')} s, 주파수 {np.round(f2, 3).tolist()} Hz, seed {ref2.get('seed')} (앞 {ref1.get('seed')}), "
                f"목표 범위 {np.round(ptp4 * 1000, 1).tolist()} mm, 추적 RMS {rms4 * 1000:.1f} mm")
+        # H6 기준 위치 목록
+        why = []
+        for tag, res in (("1", res1), ("2", res2)):
+            tg_ = res.get("drone_target") or {}
+            nm = tg_.get("name")
+            goal = np.array(res.get("drone_goal", [np.nan] * 3), dtype=float)
+            if nm not in tlist:
+                why.append(f"리셋 {tag} 목록 점 없음 ({nm})")
+                continue
+            if not np.allclose(tg_.get("center"), tlist[nm], atol=1e-4):
+                why.append(f"리셋 {tag} 위치가 목록과 다름")
+            if np.abs(goal - tlist[nm]).max() > offset + 1e-6:
+                why.append(f"리셋 {tag} 기준 위치가 ±{offset} 밖")
+            if not np.allclose((res.get("drone_ref") or {}).get("p0", [np.nan] * 3), goal, atol=1e-4):
+                why.append(f"리셋 {tag} drone_ref.p0 ≠ drone_goal")
+        n1, n2 = (res1.get("drone_target") or {}).get("name"), (res2.get("drone_target") or {}).get("name")
+        if n1 == n2:
+            why.append("두 리셋이 같은 점")
+        R.item("H6 --drone-targets: 리셋마다 목록에서 다른 점, 기준 위치 = 점 ± drone_offset, 기록", not why,
+               f"리셋 1 {n1} → 기준 {np.round(np.array(res1.get('drone_goal')) - tlist.get(n1, 0), 3).tolist() if n1 in tlist else '-'} m, "
+               f"리셋 2 {n2}, 목록 {len(tlist)} 점, ±{offset} m" + (f" | {'; '.join(why)}" if why else ""))
     except Exception as e:  # noqa: BLE001
         R.item("진행", False, f"{type(e).__name__}: {e} (sim 로그 {sim.log_path})")
     finally:

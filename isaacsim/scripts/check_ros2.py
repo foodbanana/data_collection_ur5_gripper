@@ -67,6 +67,8 @@ class Sim:
     def __init__(self, args, log_path):
         self.log_path = log_path
         self.log = open(log_path, "w", encoding="utf-8")
+        if "--seed" not in args:                    # 검사는 seed 고정 (sim_ros2 는 안 주면 시작 시각으로 정함)
+            args = [*args, "--seed", "0"]
         cmd = [PYTHON_SH, os.path.join(SCRIPTS, "sim_ros2.py"), "--headless", "--duration", "3000", *args]
         self.proc = subprocess.Popen(cmd, cwd=REPO, stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
 

@@ -11,7 +11,8 @@
 #            기하 — 모터 끄고 새 호버 위치로 순간이동
 #   3. 팔·그리퍼를 시작 자세 (--init-pose, 기본 = 홈)·열림으로 순간이동 (RobotDrive.reset_pose: 위치·속도·목표를 한 번에. 리셋은 데이터에 안 들어가므로 실물처럼 움직일 필요 없음)
 #   4. 드론: PX4 는 drone_scene.px4_takeoff 로 재이륙해 새 호버 위치로 (약 30 s), 기하는 그 자리에서 다시 켬
-#   새 호버 위치 = 씬 drone_pos + 균등분포 ±drone_offset (x, y, z 각각), 시드 = --seed + 리셋 횟수
+#   새 호버 위치 = 기준 위치 + 균등분포 ±drone_offset (x, y, z 각각), 시드 = --seed + 리셋 횟수. 기준 위치 = 씬 drone_pos,
+#     또는 --drone-targets 면 씬 drone_targets_base 목록을 섞어 한 바퀴씩 돌며 고른 점 (응답 drone_target: 이름·번호·바퀴·위치, PLAN 6단계)
 #   hover 모드 (--hover 프리셋): 리셋마다 사인파 주파수·위상을 seed + HOVER_SEED_OFFSET 으로 새로 뽑는다 (진폭은 프리셋). 이륙이 끝난 뒤 시작,
 #     응답 drone_ref 에 기록. 잡은 뒤에도 계속 움직이고 (실물 드론처럼) 모터 정지 때 멈춘다 (drone_kill 응답 hover_freeze, PLAN 6단계)
 # 처음 (2026-10-05) 에는 날고 있는 드론은 이동 명령만 (약 7 s), 팔은 최소 jerk 궤적으로 돌렸으나 갈래마다 예외가 생김
@@ -33,8 +34,10 @@ HOVER_SEED_OFFSET = 1_000_000   # hover 사인파 seed = 리셋 seed + 이 값
 
 
 class EpisodeReset:
-    def __init__(self, s, cfg, node, arm, grip, stop, step, seed=0, realtime=True):
-        """step: sim 을 한 루프 돌리는 함수 (sim_ros2 의 실제 시간 맞춤 포함). arm/grip/stop: ArmBridge/GripperBridge/ProtectiveStop."""
+    def __init__(self, s, cfg, node, arm, grip, stop, step, seed=0, realtime=True, targets=None):
+        """step: sim 을 한 루프 돌리는 함수 (sim_ros2 의 실제 시간 맞춤 포함). arm/grip/stop: ArmBridge/GripperBridge/ProtectiveStop.
+        targets: 드론 기준 위치 목록 [(이름, world 위치)] (sim_ros2 --drone-targets). 주면 리셋마다 목록을 섞어 한 바퀴씩 돌며 하나를 고른다
+                 (섞는 순서 seed = [--seed, 바퀴 번호]). None 이면 씬 drone_pos 하나"""
         from isaacsim.core.simulation_manager import SimulationManager
         from std_srvs.srv import Trigger
 
@@ -47,6 +50,9 @@ class EpisodeReset:
         self.count = 0
         self.home = np.asarray(s.init_pose, dtype=float)             # 에피소드 시작 자세 = --init-pose (안 주면 drive 설정 home_pose)
         self.nominal = np.asarray(s.drone_pos, dtype=float).copy()      # 리셋 기준 위치 = 시작할 때의 드론 위치 (--drone-pos 또는 씬 설정 drone_pos)
+        self.targets = None if targets is None else [(str(n), np.asarray(p, dtype=float)) for n, p in targets]
+        if self.targets is not None and not self.targets:
+            raise ValueError("드론 기준 위치 목록이 비었음")
         # 로봇 base (최상위 prim = robot_mount, world 와 축이 같고 테이블 상판 높이만큼 위). 메타데이터 위치값은 base 기준 (CLAUDE.md)
         self.base = np.array([0.0, 0.0, float(s.scene_cfg["table"]["top_z"])])
         self.now = SimulationManager.get_simulation_time    # sim time (/clock 과 같은 시계). flight.t 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
@@ -131,11 +137,22 @@ class EpisodeReset:
         self.n_cb += 1
         t0 = self.now()
         seed = self.seed0 + self.count
+        target = None
+        if self.targets is not None:                                # 목록을 섞어 한 바퀴씩 (점마다 개수가 고름)
+            n = len(self.targets)
+            cycle, k = divmod(self.count, n)
+            i = int(np.random.default_rng([self.seed0, cycle]).permutation(n)[k])
+            name, center = self.targets[i]
+            target = {"name": name, "index": i, "cycle": cycle, "center": np.round(center, 4).tolist(),
+                      "center_base": np.round(center - self.base, 4).tolist()}
+        else:
+            center = self.nominal
         self.count += 1
         rng = np.random.default_rng(seed)
-        goal = self.nominal + rng.uniform(-1.0, 1.0, 3) * float(self.c["drone_offset"])
+        goal = center + rng.uniform(-1.0, 1.0, 3) * float(self.c["drone_offset"])
         self.hover_seed = seed + HOVER_SEED_OFFSET              # 위치와 다른 난수열 (같은 seed 면 첫 난수가 같아 위치·주파수가 묶임)
-        res = {"reset": self.count, "seed": seed, "drone_offset": float(self.c["drone_offset"]), "drone_goal": np.round(goal, 4).tolist(),
+        res = {"reset": self.count, "seed": seed, "drone_offset": float(self.c["drone_offset"]), "drone_target": target,
+               "drone_goal": np.round(goal, 4).tolist(),
                "t_start": round(t0, 3)}
         self.arm.hold = self.grip.hold = True
         self.phases = [("start", t0, time.monotonic())]
