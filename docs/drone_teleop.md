@@ -154,6 +154,8 @@
 
 그래서 `PX4Commander` 에 "조종기에 넘김" 상태를 두었다 (`set_sticks`, `handover`, `takeback`): 위치 목표 송신·Offboard 재요청·hover 목표 갱신을 멈추고, 수동 모드를 요청하고, 스틱 값을 보낸다.
 kill (`/sim/drone_kill`, 녹화 도구 `k`) 과 리셋은 지금처럼 `PX4Commander` 를 거치므로 그대로 쓴다.
+**hover 모드 (사인파) 와는 같이 쓸 수 없다** (2026-10-16): `sim_ros2.py --mode hover --drone-rc on` 은 시작 전에 에러. 드론을 움직이는 쪽이 둘이 되고,
+예전에는 넘기는 순간 사인파가 조용히 멈춰 `episode.json` 에 hover 로 잘못 기록됐다. 조종자 없이 모을 때는 hover, 사람이 드론을 움직일 때는 조종기 (작업명을 나눔).
 
 ---
 

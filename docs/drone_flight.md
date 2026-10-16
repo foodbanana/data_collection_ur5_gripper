@@ -22,7 +22,7 @@
 | 할당 | (총추력, 토크 3) → 할당 행렬 역행렬 → 로터 4 개의 $\omega_i^2$ |
 | 게인 | Pegasus 값을 **우리 기체 질량·관성 비율로 환산** (Pegasus Iris 와 같은 응답) |
 | 지연 | Pegasus 처럼 **한 physics step 지연** (지난 step 에 계산한 ω 를 이번 step 에 적용) |
-| 모드 | `static` (제자리), `hover` (약한 흔들림, seed), `trajectory` (미구현) |
+| 모드 | `static` (제자리), `hover` (사인파 흔들림, 프리셋 `--hover small\|mid\|big`, seed), `trajectory` (미구현) |
 | 모터 정지 | `release()` → ω = 0 → 추력 0 → 자유 낙하 (실물: 잡은 뒤 모터를 멈춤) |
 | 프로펠러 회전 | 보여 주기용, 추력과 분리 (`--prop-spin on`) |
 | PX4 SITL | 제어기 자리를 **실제 PX4 v1.16.0** 으로 (13장, `--flight px4`). 로터 추력 부분은 그대로 |
@@ -120,7 +120,9 @@ Pegasus 는 같은 힘을 로터 local 좌표계에 건다. 결과는 같다.
 
 ### 6-1. 목표 궤적 (`Reference`)
 - `static`: $\mathbf{p}_r = \mathbf{p}_0$, $\mathbf{v}_r = \mathbf{a}_r = \mathbf{j}_r = 0$
-- `hover`: 축마다 사인파 $n$ 개의 합 ($n = 2$, 진폭 합 = $[20, 20, 10]$ mm, 주파수 $f \sim U(0.2, 0.5)$ Hz, 위상 $\varphi \sim U(0, 2\pi)$, `--seed` 로 뽑아 기록).
+- `hover`: 축마다 사인파 $n$ 개의 합 ($n = 2$, 위상 $\varphi \sim U(0, 2\pi)$, `--seed` 로 뽑아 기록). 진폭 합·주파수 범위는 프리셋 (`flight.hover_presets`, 2026-10-16):
+  small $[20, 20, 10]$ mm·$U(0.2, 0.5)$ Hz (예전 값, F3) / mid $[30, 30, 15]$ mm·$U(0.05, 0.3)$ Hz / big $[50, 50, 20]$ mm·$U(0.05, 0.3)$ Hz.
+  `sim_ros2` 리셋마다 주파수·위상을 다시 뽑고 (`reseed`), PX4 는 이륙이 끝난 뒤부터 보낸다. `freeze` = 그 순간 목표에 멈춤 (잡기·모터 정지·CLI hold)
   시작 순간 목표가 $\mathbf{p}_0$ 이 되도록 $\sin\varphi$ 를 뺀다:
 
 $$
@@ -306,7 +308,7 @@ $$
 | 파일 | 역할 |
 |------|------|
 | `isaacsim/scripts/drone_flight.py` | `DroneFlight` (추력 모델·할당·한 step 지연·release·프로펠러 표시), `GeometricController`, `Reference` |
-| `isaacsim/config/drone_iris.yaml` | `flight` 항목: 추력 모델 값, 게인(Pegasus 값 + 기준 질량·관성), hover 진폭·주파수 |
+| `isaacsim/config/drone_iris.yaml` | `flight` 항목: 추력 모델 값, 게인(Pegasus 값 + 기준 질량·관성), hover 프리셋 (`hover_presets`: 진폭·주파수) |
 | `isaacsim/scripts/drone.py` | 드론 USD 를 씬에 넣고 덮어쓰기 (축소·질량·관절 고정, `prop_spin`, 잡는 곳 빨간 테이프 `grasp_marker` = 보이기만 하는 메시) |
 | `isaacsim/scripts/check_flight.py` | 시험 F1~F4, GUI 보기 `--view` |
 | `isaacsim/assets/drones/iris/` | Iris USD 원본 (Pegasus, BSD-3), 출처 README |
@@ -320,7 +322,7 @@ $$
 ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/check_flight.py --view --mode hover --prop-spin on --release-after 8
 
 # 로봇·카메라와 함께
-~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --mode hover --prop-spin on
+~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --mode hover --hover mid --prop-spin on
 ```
 
 ---
@@ -466,7 +468,8 @@ PX4 비행 로그(`.ulg`)·콘솔은 `isaacsim/reports/px4_<시각>/` (분석: p
 
 **다른 터미널 명령 (`drone_cmd.py` CLI)**: PX4 Offboard 는 위치 목표를 끊김 없이(2 Hz 이상) 받아야 유지되므로, 목표는 씬 안 `PX4Commander` 가 20 Hz 로 계속 보내고
 CLI 는 UDP localhost `command_port` (14600) 로 JSON 명령을 보내 그 목표를 바꾼다 (실물에서 보조 컴퓨터가 setpoint 를 보내고 사람이 높은 수준 명령을 주는 구성).
-씬이 이륙·waypoint 를 마치기 전에는 이동 명령 거부. CLI 로 goto·hold 하면 hover 모드 사인파 목표는 멈춤.
+씬이 이륙·waypoint 를 마치기 전에는 이동 명령 거부. hover 모드면 goto = 사인파 기준 위치만 옮김 (사인파 계속), hold = 사인파를 지금 목표에 멈춤 (2026-10-16).
+hover 가 아니면 goto·hold 는 CLI 가 목표를 넘겨받는다 (`external`, PX4 재시작 = 리셋 때 풂. 예전에는 리셋 뒤에도 남았음).
 확인 (2026-10-02): 이륙 중 goto → 거부, waypoint 2 개 뒤 ready, `goto 0.65 0.05 1.45 --yaw-deg 20` → 4 s 뒤 추정 (0.654, 0.060, 1.465)
 
 
