@@ -307,7 +307,7 @@ $$
 |------|------|
 | `isaacsim/scripts/drone_flight.py` | `DroneFlight` (추력 모델·할당·한 step 지연·release·프로펠러 표시), `GeometricController`, `Reference` |
 | `isaacsim/config/drone_iris.yaml` | `flight` 항목: 추력 모델 값, 게인(Pegasus 값 + 기준 질량·관성), hover 진폭·주파수 |
-| `isaacsim/scripts/drone.py` | 드론 USD 를 씬에 넣고 덮어쓰기 (축소·질량·관절 고정, `prop_spin`) |
+| `isaacsim/scripts/drone.py` | 드론 USD 를 씬에 넣고 덮어쓰기 (축소·질량·관절 고정, `prop_spin`, 잡는 곳 빨간 테이프 `grasp_marker` = 보이기만 하는 메시) |
 | `isaacsim/scripts/check_flight.py` | 시험 F1~F4, GUI 보기 `--view` |
 | `isaacsim/assets/drones/iris/` | Iris USD 원본 (Pegasus, BSD-3), 출처 README |
 
