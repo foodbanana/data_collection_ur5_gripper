@@ -1,16 +1,21 @@
 # =============================================================
 # third_view_camera.yaml — 외부(third view) 카메라 (docs/PLAN.md 0-2, 2-3)
 #
-# 실물: D456 (아직 없음, 2026-10-01). 토픽 /cam/third_view/color/image_raw → observation.images.third_view
+# 실물: D456 (2026-10-15 확정, config/cameras.yaml third_view). 토픽 /cam/third_view/color/image_raw → observation.images.third_view
 # 위치: 로봇 base 근처에서 위를 올려다보며 팔이 드론을 잡는 장면을 찍는다 (2026-10-01 사용자 결정). 렌더링 보고 조정
-# **intrinsics 는 임시값**: D456 color 가로 시야각 약 90° 를 640x480 에 맞춘 핀홀 (fx = 320 / tan 45°).
-#   실물이 생기면 camera_info 실측값으로 바꾼다 (손목 카메라 wrist_camera.yaml 과 같은 방식)
+#   **position·look_at 은 아직 임시값** (실물 위치를 정하면 바꾼다, PLAN 6단계 "수집 전 확인")
+# intrinsics = 실물 D456 color 640x480 공장 보정값 (2026-10-15, pyrealsense2 로 읽음 = realsense-ros camera_info 와 같은 값. fw 5.17.3.10)
+#   640x480 = 1280x800 을 0.6 배로 줄이고 좌우를 자른 것: 가로 79.3°, 세로 63.7° (1280x800 은 가로 89.6°)
+#   USD Camera 는 초점거리가 하나라 fy 는 fx 로 근사 (차이 0.09 %, 손목 카메라와 같은 방식)
 # =============================================================
 
-serial: null                  # 실물 시리얼 (없음)
+serial: "252122301126"
 resolution: [640, 480]        # [width, height]
-intrinsics: {fx: 320.0, fy: 320.0, cx: 320.0, cy: 240.0}   # 임시값
-distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+intrinsics: {fx: 386.413, fy: 386.054, cx: 325.208, cy: 242.755}
+distortion: [0.0, 0.0, 0.0, 0.0, 0.0]   # sim 렌더링 = 왜곡 없는 핀홀 (0 이 아니면 에러)
+# 실물 렌즈 왜곡 (기록만, sim 에는 넣지 않음. 2026-10-15 사용자 결정): 화면 가장자리에서 약 4 ~ 5 px (224x224 로 줄이면 약 2 px).
+#   realsense-ros image_raw 는 이 왜곡을 펴지 않은 원본 → sim 영상과 가장자리에서 그만큼 다르다. 실물 ↔ sim 영상 비교에서 문제가 되면 다시 본다
+real_distortion: {model: inverse_brown_conrady, coeffs: [-0.0564, 0.06365, 0.00081, 0.00002, -0.02033]}
 horizontal_aperture: 20.955   # [mm] 임의로 정한 센서 폭 (비율만 의미 있음)
 clipping_range: [0.02, 20.0]  # [m]
 

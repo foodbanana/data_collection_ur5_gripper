@@ -143,8 +143,8 @@ def load_scene_config(path):
 def load_third_view_config(path):
     with open(path, encoding="utf-8") as f:
         c = yaml.safe_load(f)
-    for k in ("resolution", "intrinsics", "distortion", "horizontal_aperture", "clipping_range", "position", "look_at",
-              "model", "mount"):
+    for k in ("resolution", "intrinsics", "distortion", "real_distortion", "horizontal_aperture", "clipping_range", "position",
+              "look_at", "model", "mount"):
         if k not in c:
             raise KeyError(f"{path}: '{k}' 항목이 없습니다")
     for k in ("usd", "prim", "optical_frame", "bottom_center"):
