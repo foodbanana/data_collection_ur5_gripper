@@ -258,7 +258,8 @@ base–upper_arm 판정 불가(베이스 메시가 닫혀 있지 않음) 약 190
 | UR5 forearm | convex decomposition (씬에서 변경) |
 | UR5 나머지 링크 | `ur_description` 충돌 전용 메시 → convex hull |
 | 그리퍼 본체·손가락 | ROBOTIS STL → convex hull |
-| 카메라 마운트, 브래킷 | 원판 + 박스 (xacro 에서 직접 정의) |
+| 카메라 마운트 | **t10 마운트 (2026-10-15)**: 충돌 판 STL (`wrist_mount_collision_plate.stl`, 외곽 그대로 z 0~5 mm, convex hull) + 카메라 탭 상자 (xacro `mount_variant`). 마운트 STL 전체를 쓰면 볼록 껍질이 플랜지 홈·가운데 구멍을 메워 손목과 겹친다. `original` 은 원판 + 박스 |
+| 브래킷 | 원판 + 박스 (xacro 에서 직접 정의) |
 | D435i | 박스 1 개 (realsense2_description). 충돌 박스가 본체 중심이 아니라 깊이 센서 원점(camera_link) 기준으로 놓여, 공구 방향 13.2~38.3 mm (실제 본체 5.0~30.0 mm) → **보는 방향으로 약 8.2 mm 밀림**. 사전 점검의 카메라 박스–마운트 간격 8.22 mm 와 일치 (빌드된 URDF 에서 확인: 박스 13.22~38.28 mm, 본체 5.00~30.05 mm, wrist_mount 기준) |
 
 GUI 에서 충돌 형상 보기: 뷰포트 왼쪽 위 눈 아이콘 → Show By Type → Physics → Colliders → All.
@@ -303,7 +304,7 @@ GUI 에서 충돌 형상 보기: 뷰포트 왼쪽 위 눈 아이콘 → Show By 
 | ~~physics 주기 확정, RTF 측정~~ → 완료 (3-1: 물리 120 Hz 그대로, 앱 루프·카메라 30 Hz, RTF 대기 0.96. CPU 경고는 잘못된 경보, `docs/sim_performance.md`) | 3단계 |
 | 드론 질량·무게중심 도메인 랜덤화 | 6단계 |
 | 실물 UR5 에 같은 궤적을 보내 응답 비교 → K·D·armature 보정 (시스템 식별), drive gain ±20% 랜덤화 검토 | 9단계 |
-| 마운트·브래킷 질량 실측 (현재 0.05 / 0.08 kg 추정) | 다음 재import 때 |
+| ~~마운트·브래킷 질량 실측 (현재 0.05 / 0.08 kg 추정)~~ → 마운트는 t10 출력물 실측 **32.36 g** (PLA 채움 15 %) 으로 반영 (2026-10-15 재import). 브래킷 0.08 kg 은 아직 추정. 팔 K·D 는 드론 1.5 kg 을 포함한 관성으로 정해 이 차이로 다시 튜닝하지 않음 | 브래킷: 다음 재import 때 |
 
 ---
 

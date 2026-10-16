@@ -100,7 +100,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | `/cam/wrist/color/image_raw` | sensor_msgs/Image | sim → | 30 Hz | 손목 D435i color 640x480 `rgb8`, frame_id `wrist_camera_color_optical_frame` | `observation.images.wrist` |
 | `/cam/wrist/color/camera_info` | sensor_msgs/CameraInfo | sim → | 30 Hz | intrinsics (1-7, 실물 camera_info 값) | — |
 | `/cam/third_view/color/image_raw` | sensor_msgs/Image | sim → | 30 Hz | third view color 640x480 `rgb8`, frame_id `third_view_camera_color_optical_frame` | `observation.images.third_view` |
-| `/cam/third_view/color/camera_info` | sensor_msgs/CameraInfo | sim → | 30 Hz | intrinsics | — |
+| `/cam/third_view/color/camera_info` | sensor_msgs/CameraInfo | sim → | 30 Hz | intrinsics (실물 D456 640x480 공장 보정값, 2026-10-15. 실물 렌즈 왜곡은 sim 에 넣지 않고 `third_view_camera.yaml` `real_distortion` 에 기록만) | — |
 | `/base/imu` | sensor_msgs/Imu | — | **8단계부터** | 고정 베이스에서는 sim·실물 모두 발행 안 함. stage1 `--base-imu const` | `observation.base_imu` |
 
 - **QoS**: 기본 (RELIABLE, depth 10). 카메라는 **받는 쪽도 RELIABLE** 로 받을 것 (best effort 면 640x480 이미지가 UDP 조각 손실로 통째로 버려짐, `docs/sim_performance.md` 5장)

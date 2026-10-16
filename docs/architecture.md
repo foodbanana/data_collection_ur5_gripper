@@ -1,6 +1,6 @@
 # 데이터 수집 전체 구조
 
-작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인 · 2026-10-14 컨트롤러 버튼 (녹화·리셋·드론 정지), B-3·B-4 (텔레옵 녹화 → 검수) · 2026-10-15 컨트롤러 One Euro 필터, 손목 카메라 마운트 t10 (렌즈를 그리퍼 중심선에, 10° 기울임, 로봇 USD 재import, 시작 자세 다시 구함)
+작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인 · 2026-10-14 컨트롤러 버튼 (녹화·리셋·드론 정지), B-3·B-4 (텔레옵 녹화 → 검수) · 2026-10-15 컨트롤러 One Euro 필터, 손목 카메라 마운트 t10 (렌즈를 그리퍼 중심선에, 10° 기울임, 로봇 USD 재import, 시작 자세 다시 구함) · 2026-10-16 third view 카메라 D456 확정·실물 intrinsics (위치는 후보 비교 중), 리셋 시간 단축 계획 (`docs/PLAN.md` 6단계 "수집 전 확인")
 
 명령 → 시뮬레이터 (또는 실물 로봇) → 녹화 → 변환 → 병합 → 검수까지, 지금 만들어져 있는 데이터 수집 흐름 전체를 한 장으로 보여 준다.
 부분별 자세한 내용은 맨 아래 "관련 문서".
@@ -13,8 +13,8 @@
 +------------------------------------------------------------------------------------------------------------------------+
 | [1] COMMAND SOURCE   (system python3 + ROS 2)                                                                          |
 |------------------------------------------------------------------------------------------------------------------------|
-| now    : isaacsim/scripts/replay_commands.py <commands.csv>   (replays a recorded grasp, paced by /clock)              |
-| stage 5-B: teleop/xr_teleop_node.py (PICO 4 Ultra controller pose -> TCP target -> IK), 60 Hz   <-- BUILT, see sec. 2  |
+| teleop : teleop/xr_teleop_node.py (PICO 4 Ultra controller pose -> TCP target -> IK), 60 Hz   (stage 5-B, see sec. 2)  |
+| test   : isaacsim/scripts/replay_commands.py <commands.csv>   (no device: replays a recorded grasp, paced by /clock)   |
 | rule   : data = only these two topics; /joint_command carries header.stamp = sim time at send                          |
 |          + /teleop/request (std_msgs/String, NOT recorded): buttons A/B/X -> [3] recorder (record / reset / kill)      |
 +------------------------------------------------------------------------------------------------------------------------+
@@ -163,9 +163,9 @@
 
 ---
 
-## 5. 5단계에서 만들 것
+## 5. 5단계에서 만든 것
 
-두 가지다 (2026-10-08 결정, 팔 장치는 2026-10-11 에 PICO 4 Ultra 로 바꿈, `docs/PLAN.md` 5단계). [3] ~ [6] 은 어느 쪽에서도 바꾸지 않는다.
+두 가지다 (2026-10-08 결정, 팔 장치는 2026-10-11 에 PICO 4 Ultra 로 바꿈, `docs/PLAN.md` 5단계). 둘 다 만들었고 [3] ~ [6] 은 어느 쪽에서도 바꾸지 않았다.
 
 | 순서 | 무엇 | 그림에서 | 장치 |
 |------|------|----------|------|
