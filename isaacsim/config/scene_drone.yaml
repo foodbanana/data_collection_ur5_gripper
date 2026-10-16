@@ -41,7 +41,14 @@ px4:
   connect_timeout: 60.0       # sim s, PX4 부팅·arm 까지
   leg_timeout: 30.0           # sim s, 이동 한 구간 (PX4 추정 위치가 목표 tol 안)
   arrive_tol: 0.05            # m
-  settle_time: 5.0            # s, 도착 뒤 호버 안정
+  # 이륙 전·도착 뒤 대기 (2026-10-16 리셋 시간 단축, PLAN 6단계 "수집 전 확인"). settle 에 숫자를 주면 예전처럼 고정 대기 (5.0)
+  ekf_wait: 5.0               # s, 바닥에 놓인 채 EKF 초기화 대기 (예전 코드 고정값). 줄이면 PX4 grasp_demo 가 접근 중 시간 초과 (0·3 s 실패, 4 s 경계, 2026-10-16)
+  settle: 5.0                 # s, 도착 뒤 호버 대기 (고정, 끝 오차 6 ~ 8 mm). "near" = 실제 위치가 목표에서 settle_pos_tol 안 + 속도 settle_speed_tol 아래로
+                              #   settle_hold 동안 (2026-10-16 비교: 4.4 s 로 0.6 s 빠르지만 끝 오차 13 mm → 쓰지 않음. 속도만 보면 30 ~ 40 mm 떨어진 채 끝났다)
+  settle_pos_tol: 0.015       # m (예전 5 s 고정 대기의 끝 오차 6 ~ 8 mm)
+  settle_speed_tol: 0.03      # m/s
+  settle_hold: 0.5            # s
+  settle_timeout: 10.0        # sim s
 
 light:
   dome_intensity: 1000.0      # 조명이 없으면 카메라 영상이 검게 나옴 → headless 에서도 항상 만든다

@@ -316,20 +316,37 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     return s
 
 
-def px4_takeoff(s, realtime=False):
-    """PX4 드론: 연결 → 이륙 지점 위로 수직 상승 (높이 = 첫 waypoint 또는 드론 위치) → waypoint 차례로 → 드론 위치 → settle_time 호버.
-    도착 = PX4 추정 위치가 arrive_tol 안 (실물처럼 실제 위치는 표류만큼 다를 수 있음). 실패하면 에러."""
+def px4_takeoff(s, realtime=False, phases=None):
+    """PX4 드론: 연결 → 이륙 준비 (ekf_wait) → 이륙 지점 위로 수직 상승 (높이 = 첫 waypoint 또는 드론 위치) → waypoint 차례로 → 드론 위치 → 호버 안정 (settle).
+    도착 = PX4 추정 위치가 arrive_tol 안 (실물처럼 실제 위치는 표류만큼 다를 수 있음). 실패하면 에러.
+    ekf_wait: 바닥에 놓인 채 기다리는 시간 [s] (예전 코드의 고정 5.0 을 설정으로). 2026-10-16 더 줄이려 했으나 안 됨: 위치 추정을 받자마자 (약 0 s)·3 s 면
+              PX4 grasp_demo success 가 접근 중 시간 초과 (드론이 접근 마지막에 ±8 mm 흔들림), 4 s 는 한 번 통과 (경계), 5 s 통과.
+              추정 위치 안정·yaw 일치 기준으로 기다려도 실패 → 정지 상태에서 PX4 가 추정하는 것 (센서 편향 등) 이 시간이 필요한 것으로 본다 (확인 안 함)
+    settle: "near" = 실제 드론 위치가 목표 (drone_pos) 에서 settle_pos_tol 안 + 속도 settle_speed_tol 아래로 settle_hold 동안 유지될 때까지 (2026-10-16) / 숫자 = 고정 대기 (예전 5.0)
+            (속도만 보면 목표에서 30 ~ 40 mm 떨어져 천천히 다가오는 중에 끝났다 → 위치도 본다)
+    phases: 리스트를 주면 단계가 끝날 때마다 (이름, sim 시각, wall 시각) 을 넣는다 (리셋 시간 측정, 동작은 같음)"""
+    from isaacsim.core.simulation_manager import SimulationManager
+
+    def mark(name):
+        if phases is not None:
+            phases.append((name, SimulationManager.get_simulation_time(), time.monotonic()))
+
     c, f = s.px4_cfg, s.flight
     t0 = f.t
     while not (f.px4.status == "lockstep" and f.cmd.connected):
         step(s)
         if f.t - t0 > c["connect_timeout"]:
             raise RuntimeError(f"PX4 연결 안 됨 ({f.px4.status}, 명령 링크 {f.cmd.connected}), 로그 {f.px4.run_dir}")
-    run(s, 5.0, realtime)                         # EKF 초기화 여유 (바닥에 놓인 채)
+    mark("px4_connect")
+    if isinstance(c["ekf_wait"], bool) or not isinstance(c["ekf_wait"], (int, float)) or c["ekf_wait"] < 0:
+        raise ValueError(f"px4.ekf_wait 는 0 이상의 숫자 [s]: {c['ekf_wait']!r}")
+    run(s, float(c["ekf_wait"]), realtime)        # EKF 초기화 여유 (바닥에 놓인 채)
+    mark("ekf_wait")
     p0 = f._body_pose()[0]
     first_z = s.waypoints[0][2] if s.waypoints else s.drone_pos[2]
     legs = [np.array([p0[0], p0[1], first_z]), *[w.copy() for w in s.waypoints], s.drone_pos.copy()]
     f.arm(legs[0])
+    armed_marked = False
     for i, goal in enumerate(legs):
         f.cmd.goto(goal)
         t1 = f.t
@@ -341,6 +358,9 @@ def px4_takeoff(s, realtime=False):
         wall1 = time.monotonic()
         while not arrived():
             step(s)
+            if not armed_marked and f.px4.armed:
+                mark("armed")
+                armed_marked = True
             if realtime:
                 ahead = (f.t - t1) - (time.monotonic() - wall1)
                 if ahead > 0:
@@ -348,9 +368,35 @@ def px4_takeoff(s, realtime=False):
             if f.t - t1 > (c["connect_timeout"] if i == 0 else 0) + c["leg_timeout"]:
                 msgs = "; ".join(m for _, _, m in f.cmd.messages[-5:])
                 raise RuntimeError(f"PX4 이동 {i} 실패 (모드 {f.cmd.mode}, armed {f.px4.armed}, 추정 {f.cmd.estimate_enu}) {msgs}")
+        if not armed_marked:                      # 이 구간 첫 스텝 전에 이미 armed 였으면 (도착 판정이 armed 를 포함하므로 여기서는 armed)
+            mark("armed")
+            armed_marked = True
+        mark("climb" if i == 0 else ("move" if i == len(legs) - 1 else f"waypoint{i}"))
     f.ref.p0 = s.drone_pos.copy()
     f.t_arm = f.t
-    run(s, c["settle_time"], realtime)
+    if c["settle"] == "near":                     # 실제 위치 (sim) 가 목표 근처 + 실제 속도 (위치 차분) 가 기준 아래로 settle_hold 동안
+        t1, wall1 = f.t, time.monotonic()
+        p_prev, t_prev, still, v, e = f._body_pose()[0], f.t, 0.0, float("nan"), float("nan")
+        while still < c["settle_hold"]:
+            step(s)
+            p, t = f._body_pose()[0], f.t
+            if t > t_prev:
+                v = float(np.linalg.norm(p - p_prev)) / (t - t_prev)
+                e = float(np.linalg.norm(p - s.drone_pos))
+                still = still + (t - t_prev) if (v < c["settle_speed_tol"] and e < c["settle_pos_tol"]) else 0.0
+                p_prev, t_prev = p, t
+            if realtime:
+                ahead = (f.t - t1) - (time.monotonic() - wall1)
+                if ahead > 0:
+                    time.sleep(ahead)
+            if f.t - t1 > c["settle_timeout"]:
+                raise RuntimeError(f"PX4 호버 안정 안 됨 {c['settle_timeout']:g} s (목표와 {e * 1000:.0f} mm·속도 {v * 1000:.0f} mm/s, "
+                                   f"기준 {c['settle_pos_tol'] * 1000:.0f} mm·{c['settle_speed_tol'] * 1000:.0f} mm/s)")
+    elif isinstance(c["settle"], (int, float)) and not isinstance(c["settle"], bool) and c["settle"] >= 0:
+        run(s, float(c["settle"]), realtime)     # 고정 대기 (예전 방식)
+    else:
+        raise ValueError(f"px4.settle 는 'near' 또는 0 이상의 숫자: {c['settle']!r}")
+    mark("settle")
     s.px4_ready_t = f.t
     f.cmd.cli_ready = True                        # 다른 터미널 drone_cmd.py 이동 명령 받기 시작
 

@@ -23,6 +23,7 @@
 # =============================================================
 
 import json
+import time
 
 import numpy as np
 
@@ -52,6 +53,7 @@ class EpisodeReset:
         self.sim_info = None              # 에피소드 메타데이터용 고정 정보 (sim_ros2.episode_info). 리셋 응답의 "sim" 에 넣는다 (PLAN 4-2)
         self.release_pending = False      # True 면 메인 루프가 다음 spin 뒤 명령 무시를 푼다 (리셋 중 쌓인 명령을 버리려고)
         self.failed = False               # 마지막 리셋 실패 → 다음 리셋 성공까지 명령 무시
+        self.phases = []                  # 이번 리셋의 단계별 (이름, sim 시각, wall 시각). 응답 phases 에 걸린 시간으로
 
     def _run_until(self, cond, timeout, what):
         t0 = self.s.flight.t
@@ -59,6 +61,18 @@ class EpisodeReset:
             self.step()
             if self.s.flight.t - t0 > timeout:
                 raise RuntimeError(f"리셋: {what} 가 {timeout:g} s 안에 안 됨")
+
+    # ── 단계별 시간 (리셋 시간 단축 측정, PLAN 6단계 "수집 전 확인") ──
+    def _mark(self, name):
+        self.phases.append((name, self.now(), time.monotonic()))
+
+    def _phase_table(self):
+        """[(이름, sim s, wall s)] 바로 앞 기록부터 걸린 시간."""
+        out, prev = [], self.phases[0]
+        for p in self.phases[1:]:
+            out.append({"name": p[0], "sim_s": round(p[1] - prev[1], 2), "wall_s": round(p[2] - prev[2], 2)})
+            prev = p
+        return out
 
     # ── 단계 ──
     def _drone_off_and_away(self, goal):
@@ -68,10 +82,12 @@ class EpisodeReset:
             if f.px4.armed:
                 f.release()                                 # kill (공중 강제 disarm)
                 self._run_until(lambda: not f.px4.armed, float(self.c["kill_timeout"]), "PX4 kill (disarm)")
+            self._mark("kill")
             tc = self.s.scene_cfg["table"]
             spawn = np.array([*self.s.px4_cfg["takeoff_xy"], float(tc["top_z"]) + float(self.s.px4_cfg["spawn_above_table"])])
             f.teleport(spawn, yaw=0.0)
             f.restart_px4()                                 # 매 에피소드 새 PX4 (부팅은 다음 단계 동안)
+            self._mark("teleport_restart")
         else:
             f.armed = False
             f.teleport(goal, yaw=0.0)
@@ -99,11 +115,12 @@ class EpisodeReset:
         if f.backend == "px4":
             self.s.drone_pos, self.s.waypoints = goal.copy(), []
             f.cmd.cli_ready = False
-            ds.px4_takeoff(self.s, realtime=self.realtime)
+            ds.px4_takeoff(self.s, realtime=self.realtime, phases=self.phases)
         else:
             f.arm(goal)
             t0 = f.t
             self._run_until(lambda: f.t - t0 >= 2.0, 3.0, "기하 제어기 드론 안정")
+            self._mark("settle")
         return float(np.linalg.norm(f._body_pose()[0] - goal))
 
     # ── 서비스 ──
@@ -117,11 +134,13 @@ class EpisodeReset:
         res = {"reset": self.count, "seed": seed, "drone_offset": float(self.c["drone_offset"]), "drone_goal": np.round(goal, 4).tolist(),
                "t_start": round(t0, 3)}
         self.arm.hold = self.grip.hold = True
+        self.phases = [("start", t0, time.monotonic())]
         try:
             self.stop.clear()
             self.arm.seg = None
             self._drone_off_and_away(goal)
             err = self._arm_home()
+            self._mark("arm_teleport")
             dist = self._drone_up(goal)
             if self.stop.stopped:
                 raise RuntimeError(f"리셋 중 보호 정지: {self.stop.reason}")
@@ -137,12 +156,17 @@ class EpisodeReset:
                        px4_messages=[m for _, _, m in f.cmd.messages[-5:]] if f.backend == "px4" else None)
             response.success = False
         finally:
+            ph = self._phase_table()
+            res["phases"] = ph
+            res["wall_s"] = round(time.monotonic() - self.phases[0][2], 2)
             # 명령 무시는 아직 풀지 않는다: 이 콜백을 부른 spin 이 리셋 중 쌓인 명령을 마저 꺼내며 버린 뒤 메인 루프가 푼다 (release())
             self.release_pending = True
         self.failed = not response.success
         response.message = json.dumps(res, ensure_ascii=False)
         self.last = res
         print(f"[sim_reset] {response.message}", flush=True)
+        print("[sim_reset] 단계 (sim s): " + " / ".join(f"{p['name']} {p['sim_s']:.1f}" for p in ph)
+              + f" = {res['duration_s']:.1f} s (wall {res['wall_s']:.1f} s)", flush=True)
         return response
 
     def _drone_on(self):
