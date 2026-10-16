@@ -79,6 +79,9 @@ grasp:
   close_axis: [0.0, 1.0, 0.0]
   center_xy: [0.0, 0.0]            # 허리 (원본 x = 0 단면이 가장 좁음)
 
+# 잡는 곳 표시 (빨간 테이프, drone_iris.yaml 참고): 비행 시험 전용이라 끔
+grasp_marker: null
+
 # PX4 SITL (flight.backend: px4 일 때, scripts/px4_bridge.py). 모터 명령 u (0~1) → ω = (u + input_offset)·input_scaling + zero_position_armed
 #   (Pegasus PX4MavlinkBackendConfig 기본값)
 px4:

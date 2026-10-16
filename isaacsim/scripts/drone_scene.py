@@ -281,6 +281,8 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
     else:
         spawn = s.drone_pos
     s.drone_info = dr.add_drone(s.stage, s.drone_cfg, position=spawn, prop_spin=prop_spin)
+    if s.drone_info["grasp_marker"] is not None:
+        print(f"[drone_scene] 잡는 곳 표시 (빨간 테이프): {s.drone_info['grasp_marker']}", flush=True)
 
     app_utils.play()
     _update()

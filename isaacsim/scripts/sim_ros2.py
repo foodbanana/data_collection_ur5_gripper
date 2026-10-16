@@ -128,6 +128,7 @@ def episode_info(s, cfg, args, render, stop_mode):
                   "position_source": f.position_source if f.backend == "px4" else None,
                   "nominal_pos": [float(x) for x in s.drone_pos],            # 리셋 기준 위치 (--drone-pos 또는 씬 설정). 리셋마다 ± reset.drone_offset
                   "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on",
+                  "grasp_marker": s.drone_info["grasp_marker"],             # 잡는 곳 빨간 테이프 (색·크기·면적, 없으면 null)
                   "rc_teleop": args.drone_rc == "on"},              # 사람이 조종기로 드론을 움직였는지 (조종 입력 자체는 녹화하지 않음)
         "cameras": {"tick_rate": float(cfg["cameras"]["tick_rate"]),
                     "wrist": {"prim": str(s.wrist_cam), "config": rel(ts.WRIST_CAMERA_CONFIG),

@@ -57,3 +57,6 @@ grasp:
   approach: [0.0, 0.0, 1.0]  # 그리퍼가 움직이는 방향 (몸체 좌표계, 아래 → 위)
   close_axis: [0.0, 1.0, 0.0]
   center_xy: [0.0, 0.0]      # 손가락 중심의 몸체 x, y
+
+# 잡는 곳 표시 (빨간 테이프, drone_iris.yaml 참고): 간이 드론은 끔 (몸체가 메시가 아님)
+grasp_marker: null
