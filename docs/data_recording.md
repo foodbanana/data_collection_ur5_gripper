@@ -140,7 +140,7 @@ sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--r
 `--init-pose q1..q6 | <이름>` (팔 시작 자세. 리셋도 이 자세로 되돌린다. 텔레옵용: `--init-pose under_drone` = 그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보임, PLAN 5-B).
 
 실물 조종기로 드론을 움직이며 녹화할 때 (`sim_ros2.py --drone-rc on`, 5단계 5-A, `docs/drone_teleop.md`): 녹화 도구와 녹화 토픽은 그대로다 (조종기 입력·드론 위치는 녹화하지 않는다).
-달라지는 것은 리셋이 약 29 s 인 것, 리셋 뒤 스틱이 가운데여야 조종기로 넘어가는 것 (sim 터미널의 `[drone_rc]` 줄), 조종기 신호가 끊긴 에피소드는 `d` 로 버리는 것.
+달라지는 것은 리셋 뒤 스틱이 가운데여야 조종기로 넘어가는 것 (sim 터미널의 `[drone_rc]` 줄), 조종기 신호가 끊긴 에피소드는 `d` 로 버리는 것.
 
 ### 4.2 실물
 
@@ -170,7 +170,7 @@ sim 이 떠 있는 채로 재생하면 bag 의 `/clock`·`/joint_command` 가 �
 | `episode`, `mode`, `task_name`, `recorded_at`, `wall_duration_s` | bag 이름, `sim` / `real`, 작업명, 녹화 시각·길이 |
 | `topics`, `camera_reliability` | 녹화한 토픽 목록, 카메라 수신 QoS |
 | `cameras` | 역할 → 토픽 + 장치 (실물 = 모델·시리얼, sim = 설정 파일) |
-| `sim_reset` (sim) | `/sim/reset` 응답: `seed`, `drone_goal`·`drone_pos` (world) 와 `_base` (로봇 base 기준), `t_start`·`t_end` (sim time), `duration_s`, `px4_log`, `sim` |
+| `sim_reset` (sim) | `/sim/reset` 응답: `seed`, `drone_goal`·`drone_pos` (world) 와 `_base` (로봇 base 기준), `t_start`·`t_end` (sim time), `duration_s`, `px4_log`, `sim`, 리셋 단계별 걸린 시간 `phases` (sim·wall) 와 `wall_s` (2026-10-16 부터) |
 | `sim_reset.sim` | 고정 정보: git (commit·수정 여부), 물리·루프 주기, 렌더 (DLSS), 로봇·그리퍼 (`max_force_nm`·마찰)·드론 (제어기·위치 정보 방식) 설정, 카메라 prim·intrinsics·`cam_tilt_deg`, 보호 정지 기준. 손목 카메라 `cam_tilt_deg`·`optical_in_wrist_mount`·`mount_mesh` 는 로봇 USD 에서 읽는다 (2026-10-15 t10 마운트부터, 전에는 0.0 고정). third view 는 위치·look_at·intrinsics 와 실물 렌즈 왜곡 `real_distortion` (sim 렌더에는 없음, 2026-10-16 부터) |
 | `drone_kill` (sim) | `k` 를 누른 sim 시각 목록 |
 
