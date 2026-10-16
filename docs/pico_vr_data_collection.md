@@ -81,19 +81,44 @@ ss -tn | grep 63901                           # ESTAB 이 보이면 헤드셋이
 
 ### 터미널 1: sim
 
+**수집 기본 명령** (2026-10-16: 드론 기준 위치 목록 25 점 + 사인파 mid)
+
 ```bash
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash
-~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --init-pose under_drone
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --init-pose under_drone --drone-targets --mode hover --hover mid
 ```
 
-- 드론 = PX4 (기본). 테이블에서 이륙해 호버할 때까지 약 30 s
+뜰 때 확인할 줄:
+
+```
+[sim_ros2] seed 145809 (--seed 를 안 줘서 시작 시각으로 정함. 같은 조건을 다시 만들려면 --seed 145809)
+[sim_ros2] 준비: seed 145809 (시작 시각), 드론 px4 (hover), ... 서비스 /sim/reset (드론 위치 목록 25 점 ±0.03 m), ...
+```
+
+- 드론 = PX4 (기본). 테이블에서 이륙해 호버할 때까지 약 30 s. 리셋 (B) 마다 약 24 s
+- `--init-pose under_drone`: 그리퍼가 위를 보고 드론 기본 위치 아래 30 cm 에 있는 시작 자세. 리셋도 이 자세로 되돌린다
+- `--drone-targets`: 리셋마다 드론 기준 위치를 목록 25 점 (로봇 앞 0.45 ~ 0.65 m, 좌우 ±0.2 m, 높이 0.70·0.80 m, `scene_drone.yaml` `drone_targets_base`) 에서
+  섞어 한 바퀴씩 고르고 ±3 cm 흔든다. 점에 따라 시작할 때 드론이 손목 카메라에 일부만 보인다 (팔 시작 자세는 하나). 버린 에피소드 (`d`) 도 차례를 쓴다
+- `--mode hover --hover mid`: 조종자 없이 드론이 기준 위치 둘레를 사인파로 움직인다 (리셋마다 주파수·위상 새로). **잡은 뒤에도 드론은 계속 움직이려 한다 (실물처럼)** → 잡으면 바로 X (모터 정지)
+- `--seed` 는 주지 않는다: sim 을 띄운 시각으로 정해져 세션마다 점 순서·흔들림·사인파가 달라진다 (같은 seed 로 다시 띄우면 같은 순서가 반복됨). 값은 위 첫 줄과 `episode.json` 에 남는다
 - 손목 카메라는 **t10 마운트** (2026-10-15: 렌즈가 그리퍼 중심선, 10° 기울임 → 잡는 순간 손가락이 화면 아래 가운데). 실물도 같은 마운트 (`cad/out/wrist_mount_t10.stl`)
-- `--init-pose under_drone`: 그리퍼가 위를 보고 드론 아래 30 cm 에 있는 시작 자세. 리셋도 이 자세로 되돌린다
-- 연습만 할 때 `--flight geometric` 을 붙이면 리셋이 약 2 s (수집은 PX4 로)
-- 실물 조종기로 드론도 움직이려면 `--drone-rc on` (두 사람)
-- **조종자 없이 드론이 움직이게** 하려면 `--mode hover --hover small|mid|big` (2026-10-16): 리셋마다 기준 위치 둘레를 사인파로 움직인다 (small 빠르게 떨림 ±2 cm,
-  mid 느리고 크게 ±3 cm, big ±5 cm). **잡은 뒤에도 드론은 계속 움직이려 한다 (실물처럼)** → 잡으면 바로 X (모터 정지). `--drone-rc on` 과 같이 쓸 수 없다
+
+**바꿔 쓰기** (위 명령의 `--drone-targets --mode hover --hover mid` 자리. 설정이 바뀌면 작업명도 바꾼다, 터미널 4)
+
+| 드론 위치 | 드론 움직임 | 명령 뒤쪽 | 작업명 끝 |
+|---|---|---|---|
+| 목록 25 점 | 사인파 mid (기본) | `--drone-targets --mode hover --hover mid` | `_tgt_hmid` |
+| 목록 25 점 | 사인파 small (빠르게 떨림 ±2 cm) | `--drone-targets --mode hover --hover small` | `_tgt_hsmall` |
+| 목록 25 점 | 사인파 big (±5 cm) | `--drone-targets --mode hover --hover big` | `_tgt_hbig` |
+| 목록 25 점 | 제자리 | `--drone-targets` | `_tgt_static` |
+| 기본 위치 하나 (±3 cm) | 제자리 | (아무것도 안 붙임) | `_fix_static` |
+| 목록 25 점 | 사람이 실물 조종기로 (두 사람) | `--drone-targets --drone-rc on` | `_tgt_rc` |
+
+- 같이 쓰면 시작 전에 에러: `--mode hover` + `--drone-rc on` (드론을 움직이는 쪽이 둘), `--drone-targets` + `--drone-pos`
+- 연습만 할 때: `--flight geometric` 을 붙이면 리셋이 약 2 s (기하 제어기. 수집은 PX4 로, 녹화하지 않는다)
+- 같은 조건 다시 만들기 (재현): `--seed <값>` (터미널 첫 줄이나 `episode.json` `sim_reset.sim.drone.seed_base`)
+- 수집 중 다른 터미널에서 드론 보기·옮기기 (PX4): `python3 isaacsim/scripts/drone_cmd.py status` / `goto x y z` (world, hover 면 기준 위치만 옮김) / `hold` / `kill`
 
 ### 터미널 2: 텔레옵 노드
 
@@ -128,14 +153,15 @@ ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw
 ```bash
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash
-./6_record_bag.sh <작업명> --sim             # 예: ./6_record_bag.sh drone_grasp_f1 --sim
+./6_record_bag.sh <작업명> --sim             # 예 (수집 기본): ./6_record_bag.sh drone_grasp_t10_f1_tgt_hmid --sim
 ```
 
 - 첫 줄 `~/realsense_ws/install/setup.bash: No such file or directory` 는 무시해도 된다 (실물 PC 용 줄)
 - 도움말에 `컨트롤러 버튼 (/teleop/request ...)` 줄이 나오면 준비 끝
 - **작업명은 설정 (필터·배율·시작 자세·드론 움직임) 이 같은 데이터끼리 같게, 설정이 바뀌면 새 이름으로.** bag 이름은 `<날짜_시각>_<작업명>` 이 되고,
   나중에 병합할 때 작업명으로 골라 모은다 (10 장). 예: 필터를 켠 지금 설정 = `drone_grasp_f1`. **손목 카메라 마운트 기울기도 설정이다** (2026-10-15 부터 t10): 예 `drone_grasp_t10_f1`.
-  **드론 움직임도 설정이다** (2026-10-16): 정지 / hover 프리셋 / 조종기마다 나눈다. 예 `drone_grasp_t10_f1_hmid` (`--mode hover --hover mid`)
+  **드론 위치·움직임도 설정이다** (2026-10-16): 작업명 = `drone_grasp_<손목 마운트>_<필터>_<드론 위치>_<드론 움직임>`, 끝 부분은 터미널 1 "바꿔 쓰기" 표.
+  예 `drone_grasp_t10_f1_tgt_hmid` (수집 기본), `drone_grasp_t10_f1_fix_static` (예전 방식)
   (`xr_test` 로 녹화한 bag 에는 필터 끔 (2026-10-14) 과 켬 (2026-10-15) 이 섞여 있어 날짜로만 구분된다)
 
 ---

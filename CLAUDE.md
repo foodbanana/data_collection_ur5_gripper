@@ -122,8 +122,10 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 - **조종기 텔레옵** (`sim_ros2.py --drone-rc on`, `docs/drone_teleop.md`): Pico USB 직렬은 sim 이 직접 읽는다 (표준 라이브러리 termios. Isaac Sim python 에 pyserial 없음, 계정이 `dialout` 그룹이어야 함).
   스틱은 명령 링크 (UDP 14540) 의 `MANUAL_CONTROL` + PX4 POSCTL. **`MANUAL_CONTROL` 은 보내기 시작하면 끊지 않는다** (끊으면 1 s 뒤 failsafe 착륙) → 조종기 신호가 끊기면 sim 이 Offboard 로 되돌린다.
   조종기 입력·드론 위치는 녹화하지 않는다. `check_rc.py` → 6/6
+- **드론 기준 위치 목록** (`sim_ros2.py --drone-targets`, `scene_drone.yaml` `drone_targets_base` 25 점, **base 기준**): 리셋마다 섞어 한 바퀴씩 고르고 ± `reset.drone_offset` (0.03). `--seed` 를 안 주면 시작 시각 (같은 seed = 같은 순서, 검사는 0 고정).
+  점은 `compare_drone_targets.py` 로 거름 (시작 자세에서 IK·한계·충돌·여유 상자 ±8·±8·±5 cm·이륙 경로). 닿지 않는 곳은 데이터가 아니라 실행 때 판정 함수로 막는다 (7·9단계)
 - **드론 사인파 hover** (`sim_ros2.py --mode hover --hover small|mid|big`, 드론 설정 `flight.hover_presets`): 조종자 없이 수집. 리셋마다 주파수·위상을 새로 뽑고 (`episode.json` `drone_ref`),
-  이륙이 끝난 뒤에만 사인파 목표를 보낸다 (이륙 중에 보내면 이륙 구간 목표를 덮어씀). 잡은 뒤에도 계속 (실물처럼, 잡혔는지 드론은 모름), 모터 정지 때 멈춤. `--drone-rc on` 과 같이 쓰면 에러. `check_drone_hover.py` → 5/5
+  이륙이 끝난 뒤에만 사인파 목표를 보낸다 (이륙 중에 보내면 이륙 구간 목표를 덮어씀). 잡은 뒤에도 계속 (실물처럼, 잡혔는지 드론은 모름), 모터 정지 때 멈춤. `--drone-rc on` 과 같이 쓰면 에러. `check_drone_hover.py` → 6/6 (H6 = 기준 위치 목록)
 - **sim 안에서 시간을 잴 때는 sim time (`SimulationManager.get_simulation_time()`)**. `flight.t` 는 기하 제어기를 다시 켤 때 0 으로 돌아간다
 - **팔을 순간이동하면 속도 차분 기준(ArmBridge `set_now`, 보호 정지 `resync`)도 맞출 것**. 안 하면 순간이동 거리 / dt 가 관절 속도로 잡힘
 - **sim ROS 2** (3단계, `docs/sim_performance.md`): python.sh 실행 전에 `source /opt/ros/jazzy/setup.bash` (rclpy = 시스템 Jazzy, 아니면 에러).

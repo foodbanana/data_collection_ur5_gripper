@@ -127,7 +127,7 @@ source /opt/ros/jazzy/setup.bash
 
 | 순서 | 터미널 | 명령 | 하는 일 | 기다릴 것 |
 |------|--------|------|---------|-----------|
-| 1 | 1 | `~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py` | 씬 + ROS 2 토픽 + `/sim/reset`·`/sim/drone_kill`. 기본 = PX4 드론, 리셋마다 드론 위치 ±5 cm | `[sim_ros2] t ...` 상태 줄 (약 30 s) |
+| 1 | 1 | `~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py` | 씬 + ROS 2 토픽 + `/sim/reset`·`/sim/drone_kill`. 기본 = PX4 드론, 리셋마다 드론 위치 ±3 cm (2026-10-16 부터, 전에는 ±5 cm). `--drone-targets` 면 기준 위치를 목록 25 점에서 | `[sim_ros2] t ...` 상태 줄 (약 30 s) |
 | 2 | 2 | `./6_record_bag.sh <작업명> --sim` | 녹화 도구 대기 | `[IDLE] 대기 중...` |
 | 3 | 2 | 키 `r` (컨트롤러: B 리셋 → Y 텔레옵 시작 → A 녹화 시작) | `/sim/reset` (팔 `--init-pose` 자세 (안 주면 홈), 그리퍼 열림, 드론 재이륙, 약 24 s) → 성공하면 녹화 시작 | `[RESET] 완료 ...` → 벨 소리 + `[REC ●] 녹화 시작` |
 | 4 | 3 또는 텔레옵 | 시연 (텔레옵 장치 = `teleop/xr_teleop_node.py`, `docs/pico_vr_data_collection.md`. 장치가 없으면 `python3 isaacsim/scripts/replay_commands.py isaacsim/config/ros2_check/commands_success.csv`) | 팔·그리퍼 명령 | 드론을 잡음 |
@@ -136,8 +136,9 @@ source /opt/ros/jazzy/setup.bash
 | 7 | 2 | (실패한 시연이면) 키 `d` → `y` | 방금 에피소드를 `bags/_discarded/` 로 | `[DISCARDED] → ...` |
 | 8 | 2 | 3 번부터 반복, 끝나면 `q` | | `[EXIT] 종료` |
 
-sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N`, `--headless --duration <s>`,
-`--mode hover --hover small|mid|big` (조종자 없이 드론이 사인파로 움직임, 잡은 뒤에도 계속 움직이고 모터 정지 때 멈춤. 프리셋마다 작업명을 나눈다, 예 `catch_hover_mid`),
+PICO 로 모으는 수집 기본 명령·바꿔 쓰는 표·작업명 규칙은 `docs/pico_vr_data_collection.md` 4 장 (2026-10-16: `--drone-targets --mode hover --hover mid`).
+sim 옵션: `--flight geometric` (기하 제어기 드론, 리셋 약 2 s), `--reset-offset 0` (드론을 항상 기준 위치에), `--seed N` (재현·평가용. 안 주면 시작 시각으로 정해 `episode.json` `sim.drone.seed_base` 에 남김, 2026-10-16), `--headless --duration <s>`,
+`--drone-targets` (리셋마다 드론 기준 위치를 목록 25 점에서), `--mode hover --hover small|mid|big` (조종자 없이 드론이 사인파로 움직임, 잡은 뒤에도 계속 움직이고 모터 정지 때 멈춤. 프리셋마다 작업명을 나눈다, 예 `catch_hover_mid`),
 `--init-pose q1..q6 | <이름>` (팔 시작 자세. 리셋도 이 자세로 되돌린다. 텔레옵용: `--init-pose under_drone` = 그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보임, PLAN 5-B).
 
 실물 조종기로 드론을 움직이며 녹화할 때 (`sim_ros2.py --drone-rc on`, 5단계 5-A, `docs/drone_teleop.md`): 녹화 도구와 녹화 토픽은 그대로다 (조종기 입력·드론 위치는 녹화하지 않는다).
@@ -171,7 +172,7 @@ sim 이 떠 있는 채로 재생하면 bag 의 `/clock`·`/joint_command` 가 �
 | `episode`, `mode`, `task_name`, `recorded_at`, `wall_duration_s` | bag 이름, `sim` / `real`, 작업명, 녹화 시각·길이 |
 | `topics`, `camera_reliability` | 녹화한 토픽 목록, 카메라 수신 QoS |
 | `cameras` | 역할 → 토픽 + 장치 (실물 = 모델·시리얼, sim = 설정 파일) |
-| `sim_reset` (sim) | `/sim/reset` 응답: `seed`, `drone_goal`·`drone_pos` (world) 와 `_base` (로봇 base 기준), `t_start`·`t_end` (sim time), `duration_s`, `px4_log`, `sim`, 리셋 단계별 걸린 시간 `phases` (sim·wall) 와 `wall_s` (2026-10-16 부터), 드론 목표 `drone_ref` (모드·기준 위치·hover 프리셋·진폭·주파수·위상·seed, 2026-10-16 부터) |
+| `sim_reset` (sim) | `/sim/reset` 응답: `seed`, `drone_target` (`--drone-targets` 면 고른 목록 점 이름·번호·바퀴·위치, 아니면 null, 2026-10-16 부터), `drone_goal`·`drone_pos` (world) 와 `_base` (로봇 base 기준), `t_start`·`t_end` (sim time), `duration_s`, `px4_log`, `sim`, 리셋 단계별 걸린 시간 `phases` (sim·wall) 와 `wall_s` (2026-10-16 부터), 드론 목표 `drone_ref` (모드·기준 위치·hover 프리셋·진폭·주파수·위상·seed, 2026-10-16 부터) |
 | `sim_reset.sim` | 고정 정보: git (commit·수정 여부), 물리·루프 주기, 렌더 (DLSS), 로봇·그리퍼 (`max_force_nm`·마찰)·드론 (제어기·위치 정보 방식) 설정, 카메라 prim·intrinsics·`cam_tilt_deg`, 보호 정지 기준. 손목 카메라 `cam_tilt_deg`·`optical_in_wrist_mount`·`mount_mesh` 는 로봇 USD 에서 읽는다 (2026-10-15 t10 마운트부터, 전에는 0.0 고정). third view 는 위치·look_at·intrinsics 와 실물 렌즈 왜곡 `real_distortion` (sim 렌더에는 없음, 2026-10-16 부터). 드론 `grasp_marker` = 잡는 곳 빨간 테이프 (색·크기·쪽별 면적, 없으면 null, 2026-10-16 부터) |
 | `drone_kill` (sim) | `k` 를 누른 sim 시각 목록 (각 응답에 hover 사인파를 멈춘 이유·시각 `hover_freeze`, 2026-10-16 부터) |
 

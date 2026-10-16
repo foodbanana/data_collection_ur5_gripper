@@ -111,7 +111,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 
 | 서비스 | 타입 | 동작 | 걸리는 시간 |
 |--------|------|------|-------------|
-| `/sim/reset` | std_srvs/Trigger | 에피소드 리셋 = 에피소드 시작 상태로: 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작 → 팔·그리퍼를 시작 자세 (`--init-pose`, 안 주면 홈)·열림으로 순간이동 → 재이륙 → 새 호버 위치 (기준 위치 ± 5 cm, 시드 기록). hover 모드면 사인파 주파수·위상도 새로 뽑아 이륙 뒤 시작. 응답 message = JSON (단계별 걸린 시간 `phases`·`wall_s`, 드론 목표 `drone_ref` (모드·기준 위치·hover 프리셋·진폭·주파수·위상·seed·축별 최대 속도) 포함, sim 터미널에 한 줄 요약. 2026-10-16). 실패하면 `success=False` (sim 은 계속, 다음 성공까지 명령 무시) | 약 24 s (sim) |
+| `/sim/reset` | std_srvs/Trigger | 에피소드 리셋 = 에피소드 시작 상태로: 드론 kill → 이륙 지점으로 순간이동 + PX4 재시작 → 팔·그리퍼를 시작 자세 (`--init-pose`, 안 주면 홈)·열림으로 순간이동 → 재이륙 → 새 호버 위치 (기준 위치 ± 3 cm, 시드 기록. 2026-10-16 ±5 → ±3 cm. `--drone-targets` 면 기준 위치를 씬 `drone_targets_base` 목록 25 점에서 섞어 한 바퀴씩 고름, 응답 `drone_target`). hover 모드면 사인파 주파수·위상도 새로 뽑아 이륙 뒤 시작. 응답 message = JSON (단계별 걸린 시간 `phases`·`wall_s`, 드론 목표 `drone_ref` (모드·기준 위치·hover 프리셋·진폭·주파수·위상·seed·축별 최대 속도) 포함, sim 터미널에 한 줄 요약. 2026-10-16). 실패하면 `success=False` (sim 은 계속, 다음 성공까지 명령 무시) | 약 24 s (sim) |
 | `/sim/drone_kill` | std_srvs/Trigger | 드론 모터 정지 (잡은 뒤. PX4 = kill, 기하 제어기 = 로터 ω 0). 응답 message = JSON (sim 시각, hover 면 사인파를 멈춘 이유·시각·목표 `hover_freeze` = `kill`, 그 전에 CLI hold 했으면 `cli_hold`). 이미 꺼져 있으면 `success=False`. 다시 켜는 것은 `/sim/reset`. `record_toggle.py --sim` 의 `k` 키가 부르고 시각을 `episode.json` 에 기록 | 즉시 |
 
 ### sim 안 링크 (ROS 2 아님)
@@ -149,11 +149,13 @@ source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 # sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] t ... 상태 줄이 나오면 준비 완료 (약 30 s)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 #   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure
+#   --seed: 리셋 순서·흔들림·사인파를 정하는 값 (같은 seed = 같은 순서, 재현·평가·검사용. 검사 스크립트는 0 고정). 안 주면 시작 시각 (수집할 때 세션마다 달라지게, 2026-10-16)
 #   --init-pose q1..q6 | <이름>: 팔 시작 자세 (관절각 6 개 [rad] 또는 scene_drone.yaml init_poses 의 이름). /sim/reset 도 이 자세로 되돌린다
 #     텔레옵: --init-pose under_drone (그리퍼가 위를 보고 손목 카메라에 드론 몸체·팔이 보임, PLAN 5-B "에피소드 시작 자세")
 #   --drone-rc on [--rc-port <직렬 장치>]: 실물 조종기로 PX4 드론 조종 (docs/drone_teleop.md. 리셋은 조종기 없을 때와 같은 약 24 s, 2026-10-16)
+#   --drone-targets: 리셋마다 드론 기준 위치를 목록 25 점 (scene_drone.yaml drone_targets_base, base 기준) 에서 섞어 한 바퀴씩 (--drone-pos 와 같이 쓰면 에러)
 #   --mode hover --hover small|mid|big: 조종자 없이 드론이 기준 위치 둘레를 사인파로 움직임 (리셋마다 주파수·위상 새로, 잡은 뒤에도 계속 움직이고 모터 정지 때 멈춤.
-#     --drone-rc on 과 같이 쓰면 에러. 검사 python3 isaacsim/scripts/check_drone_hover.py → 5/5, PLAN 6단계)
+#     --drone-rc on 과 같이 쓰면 에러. 검사 python3 isaacsim/scripts/check_drone_hover.py → 6/6, PLAN 6단계)
 
 # 다른 터미널
 ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw              # 카메라 보기
