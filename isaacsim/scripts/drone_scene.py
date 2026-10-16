@@ -346,7 +346,7 @@ def px4_takeoff(s, realtime=False, phases=None):
     first_z = s.waypoints[0][2] if s.waypoints else s.drone_pos[2]
     legs = [np.array([p0[0], p0[1], first_z]), *[w.copy() for w in s.waypoints], s.drone_pos.copy()]
     f.arm(legs[0])
-    armed_marked = False
+    armed_marked, lifted, z_rest = False, False, float(f._body_pose()[0][2])
     for i, goal in enumerate(legs):
         f.cmd.goto(goal)
         t1 = f.t
@@ -361,6 +361,9 @@ def px4_takeoff(s, realtime=False, phases=None):
             if not armed_marked and f.px4.armed:
                 mark("armed")
                 armed_marked = True
+            if i == 0 and not lifted and f._body_pose()[0][2] > z_rest + 0.01:   # 실제로 1 cm 떠오름 (PX4 이륙 절차 시간)
+                mark("liftoff")
+                lifted = True
             if realtime:
                 ahead = (f.t - t1) - (time.monotonic() - wall1)
                 if ahead > 0:
