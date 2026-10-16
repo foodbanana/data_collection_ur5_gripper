@@ -20,7 +20,8 @@
 #     그다음 제어기를 돌림 (Pegasus vehicle.update: thrusters ← backend.input_reference() → 힘 적용 → backend.update)
 #   Pegasus 와 다른 점: 질량 m 은 PhysX 값 (Pegasus 는 1.5 고정), physics 1/120 s (Pegasus 1/250 s, 로봇 drive 튜닝 기준),
 #     yaw 목표 = 시작 yaw 고정 (Pegasus 는 궤적 파일), 센서(IMU·GPS 등) 없음
-#   모드: static (목표 고정), hover (목표 + 축별 사인파 합, seed), trajectory (미구현 → 에러)
+#   모드: static (목표 고정), hover (목표 + 축별 사인파 합, 프리셋 flight.hover_presets 의 이름, seed), trajectory (미구현 → 에러)
+#     hover 사인파는 hover_freeze() 로 그 순간 목표에 멈춘다 (모터 정지·CLI hold. 잡은 뒤에도 계속 움직임 = 실물처럼, PLAN 6단계 "드론 사인파"), reseed() 로 다시 뽑고 풂 (리셋)
 #   release(): 모터 정지 (ω = 0 → 추력 0. 실물: 잡은 뒤 모터를 멈춤). 공기저항은 계속
 #   프로펠러 회전 (보여 주기용, prop_spin): Pegasus handle_propeller_visual 과 같이 실제 ω 와 무관하게
 #     추력 ≥ 0.1 N 이면 prop_visual_speed, 0 < 추력 < 0.1 N 이면 prop_idle_speed, 0 이면 정지 (관절 속도를 매 step 덮어씀)
@@ -40,7 +41,8 @@ G = 9.81
 MODES = ("static", "hover", "trajectory")
 BACKENDS = ("geometric", "px4")
 FLIGHT_KEYS = ("backend", "rotors", "rot_dir", "rotor_constant", "rolling_moment_coefficient", "max_rotor_velocity", "linear_drag",
-               "prop_joints", "prop_visual_speed", "prop_idle_speed", "controller", "hover")
+               "prop_joints", "prop_visual_speed", "prop_idle_speed", "controller", "hover_presets")
+HOVER_KEYS = ("amplitude", "freq_range", "n_sines")
 VISUAL_FORCE = 0.1   # N, Pegasus 프로펠러 표시 기준
 
 
@@ -120,26 +122,60 @@ class FastRigid:
 
 
 class Reference:
-    """목표 위치·속도·가속도·jerk (world). static: p0 고정. hover: p0 + 축별 사인파 합 (진폭 합 = amplitude)."""
+    """목표 위치·속도·가속도·jerk (world). static: p0 고정. hover: p0 + 축별 사인파 합 (진폭 합 = amplitude, 프리셋 이름 preset).
+    freeze(t): 그 시각 목표에 멈춤 (이후 위치 고정, 속도·가속도·jerk 0). reseed(seed, p0): 주파수·위상을 다시 뽑고 멈춤을 풂."""
 
-    def __init__(self, mode, p0, hover_cfg=None, seed=0):
+    def __init__(self, mode, p0, presets=None, seed=0, preset=None):
         if mode not in MODES:
             raise ValueError(f"mode 는 {MODES} 중 하나: {mode}")
         if mode == "trajectory":
             raise NotImplementedError("trajectory 모드는 아직 구현하지 않음 (PLAN 2단계: 나중에)")
-        self.mode, self.p0 = mode, np.asarray(p0, dtype=float)
-        self.params = {"mode": mode, "p0": self.p0.tolist(), "seed": int(seed)}
         if mode == "hover":
+            if preset is None:
+                raise ValueError(f"hover 모드는 프리셋 이름이 필요 (--hover {' | '.join(presets or {})})")
+            if not presets or preset not in presets:
+                raise KeyError(f"hover 프리셋 '{preset}' 이 없음 (flight.hover_presets: {list(presets or {})})")
+            for k in HOVER_KEYS:
+                if k not in presets[preset]:
+                    raise KeyError(f"flight.hover_presets.{preset}.{k} 항목이 없습니다")
+            self.hc = presets[preset]
+        elif preset is not None:
+            raise ValueError(f"hover 프리셋 ({preset}) 은 hover 모드에서만")
+        self.mode, self.preset = mode, preset
+        self.reseed(seed, p0)
+
+    def reseed(self, seed, p0):
+        self.p0 = np.asarray(p0, dtype=float).copy()
+        self.t_freeze, self.p_freeze, self.freeze_reason = None, None, None
+        self.params = {"mode": self.mode, "p0": self.p0.tolist(), "seed": int(seed)}
+        if self.mode == "hover":
             rng = np.random.default_rng(seed)
-            n = int(hover_cfg["n_sines"])
-            amp = np.asarray(hover_cfg["amplitude"], dtype=float)
-            lo, hi = (float(x) for x in hover_cfg["freq_range"])
+            n = int(self.hc["n_sines"])
+            amp = np.asarray(self.hc["amplitude"], dtype=float)
+            lo, hi = (float(x) for x in self.hc["freq_range"])
             self.A = np.repeat(amp[:, None] / n, n, axis=1)                  # (3, n)
             self.f = rng.uniform(lo, hi, size=(3, n))
             self.phi = rng.uniform(0, 2 * math.pi, size=(3, n))
-            self.params.update(amplitude=amp.tolist(), freq=self.f.tolist(), phase=self.phi.tolist())
+            self.params.update(preset=self.preset, amplitude=amp.tolist(), freq=self.f.tolist(), phase=self.phi.tolist(),
+                               max_speed=np.round((self.A * 2 * math.pi * self.f).sum(axis=1), 4).tolist())
 
-    def __call__(self, t):
+    def set_p0(self, p0):
+        """기준 위치만 옮김 (사인파는 그대로 이어감. 멈춰 있으면 멈춘 목표도 같은 만큼 옮김)."""
+        p0 = np.asarray(p0, dtype=float)
+        if self.p_freeze is not None:
+            self.p_freeze = self.p_freeze + (p0 - self.p0)
+        self.p0 = p0.copy()
+        self.params["p0"] = self.p0.tolist()
+
+    def freeze(self, t, reason):
+        """시각 t (이 Reference 의 시간) 의 목표에 멈춤. 이미 멈췄으면 그대로 (처음 이유·시각 유지)."""
+        if self.mode != "hover" or self.t_freeze is not None:
+            return False
+        self.p_freeze = self._eval(t)[0]
+        self.t_freeze, self.freeze_reason = float(t), reason
+        return True
+
+    def _eval(self, t):
         if self.mode == "static":
             return self.p0.copy(), np.zeros(3), np.zeros(3), np.zeros(3)
         w = 2 * math.pi * self.f
@@ -150,6 +186,11 @@ class Reference:
         a = (-self.A * w * w * np.sin(arg)).sum(axis=1)
         j = (-self.A * w ** 3 * np.cos(arg)).sum(axis=1)
         return p, v, a, j
+
+    def __call__(self, t):
+        if self.p_freeze is not None:
+            return self.p_freeze.copy(), np.zeros(3), np.zeros(3), np.zeros(3)
+        return self._eval(t)
 
 
 class GeometricController:
@@ -204,7 +245,7 @@ class DroneFlight:
     """드론 비행 (physics 콜백). start() 전에 재생(play) 되어 있어야 한다. 콜백 예외는 check() 에서 다시 올린다.
     check() 는 매 루프(simulation_app.update() 뒤) 부른다 (px4: 명령 송수신)."""
 
-    def __init__(self, cfg, info, mode="static", seed=0, target=None, backend=None, report_dir=None, position_source=None):
+    def __init__(self, cfg, info, mode="static", seed=0, target=None, backend=None, report_dir=None, position_source=None, hover=None):
         from isaacsim.core.experimental.prims import RigidPrim
 
         if "flight" not in cfg:
@@ -234,7 +275,7 @@ class DroneFlight:
         self.mass, self.inertia = self._mass_properties()
         self.ctrl = GeometricController(self.mass, np.diag(self.inertia), fc["controller"])
         p, q = self._body_pose()
-        self.ref = Reference(mode, p if target is None else target, fc["hover"], seed)
+        self.ref = Reference(mode, p if target is None else target, fc["hover_presets"], seed, preset=hover)
 
         self.spin = None
         if info["prop_spin"]:
@@ -254,6 +295,10 @@ class DroneFlight:
 
         self.armed, self.t, self.t_release = False, 0.0, None
         self.t_arm = 0.0
+        # px4 hover: 사인파 목표를 보내는 중인지. 이륙 (arm ~ drone_scene.px4_takeoff 끝) 동안은 끈다
+        #   (켜 두면 매 루프 "기준 위치 + 사인파" 가 이륙 구간 목표를 덮어써 상승 지점에서 못 벗어남, 2026-10-16)
+        self.hover_active = False
+        self.hover_freeze_info = None      # 사인파를 멈춘 이유·시각 (sim time)·목표. 리셋 (hover_reseed) 때 지움
         if self.px4 is None:
             self.motor_tau = None
         self.omega = np.zeros(n)        # 이번 step 에 적용한 ω
@@ -316,6 +361,7 @@ class DroneFlight:
                                           sitl["commander"]["setpoint_hz"], sitl["commander"]["retry_sec"],
                                           command_port=int(sitl["command_port"]) + int(sitl["instance"]),
                                           disable_streams=sitl["commander"]["disable_streams"])
+        self.cmd.hover_hook = self._on_cli                # CLI goto·hold 를 hover 사인파와 맞춤
 
     def _px4_airframe_params(self, px4c):
         """우리 기체에 맞춘 PX4 파라미터 (설정에서 켠 것만).
@@ -393,8 +439,7 @@ class DroneFlight:
         R = quat_to_R(q)
         yaw = math.atan2(R[1, 0], R[0, 0])
         if target is not None:
-            self.ref.p0 = np.asarray(target, dtype=float)
-            self.ref.params["p0"] = self.ref.p0.tolist()
+            self.ref.set_p0(target)
         self.t_release = None
         if self.backend == "px4":
             # PX4 local 좌표 원점을 world 에 맞춤: 바닥에 멈춰 있는 지금 실제 위치 − PX4 추정 위치 만큼 옮김
@@ -403,6 +448,7 @@ class DroneFlight:
                 self.cmd.origin = self.cmd.origin + (p - self.cmd.estimate_enu)
                 self.cmd.estimate_enu = p.copy()
             self.t_arm = self.t
+            self.hover_active = False                        # 이륙이 끝나면 px4_takeoff 가 켬
             self.cmd.fly_to(self.ref.p0, yaw)
             return
         self.ctrl.reset(yaw)
@@ -449,11 +495,48 @@ class DroneFlight:
     def release(self):
         """모터 정지. geometric: ω = 0 (한 step 지연 때문에 바로 다음 step 은 지난 ω, 그다음부터 0, Pegasus 와 같은 순서).
         px4: kill 명령 (공중 강제 disarm, 실물과 같음) → PX4 가 모터 명령을 0 으로."""
+        self.hover_freeze("kill")
         if self.backend == "px4":
             self.cmd.kill()
         else:
             self.armed = False
         self.t_release = self.t
+
+    def hover_reseed(self, seed, p0):
+        """리셋: 기준 위치를 p0 으로, hover 면 사인파 주파수·위상을 seed 로 다시 뽑고 멈춤을 풂 (사인파는 이륙이 끝난 뒤 시작)."""
+        self.ref.reseed(seed, p0)
+        self.hover_freeze_info = None
+
+    def ref_time(self):
+        """Reference 의 지금 시각: px4 = 이륙이 끝난 뒤부터 (t − t_arm), geometric = 제어 시작부터 (t)."""
+        return self.t - self.t_arm if self.backend == "px4" else self.t
+
+    def hover_freeze(self, reason):
+        """hover 사인파를 지금 목표에 멈춤 (모터 정지·CLI hold). 멈췄으면 True (이미 멈췄거나 hover 가 아니면 False)."""
+        from isaacsim.core.simulation_manager import SimulationManager
+
+        ok = self.ref.freeze(self.ref_time(), reason)
+        if ok:
+            self.hover_freeze_info = {"reason": reason, "t": round(SimulationManager.get_simulation_time(), 3),   # sim time (/clock)
+                                      "target": np.round(self.ref.p_freeze, 4).tolist()}
+            print(f"[drone_flight] hover 사인파 멈춤 ({reason}): sim {self.t:.2f} s, 목표 {np.round(self.ref.p_freeze, 4).tolist()}", flush=True)
+        return ok
+
+    def _on_cli(self, cmd, pos=None, yaw=None):
+        """drone_cmd.py CLI 명령을 hover 와 맞춤 (PX4Commander.hover_hook): goto = 기준 위치만 옮기고 사인파는 계속, hold = 사인파를 지금 목표에 멈춤.
+        hover 가 아니면 False (PX4Commander 가 원래대로 처리)."""
+        if self.ref.mode != "hover":
+            return False
+        if cmd == "goto":
+            if yaw is not None:
+                raise ValueError("hover 모드에서는 goto 의 yaw 를 받지 않음 (기준 위치만 옮김)")
+            self.ref.set_p0(pos)
+            print(f"[drone_flight] hover 기준 위치 → {np.round(self.ref.p0, 4).tolist()} (CLI goto, 사인파 계속)", flush=True)
+            return True
+        if cmd == "hold":
+            self.hover_freeze("cli_hold")
+            return True
+        return False
 
     def start(self):
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
@@ -478,7 +561,7 @@ class DroneFlight:
             e, self.cb_error = self.cb_error, None
             raise RuntimeError(f"드론 비행 콜백 에러: {e!r}") from e
         if self.cmd is not None:
-            if self.ref.mode == "hover" and self.cmd.target is not None and not self.cmd.external:
+            if self.ref.mode == "hover" and self.hover_active and self.cmd.target is not None and not self.cmd.external:
                 self.cmd.goto(self.ref(self.t - self.t_arm)[0])
             self.cmd.tick(self.t)
 

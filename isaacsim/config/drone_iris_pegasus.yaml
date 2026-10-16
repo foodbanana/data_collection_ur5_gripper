@@ -67,11 +67,12 @@ flight:
     scale_to_airframe: true
     reference_mass: 1.5
     reference_inertia: [0.029125, 0.029125, 0.055225]
-  # hover 모드: 목표 위치에 축별 사인파 합을 더함 (주파수·위상은 seed 로 뽑아 기록)
-  hover:
-    amplitude: [0.02, 0.02, 0.01]              # m
-    freq_range: [0.2, 0.5]                     # Hz
-    n_sines: 2                                 # 축마다 사인파 개수
+  # hover 모드 프리셋 (drone_iris.yaml 참고). 기준선은 small 만
+  hover_presets:
+    small:
+      amplitude: [0.02, 0.02, 0.01]            # m
+      freq_range: [0.2, 0.5]                   # Hz
+      n_sines: 2
 
 # 잡는 곳: 몸체 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근 (2-4 파지 시퀀스가 씀)
 grasp:

@@ -16,7 +16,9 @@
 #   source /opt/ros/jazzy/setup.bash
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py                    # GUI (메인 뷰포트 하나, 프로펠러 회전 켬). 창을 닫으면 종료
 #   ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60
-#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --seed --init-pose q1..q6 | <이름> (예: under_drone)
+#   인자: --flight px4|geometric --position-source --drone-pos x y z --mode static|hover --hover small|mid|big --seed --init-pose q1..q6 | <이름> (예: under_drone)
+#   --mode hover --hover <프리셋>: 리셋마다 사인파 주파수·위상을 새로 뽑아 이륙 뒤 기준 위치 둘레를 움직임 (조종자 없이 수집). 잡은 뒤에도 계속 움직이고
+#     (실물 드론처럼, 2026-10-16 사용자 결정) 모터 정지 (X) 때 멈춤. --drone-rc on 과 같이 쓰면 에러 (PLAN 6단계 "드론 사인파")
 #         --prop-spin on|off (기본 GUI on, headless off) --duration [sim s] (headless 는 없으면 Ctrl+C 까지)
 #         --drone-rc on|off (기본 off) --rc-port <직렬 장치> (기본 rc_input.yaml port)
 #         --protective-stop on|measure (기본 on. measure = 정지하지 않고 최댓값만 기록, 기준 여유 확인용)
@@ -56,6 +58,7 @@ def parse():
     p.add_argument("--position-source", default=None, choices=("mocap", "flow", "gps"), help="px4 위치 정보 (기본 px4_sitl.yaml)")
     p.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"), help="드론 위치 [m] world")
     p.add_argument("--mode", default="static", choices=("static", "hover"), help="드론 비행 모드")
+    p.add_argument("--hover", default=None, help="hover 모드 사인파 프리셋 (드론 설정 flight.hover_presets: small·mid·big). hover 모드면 필수")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--init-pose", nargs="+", default=None, metavar="Q", action=_init_pose_action(),
                    help="팔 시작 자세: 관절각 6 개 [rad] 또는 씬 설정 init_poses 의 이름 (예: under_drone). 기본 home_pose. /sim/reset 도 이 자세로 되돌린다")
@@ -125,6 +128,7 @@ def episode_info(s, cfg, args, render, stop_mode):
         "gripper": {"joint": gname, "max_force_nm": float(gc["max_force"]), "profile_velocity": float(gc["profile_velocity"]),
                     "finger_friction": [float(c["finger_material"]["static_friction"]), float(c["finger_material"]["dynamic_friction"])]},
         "drone": {"config": rel(s.drone_cfg["path"]), "backend": f.backend, "mode": f.ref.mode,
+                  "hover_preset": f.ref.preset,                                # hover 사인파 프리셋 이름 (static 이면 null). 뽑힌 값은 리셋 응답 drone_ref
                   "position_source": f.position_source if f.backend == "px4" else None,
                   "nominal_pos": [float(x) for x in s.drone_pos],            # 리셋 기준 위치 (--drone-pos 또는 씬 설정). 리셋마다 ± reset.drone_offset
                   "seed_base": int(args.seed), "prop_spin": args.prop_spin == "on",
@@ -145,6 +149,8 @@ def episode_info(s, cfg, args, render, stop_mode):
 
 def main():
     args = parse()
+    if args.mode == "hover" and args.drone_rc == "on":
+        raise ValueError("--mode hover 와 --drone-rc on 은 같이 쓸 수 없음 (드론을 움직이는 쪽이 둘이 됨: 사인파 목표 ↔ 조종기)")
     cfg = ri.load_ros2_config(args.ros2_config)
     if args.reset_offset is not None:
         if args.reset_offset < 0:
@@ -176,7 +182,7 @@ def main():
             ri.set_camera_tick_rate([s.wrist_cam, s.third_cam], cfg["cameras"]["tick_rate"])
             ps.enable_contact_report(s.stage)              # 보호 정지 접촉력 (재생 전)
 
-        s = ds.build_scene(drone_pos=args.drone_pos, mode=args.mode, seed=args.seed, prop_spin=args.prop_spin == "on",
+        s = ds.build_scene(drone_pos=args.drone_pos, mode=args.mode, hover=args.hover, seed=args.seed, prop_spin=args.prop_spin == "on",
                            init_pose=ds.parse_init_pose(args.init_pose), extra_setup=setup, flight=args.flight,
                            position_source=args.position_source, report_dir=args.report_dir, realtime=not args.headless,
                            px4_params=None if rc_cfg is None else rc_cfg["px4_params"])

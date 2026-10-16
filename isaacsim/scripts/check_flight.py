@@ -43,6 +43,7 @@ parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed")
 parser.add_argument("--report-dir", default=ts.REPORT_DIR)
 parser.add_argument("--view", action="store_true", help="GUI: 시험 대신 비행 → 모터 정지 장면을 실제 시간으로 보여 줌")
 parser.add_argument("--mode", default="hover", choices=("static", "hover", "trajectory"), help="--view 의 비행 모드")
+parser.add_argument("--hover", default="small", help="hover 사인파 프리셋 (F3·--view hover, 드론 설정 flight.hover_presets. 기준 small = 예전 hover 값)")
 parser.add_argument("--release-after", type=float, default=8.0, help="--view: 모터 정지까지 시간 [s]")
 args, _ = parser.parse_known_args()
 
@@ -212,7 +213,7 @@ def tests(cfg, info):
 
     # F3
     R.section("F3", f"hover (seed {args.seed}, {HOVER_SEC:.0f} s)")
-    f.ref = fl.Reference("hover", f.ref.p0, cfg["flight"]["hover"], args.seed)
+    f.ref = fl.Reference("hover", f.ref.p0, cfg["flight"]["hover_presets"], args.seed, preset=args.hover)
     f.t = 0.0
     log = Log()
     run(f, HOVER_SEC, log)
@@ -256,7 +257,8 @@ def view(cfg, info):
     from isaacsim.core.rendering_manager import ViewportManager
 
     ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[0.9, -0.9, START[2] + 0.4], target=list(START))
-    f = fl.DroneFlight(cfg, info, mode=args.mode, seed=args.seed, target=START, backend="geometric")
+    f = fl.DroneFlight(cfg, info, mode=args.mode, seed=args.seed, target=START, backend="geometric",
+                       hover=args.hover if args.mode == "hover" else None)
     f.start()
     f.arm()
     print(f"[view] {args.mode} 비행 → {args.release_after:.0f} s 뒤 모터 정지. 창을 닫으면 종료", flush=True)

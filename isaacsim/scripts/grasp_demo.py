@@ -49,6 +49,7 @@ parser.add_argument("--scene-config", default=None)
 parser.add_argument("--drone-config", default=None)
 parser.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"))
 parser.add_argument("--mode", default="static", choices=("static", "hover"))
+parser.add_argument("--hover", default=None, help="hover 모드 사인파 프리셋 (드론 설정 flight.hover_presets: small·mid·big). hover 모드면 필수")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--prop-spin", choices=("on", "off"), default="off")
 parser.add_argument("--init-pose", type=float, nargs=6, default=None, metavar="Q")
@@ -132,7 +133,7 @@ class Demo:
         self.s = s = ds.build_scene(args.robot_config, args.scene_config, drone_config, spawn, args.mode, args.seed,
                                     args.prop_spin == "on", "fixed", args.init_pose, extra_setup=setup, flight=args.flight,
                                     position_source=args.position_source, report_dir=args.report_dir, realtime=REALTIME,
-                                    waypoints=[ds.parse_waypoint(w) for w in (args.drone_waypoints or [])])
+                                    waypoints=[ds.parse_waypoint(w) for w in (args.drone_waypoints or [])], hover=args.hover)
         from isaacsim.core.experimental.prims import RigidPrim
 
         self.link_paths = s.extra_setup
@@ -390,6 +391,8 @@ def run_case(case, dc, out_dir, log):
     log(f"잡는 높이: TCP 드론 좌표계 {np.round(np.array(p['tcp_in_drone']) * 1000, 1).tolist()} mm, 닿는 각도 예측 "
         f"{math.degrees(p['q']):.2f}°, 폭 {p['width'] * 1000:.1f} mm, 그리퍼–드론 아랫면 여유 {p['clearance'] * 1000:.2f} mm, "
         "")
+    if d.s.flight.ref.mode == "hover":
+        log(f"hover 사인파: {d.s.flight.ref.params}")
     abort = None
     try:
         sequence(d)
@@ -400,7 +403,8 @@ def run_case(case, dc, out_dir, log):
                kill_delay=KILL_DELAY, hold=hold_metrics(d.rows), approach=hold_metrics(d.rows, "S2_approach"),
                f_other_max_N={k: round(v, 2) for k, v in d.f_other_max.items()},
                link_force_max_N={ph: {k: round(v, 2) for k, v in m.items()} for ph, m in d.link_force_max.items()},
-               plan={k: (round(v, 5) if isinstance(v, float) else v) for k, v in p.items()})
+               plan={k: (round(v, 5) if isinstance(v, float) else v) for k, v in p.items()},
+               drone_ref=d.s.flight.ref.params, hover_freeze=d.s.flight.hover_freeze_info)
     exp_state, exp_reason = EXPECT[case]
     reasons = exp_reason if isinstance(exp_reason, tuple) else (exp_reason,)
     ok = res["state"] == exp_state and (exp_reason is None or any(str(res["reason"]).startswith(r) for r in reasons))
@@ -467,7 +471,7 @@ def main():
 
     log(f"grasp_demo  {datetime.datetime.now().isoformat(timespec='seconds')}  flight {args.flight or '(설정)'}, "
         f"position_source {args.position_source or '(설정)'}, kill_delay {KILL_DELAY} s, px4_param {args.px4_param}, "
-        f"mode {args.mode}, prop_spin {args.prop_spin}"
+        f"mode {args.mode}{f' ({args.hover})' if args.hover else ''}, prop_spin {args.prop_spin}"
         + (f", tcp_offset {args.tcp_offset} m (명령줄)" if args.tcp_offset is not None else ""))
     cases = CASES if args.case == "all" else (args.case,)
     oks, d = [], None

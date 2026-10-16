@@ -12,6 +12,8 @@
 #   3. 팔·그리퍼를 시작 자세 (--init-pose, 기본 = 홈)·열림으로 순간이동 (RobotDrive.reset_pose: 위치·속도·목표를 한 번에. 리셋은 데이터에 안 들어가므로 실물처럼 움직일 필요 없음)
 #   4. 드론: PX4 는 drone_scene.px4_takeoff 로 재이륙해 새 호버 위치로 (약 30 s), 기하는 그 자리에서 다시 켬
 #   새 호버 위치 = 씬 drone_pos + 균등분포 ±drone_offset (x, y, z 각각), 시드 = --seed + 리셋 횟수
+#   hover 모드 (--hover 프리셋): 리셋마다 사인파 주파수·위상을 seed + HOVER_SEED_OFFSET 으로 새로 뽑는다 (진폭은 프리셋). 이륙이 끝난 뒤 시작,
+#     응답 drone_ref 에 기록. 잡은 뒤에도 계속 움직이고 (실물 드론처럼) 모터 정지 때 멈춘다 (drone_kill 응답 hover_freeze, PLAN 6단계)
 # 처음 (2026-10-05) 에는 날고 있는 드론은 이동 명령만 (약 7 s), 팔은 최소 jerk 궤적으로 돌렸으나 갈래마다 예외가 생김
 #   (kill 된 드론이 손가락 사이에 끼어 그리퍼가 안 열림, 보호 정지 뒤 테이블 접촉이 남음, 팔 위로 떨어진 드론의 EKF 가속도계 편향이 망가져
 #    60 s 넘게 arm 거부) → 한 경로로. PX4 재시작은 실물의 재부팅과 같음
@@ -26,6 +28,8 @@ import json
 import time
 
 import numpy as np
+
+HOVER_SEED_OFFSET = 1_000_000   # hover 사인파 seed = 리셋 seed + 이 값
 
 
 class EpisodeReset:
@@ -110,8 +114,7 @@ class EpisodeReset:
         import drone_scene as ds
 
         f = self.s.flight
-        f.ref.p0 = goal.copy()
-        f.ref.params["p0"] = goal.tolist()
+        f.hover_reseed(self.hover_seed, goal)        # hover 면 리셋마다 사인파 주파수·위상을 새로 (프리셋 진폭 그대로)
         if f.backend == "px4":
             self.s.drone_pos, self.s.waypoints = goal.copy(), []
             f.cmd.cli_ready = False
@@ -131,6 +134,7 @@ class EpisodeReset:
         self.count += 1
         rng = np.random.default_rng(seed)
         goal = self.nominal + rng.uniform(-1.0, 1.0, 3) * float(self.c["drone_offset"])
+        self.hover_seed = seed + HOVER_SEED_OFFSET              # 위치와 다른 난수열 (같은 seed 면 첫 난수가 같아 위치·주파수가 묶임)
         res = {"reset": self.count, "seed": seed, "drone_offset": float(self.c["drone_offset"]), "drone_goal": np.round(goal, 4).tolist(),
                "t_start": round(t0, 3)}
         self.arm.hold = self.grip.hold = True
@@ -148,7 +152,9 @@ class EpisodeReset:
             res.update(ok=True, arm_err_deg=round(err, 3), drone_err_mm=round(dist * 1000, 1), duration_s=round(self.now() - t0, 2),
                        drone_pos=np.round(f._body_pose()[0], 4).tolist(), t_end=round(self.now(), 3),
                        drone_goal_base=np.round(goal - self.base, 4).tolist(), drone_pos_base=np.round(f._body_pose()[0] - self.base, 4).tolist(),
-                       px4_log=f.px4.launcher.run_dir if f.backend == "px4" else None, sim=self.sim_info)
+                       px4_log=f.px4.launcher.run_dir if f.backend == "px4" else None,
+                       drone_ref=f.ref.params,                  # 드론 목표: 모드, 기준 위치, hover 면 프리셋·진폭·주파수·위상·seed·축별 최대 속도
+                       sim=self.sim_info)
             response.success = True
         except Exception as e:  # noqa: BLE001
             f = self.s.flight
@@ -177,6 +183,7 @@ class EpisodeReset:
         res = {"t": round(self.now(), 3), "backend": self.s.flight.backend}
         if self._drone_on():
             self.s.flight.release()
+            res["hover_freeze"] = self.s.flight.hover_freeze_info     # hover 사인파를 멈춘 이유·시각·목표 (kill, 또는 그 전 CLI hold). static 이면 null
             response.success = True
         else:
             res["error"] = "드론 모터가 이미 꺼져 있음"

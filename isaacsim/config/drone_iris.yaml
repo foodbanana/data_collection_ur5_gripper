@@ -72,11 +72,23 @@ flight:
     scale_to_airframe: true
     reference_mass: 1.5
     reference_inertia: [0.029125, 0.029125, 0.055225]
-  # hover 모드: 목표 위치에 축별 사인파 합을 더함 (주파수·위상은 seed 로 뽑아 기록)
-  hover:
-    amplitude: [0.02, 0.02, 0.01]              # m
-    freq_range: [0.2, 0.5]                     # Hz
-    n_sines: 2                                 # 축마다 사인파 개수
+  # hover 모드: 목표 위치에 축별 사인파 합을 더함 (주파수·위상은 seed 로 뽑아 기록). 프리셋 이름으로 고른다 (--hover small|mid|big, 2026-10-16 사용자 결정 (가))
+  #   축마다 사인파 n_sines 개, 진폭 = amplitude / n_sines 씩 (합의 최대 = amplitude), 주파수는 freq_range 에서 균등, 위상 0 ~ 2π
+  #   sim_ros2 리셋마다 주파수·위상을 다시 뽑는다 (seed = --seed + 리셋 횟수). 최대 속도 ≈ 2π · freq 최대 · amplitude
+  #   GUI 로 세 가지를 보고 정함 (2026-10-16). 작업명을 프리셋마다 나눠 모은다
+  hover_presets:
+    small:                                     # 빠르게 떨림 (예전 hover 값 그대로, check_flight F3), 최대 약 6 cm/s
+      amplitude: [0.02, 0.02, 0.01]            # m
+      freq_range: [0.2, 0.5]                   # Hz
+      n_sines: 2
+    mid:                                       # 느리고 크게, 최대 약 6 cm/s
+      amplitude: [0.03, 0.03, 0.015]
+      freq_range: [0.05, 0.3]
+      n_sines: 2
+    big:                                       # 최대 약 9 cm/s
+      amplitude: [0.05, 0.05, 0.02]
+      freq_range: [0.05, 0.3]
+      n_sines: 2
 
 # 잡는 곳: 몸체 옆면, 폭(y) 방향으로 닫음, 아래에서 위로 접근 (2-4 파지 시퀀스가 씀)
 grasp:

@@ -22,7 +22,8 @@
 #       python3 isaacsim/scripts/drone_cmd.py status
 #       python3 isaacsim/scripts/drone_cmd.py goto 0.6 0.1 1.5 [--yaw-deg 0]
 #       python3 isaacsim/scripts/drone_cmd.py hold | land | kill
-#     CLI 로 goto·hold 하면 씬의 hover 사인파 목표는 멈춤 (external). 씬이 이륙·waypoint 를 마치기 전(status 의 ready false)에는
+#     hover 모드: goto = 사인파 기준 위치만 옮김 (사인파 계속), hold = 사인파를 그 자리 목표에 멈춤 (2026-10-16). land·kill 은 CLI 가 넘겨받음.
+#     hover 가 아니면 goto·hold 는 CLI 가 목표를 넘겨받음 (external, 리셋 때 풂). 씬이 이륙·waypoint 를 마치기 전(status 의 ready false)에는
 #     이동 명령을 거부 (kill 은 안전을 위해 항상 받음)
 # =============================================================
 
@@ -107,7 +108,8 @@ class PX4Commander:
         self._streams_sent = False
         self.conn = mavutil.mavlink_connection(f"udpin:0.0.0.0:{int(port)}")
         self.server = CommandServer(command_port) if command_port is not None else None
-        self.external = False       # CLI 가 목표를 바꿨음 (씬의 hover 목표 갱신 멈춤)
+        self.external = False       # CLI·조종기가 목표를 넘겨받음 (씬의 hover 목표 갱신 멈춤). PX4 재시작 (리셋) 때 풂
+        self.hover_hook = None      # DroneFlight._on_cli: hover 모드면 CLI goto = 기준 위치만 옮김 (사인파 계속), hold = 사인파 멈춤
         self.cli_ready = False      # 씬이 이륙·waypoint 를 마친 뒤 True (그 전에는 이동 명령 거부, status·kill 은 항상)
         self.cli_log = []           # (t, 명령, 결과)
         self.origin = np.asarray(origin_enu, dtype=float)
@@ -133,6 +135,7 @@ class PX4Commander:
         self.estimate_enu, self.estimate_yaw = None, None
         self.target, self.want_offboard, self.want_armed = None, False, False
         self.want_manual, self.sticks = False, None
+        self.external = False
         self.param_values, self.param_wanted = {}, {}
         self._t_sp, self._t_req = -1e9, -1e9
 
@@ -161,11 +164,18 @@ class PX4Commander:
             if not (isinstance(pos, list) and len(pos) == 3):
                 return {"ok": False, "error": "goto 는 pos [x, y, z] (world m)"}
             yaw = req.get("yaw_deg")
-            self.goto([float(v) for v in pos], None if yaw is None else math.radians(float(yaw)))
-            self.external = True
+            yaw = None if yaw is None else math.radians(float(yaw))
+            try:
+                hooked = self.hover_hook is not None and self.hover_hook("goto", [float(v) for v in pos], yaw)
+            except ValueError as e:
+                return {"ok": False, "error": str(e), **self.status()}
+            if not hooked:                          # hover 가 아니면: CLI 가 목표를 넘겨받음
+                self.goto([float(v) for v in pos], yaw)
+                self.external = True
         elif cmd == "hold":
-            self.hold()
-            self.external = True
+            if not (self.hover_hook is not None and self.hover_hook("hold")):
+                self.hold()
+                self.external = True
         elif cmd == "land":
             self.land()
             self.external = True
@@ -355,12 +365,12 @@ def main():
     ap.add_argument("--port", type=int, default=int(sitl["command_port"]) + int(sitl["instance"]))
     ap.add_argument("--timeout", type=float, default=3.0, help="답 기다리는 시간 [s, 실제 시간]")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    g = sub.add_parser("goto", help="위치 목표 (x y z, world m)")
+    g = sub.add_parser("goto", help="위치 목표 (x y z, world m). hover 모드면 사인파 기준 위치만 옮김 (사인파 계속)")
     g.add_argument("x", type=float)
     g.add_argument("y", type=float)
     g.add_argument("z", type=float)
     g.add_argument("--yaw-deg", type=float, default=None, help="yaw [deg, world +x 기준 반시계] (기본: 그대로)")
-    for c, h in (("hold", "지금 추정 위치에 멈춤"), ("land", "착륙 (AUTO.LAND)"), ("kill", "공중 강제 정지 (모터 즉시 정지)"),
+    for c, h in (("hold", "지금 추정 위치에 멈춤 (hover 모드면 사인파를 지금 목표에 멈춤)"), ("land", "착륙 (AUTO.LAND)"), ("kill", "공중 강제 정지 (모터 즉시 정지)"),
                  ("status", "모드·arm·추정 위치·목표")):
         sub.add_parser(c, help=h)
     a = ap.parse_args()

@@ -14,7 +14,8 @@
 #         (손목·third view 카메라 창을 같이 띄움, 실제 시간 속도. 창을 닫으면 종료)
 #   점검: ~/isaacsim/python.sh ~/data_collection_ur5_gripper/isaacsim/scripts/drone_scene.py --headless --check
 #         (CHECK_SEC 동안 돌린 뒤 로봇 자세 유지·드론 비행·카메라 영상 확인, 영상 PNG 와 리포트를 isaacsim/reports/ 에)
-#   인자: --robot-config --scene-config --drone-config --drone-pos x y z --mode static|hover --seed --prop-spin on|off --base fixed
+#   인자: --robot-config --scene-config --drone-config --drone-pos x y z --mode static|hover --hover small|mid|big --seed --prop-spin on|off --base fixed
+#         (--hover = hover 모드의 사인파 프리셋, 드론 설정 flight.hover_presets. hover 모드면 필수)
 #         --init-pose q1..q6 (팔 6 관절 시작 각도 [rad], 기본 drive 설정 home_pose. 그리퍼는 항상 완전 열림으로 시작)
 #   예: 그리퍼가 +z 를 보고 드론(기본 위치) 바로 아래 약 21 cm (손목 카메라로 드론이 보이는지 확인)
 #         --init-pose -0.1888 -0.7854 0.9599 1.3963 -1.5708 0.1888
@@ -112,6 +113,7 @@ def make_parser():
     parser.add_argument("--drone-pos", type=float, nargs=3, default=None, metavar=("X", "Y", "Z"),
                         help="드론 위치 [m] world (기본 scene 설정 drone_pos)")
     parser.add_argument("--mode", default="static", choices=("static", "hover", "trajectory"), help="드론 비행 모드")
+    parser.add_argument("--hover", default=None, help="hover 모드 사인파 프리셋 이름 (드론 설정 flight.hover_presets: small·mid·big)")
     parser.add_argument("--seed", type=int, default=0, help="hover 사인파 seed (px4: 센서 잡음 seed)")
     parser.add_argument("--flight", default=None, choices=fl.BACKENDS, help="드론 제어기 (기본: 드론 설정 flight.backend)")
     parser.add_argument("--position-source", default=None, choices=("mocap", "flow", "gps"), help="px4 위치 정보 (기본: px4_sitl.yaml)")
@@ -233,10 +235,11 @@ class Scene:
 
 def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_pos=None, mode="static", seed=0,
                 prop_spin=False, base="fixed", init_pose=None, extra_setup=None, flight=None, position_source=None,
-                report_dir=None, realtime=False, waypoints=None, px4_params=None):
+                report_dir=None, realtime=False, waypoints=None, px4_params=None, hover=None):
     """씬을 만들고 재생까지 한다. 로봇은 init_pose (기본 drive 설정 home_pose, 그리퍼 열림), 드론은 drone_pos 에서 비행 시작.
     flight: 드론 제어기 (None = 드론 설정 flight.backend). px4 면 테이블 위 이륙 지점에서 PX4 로 이륙 → (waypoints) → drone_pos 호버까지 마치고 돌려준다.
     extra_setup(s): 재생 전에 호출할 함수 (예: 접촉 보고 켜기). px4_params: 드론 설정 px4.params 에 합칠 PX4 파라미터 (조종기 텔레옵 등).
+    hover: mode="hover" 의 사인파 프리셋 이름 (드론 설정 flight.hover_presets, 예 small·mid·big). hover 모드면 필수, 아니면 None.
     Scene 을 돌려준다."""
     import isaacsim.core.experimental.utils.app as app_utils
     from isaacsim.core.experimental.objects import DomeLight
@@ -309,7 +312,7 @@ def build_scene(robot_config=None, scene_config=None, drone_config=None, drone_p
         raise ValueError("init_pose 가 관절 한계 밖: " + ", ".join(bad))
     s.drive.reset_pose(s.init_pose, gripper=0.0)   # 그리퍼는 항상 완전 열림으로 시작
     s.flight = fl.DroneFlight(s.drone_cfg, s.drone_info, mode=mode, seed=seed, target=s.drone_pos, backend=s.backend,
-                              report_dir=report_dir, position_source=position_source)
+                              report_dir=report_dir, position_source=position_source, hover=hover)
     s.flight.start()
     if s.backend == "px4":
         px4_takeoff(s, realtime)
@@ -377,8 +380,7 @@ def px4_takeoff(s, realtime=False, phases=None):
             mark("armed")
             armed_marked = True
         mark("climb" if i == 0 else ("move" if i == len(legs) - 1 else f"waypoint{i}"))
-    f.ref.p0 = s.drone_pos.copy()
-    f.t_arm = f.t
+    f.ref.set_p0(s.drone_pos)
     if c["settle"] == "near":                     # 실제 위치 (sim) 가 목표 근처 + 실제 속도 (위치 차분) 가 기준 아래로 settle_hold 동안
         t1, wall1 = f.t, time.monotonic()
         p_prev, t_prev, still, v, e = f._body_pose()[0], f.t, 0.0, float("nan"), float("nan")
@@ -403,6 +405,8 @@ def px4_takeoff(s, realtime=False, phases=None):
         raise ValueError(f"px4.settle 는 'near' 또는 0 이상의 숫자: {c['settle']!r}")
     mark("settle")
     s.px4_ready_t = f.t
+    f.t_arm = f.t                                 # hover 사인파는 여기서 (기준 위치에서) 시작
+    f.hover_active = True
     f.cmd.cli_ready = True                        # 다른 터미널 drone_cmd.py 이동 명령 받기 시작
 
 
@@ -532,6 +536,8 @@ def open_camera_windows(s, old=None):
 def view(s):
     open_camera_windows(s)
     print(f"[view] 드론 {s.flight.ref.mode} 비행, 로봇 시작 자세 {np.round(s.init_pose, 4).tolist()}. 'Wrist camera'·'Third view camera' 창. 창을 닫으면 종료", flush=True)
+    if s.flight.ref.mode == "hover":
+        print(f"[view] hover 사인파: {s.flight.ref.params}", flush=True)
     wall0, sim0 = time.monotonic(), s.flight.t
     while _running():
         step(s)
@@ -550,7 +556,7 @@ def main():
         scene = build_scene(args.robot_config, args.scene_config, args.drone_config, args.drone_pos, args.mode, args.seed,
                             args.prop_spin == "on", args.base, parse_init_pose(args.init_pose), flight=args.flight,
                             position_source=args.position_source, report_dir=args.report_dir,
-                            realtime=not args.headless or args.realtime, waypoints=args.drone_waypoints)
+                            realtime=not args.headless or args.realtime, waypoints=args.drone_waypoints, hover=args.hover)
         if args.check:
             ok = check(scene, args.prop_spin, args.realtime, args.report_dir)
         elif args.headless:
