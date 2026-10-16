@@ -10,6 +10,8 @@
 #     - 조종기에 넘기기 (PLAN 5단계 5-A, docs/drone_teleop.md): set_sticks() 로 스틱 값을 넣고 handover() → PX4 수동 모드 (POSCTL) 를 요청하고
 #       같은 링크로 MANUAL_CONTROL 을 보낸다 (위치 목표·Offboard 재요청은 멈춤). takeback() = 지금 추정 위치에서 Offboard 로 되돌림 (신호 끊김·리셋).
 #       MANUAL_CONTROL 은 한 번 보내기 시작하면 계속 보낸다 (넘기지 않은 동안은 가운데 값): 끊기면 PX4 가 조종 입력 상실 failsafe 로 간다
+#     - set_params(dict): 실행 중 PX4 float 파라미터 바꾸기 (PARAM_SET, PARAM_VALUE 로 확인될 때까지 재요청). params_confirmed() 로 확인.
+#       조종기용 속도 한계를 이륙 뒤 (넘길 때) 에만 걸려고 (PX4 를 새로 띄우면 기본값으로 돌아감)
 #   좌표: world ENU (m, 로봇 base 기준 world) ↔ PX4 local NED. PX4 local 원점 = EKF 가 초기화된 위치 = 드론 시작 위치 (origin_enu)
 #     NED = (y − oy, x − ox, −(z − oz)), yaw_ned = π/2 − yaw_enu. PX4 가 추정한 위치(estimate_enu)는 실제 위치와 다를 수 있음 (실물과 같음)
 #   시간: tick(t) 를 sim 시간으로 부름 (씬 루프). lockstep 이라 PX4 시계 = sim 시간
@@ -117,6 +119,8 @@ class PX4Commander:
         self.sticks = None          # (pitch, roll, throttle, yaw) −1 ~ 1, 가운데 0. None = MANUAL_CONTROL 을 아직 보낸 적 없음
         self.armed, self.mode, self.landed = False, None, None
         self.estimate_enu, self.estimate_yaw = None, None
+        self.param_values = {}      # PARAM_VALUE 로 받은 값 {이름: float}
+        self.param_wanted = {}      # set_params 로 요청한 값 (확인될 때까지 재요청)
         self.messages = []          # (t, 심각도, 글) PX4 STATUSTEXT
         self.acks = []              # (t, command, result)
         self.t, self._t_sp, self._t_req = 0.0, -1e9, -1e9
@@ -129,6 +133,7 @@ class PX4Commander:
         self.estimate_enu, self.estimate_yaw = None, None
         self.target, self.want_offboard, self.want_armed = None, False, False
         self.want_manual, self.sticks = False, None
+        self.param_values, self.param_wanted = {}, {}
         self._t_sp, self._t_req = -1e9, -1e9
 
     def close(self):
@@ -198,6 +203,12 @@ class PX4Commander:
                 self.estimate_yaw = math.pi / 2 - m.yaw
             elif k == "EXTENDED_SYS_STATE":
                 self.landed = {0: "undefined", 1: "on_ground", 2: "in_air", 3: "takeoff", 4: "landing"}.get(m.landed_state)
+            elif k == "PARAM_VALUE":
+                name = m.param_id.decode() if isinstance(m.param_id, bytes) else str(m.param_id)
+                name = name.rstrip("\x00")
+                if name in self.param_wanted and m.param_type != M.MAV_PARAM_TYPE_REAL32:
+                    raise RuntimeError(f"PX4 파라미터 {name} 가 float 가 아님 (type {m.param_type}): set_params 는 float 만")
+                self.param_values[name] = float(m.param_value)
             elif k == "STATUSTEXT":
                 self.messages.append((round(self.t, 3), int(m.severity), m.text))
             elif k == "COMMAND_ACK":
@@ -221,6 +232,15 @@ class PX4Commander:
         self.conn.mav.manual_control_send(self.sys, int(round(pitch * 1000)), int(round(roll * 1000)),
                                           int(round((thr + 1.0) * 500)), int(round(yaw * 1000)), 0)
 
+    def _send_params(self):
+        for name, v in self.param_wanted.items():
+            if not self._param_ok(name):
+                self.conn.mav.param_set_send(self.sys, 1, name.encode(), float(v), M.MAV_PARAM_TYPE_REAL32)
+
+    def _param_ok(self, name):
+        got = self.param_values.get(name)
+        return got is not None and abs(got - float(self.param_wanted[name])) <= 1e-4 * max(1.0, abs(float(self.param_wanted[name])))
+
     def _send_gcs_heartbeat(self):
         self.conn.mav.heartbeat_send(M.MAV_TYPE_GCS, M.MAV_AUTOPILOT_INVALID, 0, 0, 0)
 
@@ -229,6 +249,20 @@ class PX4Commander:
         """Offboard 위치 목표 + arm (이륙 포함). 이루어질 때까지 tick() 이 재요청."""
         self.goto(target_enu, yaw_enu)
         self.want_offboard, self.want_armed = True, True
+
+    def set_params(self, params):
+        """실행 중 PX4 float 파라미터 바꾸기. PARAM_VALUE 로 같은 값이 돌아올 때까지 tick 이 재요청한다 (params_confirmed 로 확인)."""
+        for name, v in params.items():
+            if not math.isfinite(float(v)):
+                raise ValueError(f"PX4 파라미터 값이 유한하지 않음: {name}={v}")
+            self.param_wanted[str(name)] = float(v)
+            self.param_values.pop(str(name), None)
+        if self.connected:
+            self._send_params()
+
+    def params_confirmed(self, names=None):
+        names = self.param_wanted if names is None else names
+        return all(self._param_ok(n) for n in names)
 
     def goto(self, target_enu, yaw_enu=None):
         self.target = np.asarray(target_enu, dtype=float)
@@ -298,6 +332,8 @@ class PX4Commander:
             self._t_sp = self.t
         if self.t - self._t_req >= self.retry:
             self._send_gcs_heartbeat()
+            if self.connected and self.param_wanted and not self.params_confirmed():
+                self._send_params()
             if self.connected and self.want_manual and self.armed and self.mode != "POSCTL":
                 self._command(M.MAV_CMD_DO_SET_MODE, M.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, 3, 0)
             elif self.connected and self.want_offboard and self.target is not None and self.mode != "OFFBOARD":

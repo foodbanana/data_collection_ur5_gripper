@@ -4,7 +4,8 @@
 #
 # 조종기에 넘기기 시험: PX4 SITL 드론을 Offboard 로 띄운 뒤 PX4Commander.handover() 로 수동 모드 (POSCTL) 에 넘기고,
 # 스틱 값 (MANUAL_CONTROL, 명령 링크 UDP 14540) 으로 움직인다. 씬: ground plane + 드론 (로봇 없음).
-# 스틱은 조종기 대신 스크립트가 만든 값이다 (직렬·조종기 없이 돈다). 조종기 설정의 px4_params 는 그대로 넣는다.
+# 스틱은 조종기 대신 스크립트가 만든 값이다 (직렬·조종기 없이 돈다). 조종기 설정의 px4_params 는 PX4 시작 때, handover_params 는
+# 넘기기 직전에 실행 중 PARAM_SET (DroneRc 와 같은 순서, 2026-10-16).
 #   R0 연결·이륙: 가운데 스틱 값을 보내는 채로 Offboard 이륙 (지금 흐름이 그대로 되는지)
 #   R1 넘기기: handover() 뒤 HANDOVER_SEC 안에 POSCTL, 그 뒤 HOLD_SEC 동안 넘긴 순간의 위치에서 벗어난 거리
 #   R2 축별 스틱: pitch·roll·throttle·yaw 를 차례로 +PUSH 만큼 PUSH_SEC 밀었다 놓음 → 움직인 방향 (drone body 기준), 속도, 놓은 뒤 멈춤
@@ -165,6 +166,13 @@ def tests(cfg, info):
 
         # R1
         log(f"\n[R1] 넘기기 (handover → POSCTL {HANDOVER_SEC:.0f} s 안, 그 뒤 {HOLD_SEC:.0f} s 가운데 스틱)")
+        hp = rc_cfg["handover_params"] or {}
+        t0 = f.t
+        c.set_params(hp)
+        if not run(f, HANDOVER_SEC, until=lambda f: c.params_confirmed(hp)):
+            result("R1", "넘기기", False, f"조종기용 PX4 파라미터 확인 안 됨 {hp} (받은 값 {c.param_values})")
+            return f
+        log(f"  조종기용 PX4 파라미터 확인 {f.t - t0:.2f} s: {hp}")
         p0, _, yaw0, _ = pose(f)
         t0 = f.t
         c.handover()

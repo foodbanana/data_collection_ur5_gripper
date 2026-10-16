@@ -9,7 +9,8 @@
 #     - 리셋 (/sim/reset) 은 PX4 를 새로 띄우므로 넘김 상태가 풀린다 → 재이륙이 끝나면 위 조건으로 다시 넘어간다
 #     - 모터 정지 (/sim/drone_kill) 뒤에는 아무것도 하지 않는다 (다음 리셋까지)
 #   PX4 드론 전용 (기하 제어기 드론에는 MANUAL_CONTROL 이 없음). 조종기 입력은 녹화하지 않는다
-#   조종기를 쓸 때의 PX4 파라미터 (스틱 끝 속도 등) 는 rc_input.yaml px4_params → 드론 설정 px4.params 에 합쳐 PX4 시작 때 넣는다
+#   조종기를 쓸 때의 PX4 파라미터: rc_input.yaml px4_params 는 PX4 시작 때 (드론 설정 px4.params 에 합침),
+#   handover_params (스틱 끝 속도·수직 속도 한계) 는 넘기기 직전에 실행 중 PARAM_SET 하고 확인된 뒤 넘긴다 (2026-10-16: 시작 때 넣으면 이륙이 느려짐)
 # =============================================================
 
 import rc_input
@@ -56,6 +57,12 @@ class DroneRc:
         if not self.rc.map.centered(self.sticks):
             names = [n for n, x in zip(rc_input.AXES, self.sticks) if abs(x) > self.cfg["handover_center"]]
             self._say(f"스틱이 가운데가 아님 ({', '.join(names)}) → 가운데에 두면 조종기에 넘김")
+            return
+        hp = self.cfg["handover_params"] or {}
+        if not c.params_confirmed(hp):
+            if any(c.param_wanted.get(k) != float(v) for k, v in hp.items()):
+                c.set_params(hp)
+            self._say("조종기용 PX4 파라미터를 넣는 중 (확인되면 넘김)")
             return
         c.set_sticks(*self.sticks)
         c.handover()

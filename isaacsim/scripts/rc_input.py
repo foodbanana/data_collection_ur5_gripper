@@ -126,9 +126,13 @@ def load_config(path):
 
     with open(path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
-    for k in ("port", "baudrate", "stale_sec", "lost_flags", "axes", "range_margin", "deadzone", "handover_center", "px4_params"):
+    for k in ("port", "baudrate", "stale_sec", "lost_flags", "axes", "range_margin", "deadzone", "handover_center", "px4_params",
+              "handover_params"):
         if k not in cfg:
             raise KeyError(f"{path}: '{k}' 항목이 없습니다")
+    for k, v in (cfg["handover_params"] or {}).items():
+        if not isinstance(v, float):
+            raise ValueError(f"{path}: handover_params.{k} = {v!r} 는 float 로 (소수점) 적을 것 (실행 중 PARAM_SET 은 float 파라미터만)")
     used = set()
     for name in AXES:
         if name not in cfg["axes"]:
