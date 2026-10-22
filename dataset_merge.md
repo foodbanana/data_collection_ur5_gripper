@@ -129,7 +129,7 @@ env -u PYTHONPATH python inspect_parquet.py lerobot_dataset_v21/foodbanana/<이�
 |---|---|---|
 | `python: command not found` | conda 안 켬 | `conda activate lerobot_v2` |
 | `can't open file ...py` | 실행 위치 틀림 | `cd ~/data_collection_ur5_gripper` |
-| `[중단] 매니페스트 파일 없음` | 파일명 오타 | `--manifest` 값 확인 |
+| `[오류] 매니페스트 파일 없음` | 파일명 오타 | `--manifest` 값 확인 |
 | `[중단] 출력 폴더가 이미 있고...` | 같은 이름 데이터셋 존재 | 아래처럼 지우고 재실행 or `--repo-id` 변경 |
 | `[중단] 중간 파일 형식이 schema_version …` | 옛 stage1 출력 | 지금 `lerobot_stage1_extract_bag.py` 로 다시 변환 |
 | `[중단] arm_action 가 앞 에피소드와 다름` | freedrive (`next_state`) 와 텔레옵 (`command`) 에피소드를 섞음 | 매니페스트를 나눠 따로 병합 |

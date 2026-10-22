@@ -102,7 +102,8 @@ source /opt/ros/jazzy/setup.bash
   섞어 한 바퀴씩 고르고 ±3 cm 흔든다. 점에 따라 시작할 때 드론이 손목 카메라에 일부만 보인다 (팔 시작 자세는 하나). 버린 에피소드 (`d`) 도 차례를 쓴다
 - `--mode hover --hover mid`: 조종자 없이 드론이 기준 위치 둘레를 사인파로 움직인다 (리셋마다 주파수·위상 새로). **잡은 뒤에도 드론은 계속 움직이려 한다 (실물처럼)** → 잡으면 바로 X (모터 정지)
 - `--seed` 는 주지 않는다: sim 을 띄운 시각으로 정해져 세션마다 점 순서·흔들림·사인파가 달라진다 (같은 seed 로 다시 띄우면 같은 순서가 반복됨). 값은 위 첫 줄과 `episode.json` 에 남는다
-- 손목 카메라는 **t10 마운트** (2026-10-15: 렌즈가 그리퍼 중심선, 10° 기울임 → 잡는 순간 손가락이 화면 아래 가운데). 실물도 같은 마운트 (`cad/out/wrist_mount_t10.stl`)
+- 손목 카메라는 **t10 마운트** (2026-10-15: 렌즈가 그리퍼 중심선, 10° 기울임 → 잡는 순간 손가락이 화면 아래 가운데). 실물도 같은 마운트 (`isaacsim/ur5_rh_p12_description/cad/out/wrist_mount_t10.stl`)
+- 옵션 철자가 틀리면 sim 이 시작하지 않고 에러로 끝난다 (줄여 쓰기도 안 됨, 2026-10-22)
 
 **바꿔 쓰기** (위 명령의 `--drone-targets --mode hover --hover mid` 자리. 설정이 바뀌면 작업명도 바꾼다, 터미널 4)
 
@@ -251,7 +252,7 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 
 텔레옵 노드의 동작은 [`teleop/xr_teleop.yaml`](../teleop/xr_teleop.yaml) 한 곳에서 정한다. 고친 뒤에는 **텔레옵 노드 (터미널 2) 를 `Ctrl+C` 로 끄고 다시 띄운다** (sim·녹화 도구는 그대로).
 항목이 빠지면 노드가 시작할 때 에러로 멈춘다 (기본값으로 조용히 넘어가지 않는다). 노드가 값까지 검사하는 것은 `rate_hz` ≥ 50, `open_below` < `close_above`,
-`stamp`·`hand`·버튼 이름과 버튼 중복뿐이다. **아래 표의 나머지 규칙 (굵게) 은 노드가 검사하지 않으므로 직접 지킨다.**
+`filter` 의 cutoff > 0·beta ≥ 0, `stamp`·`hand`·버튼 이름과 버튼 중복뿐이다. **아래 표의 나머지 규칙 (굵게) 은 노드가 검사하지 않으므로 직접 지킨다.**
 
 ### 8.1 조작감 (자주 바꾸는 것)
 
@@ -259,7 +260,7 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 |------|---------|-----|---------|
 | `scale` | `0.9` | 손 이동 : 팔 (TCP) 이동. 0.9 = 손 10 cm → 팔 9 cm. 위치에만 적용 | 작게 (예 0.7) = 정밀하지만 손을 더 많이 움직여야 함 (손이 모자라면 Y 클러치). 크게 = 빠르지만 흔들림도 커짐. **0 보다 큰 값** |
 | `rotation` | `true` | 손목 회전도 그리퍼가 따라감 (1 : 1) | `false` = 위치만 따라가고 그리퍼 자세는 시작할 때 그대로 (회전 실수가 줄지만 기울여 잡을 수 없음) |
-| `max_joint_speed` | `1.5` [rad/s] | 관절 목표가 움직일 수 있는 최대 속도. 손을 빨리 움직여도 팔은 이 속도까지만 | 낮추면 팔이 더 천천히·부드럽게 따라옴 (손보다 늦어져 `TCP 목표가 팔보다 .. 앞서 있음` 이 자주 뜰 수 있음). **`max_joint_speed / rate_hz` ≤ 0.063** (60 Hz 면 3.78 까지. sim 관절 최대 속도 기준) |
+| `max_joint_speed` | `1.5` [rad/s] | 관절 목표가 움직일 수 있는 최대 속도. 손을 빨리 움직여도 팔은 이 속도까지만 | 낮추면 팔이 더 천천히·부드럽게 따라옴 (손보다 늦어져 `TCP 목표가 팔보다 .. 앞서 있음` 이 자주 뜰 수 있음). **`max_joint_speed` ≤ π (3.14)** (sim 관절 최대 속도 180 °/s. 보호 정지 기준 200 °/s) |
 | `max_start_elevation_deg` | `60` [°] | Y 를 누를 때 컨트롤러 끝이 수평에서 이보다 더 들리거나 숙여져 있으면 시작 거부 | 시작 거부가 잦으면 조금 키움 (70 등). 90 에 가까우면 "앞" 방향이 불안정해진다 |
 | `filter.enabled` | `true` | 컨트롤러 자세에 One Euro 필터. 손이 멈춰 있으면 떨림을 잡고, 빠를수록 약하게 걸려 지연을 줄인다 | `false` = 필터 없음 (손 그대로) |
 | `filter.pos_min_cutoff_hz` | `1.5` [Hz] | 손이 멈췄을 때의 위치 필터 세기 (작을수록 강함) | 떨림이 남으면 낮춤 (1.0). 느린 접근이 굼뜨면 올림 (2~3). 0 보다 커야 한다 (노드가 검사) |
@@ -322,7 +323,7 @@ B (리셋) → Y (텔레옵 시작) → 잠깐 자세 유지 → A (녹화 시�
 | 녹화한 에피소드 | `bags/<YYYYMMDD_HHMMSS>_<작업명>/` | ros2 bag (`*.mcap`, `metadata.yaml`) + `episode.json` (리셋 시드·드론 위치·kill 시각·sim 설정·git commit) |
 | 버린 에피소드 | `bags/_discarded/<이름>/` | B (녹화 중) 나 `d` 로 버린 것. 되살리려면 폴더를 `bags/` 로 옮긴다 |
 | stage1 중간 파일 | `bag_lerobot_intermediate/<bag 이름>/` | `states.npy`, `actions.npy`, `base_imu.npy`, `timestamps.npy`, `wrist/*.png`, `third_view/*.png`, `meta.json` |
-| LeRobot v2.1 데이터셋 | `lerobot_dataset_v21/<repo-id>/` | 병합 결과 (parquet + mp4 + `meta/`). 이름은 병합할 때 `--repo-id` 로 정한다 (bag 은 그대로). 예: `local/xr_test_20261014` (필터 끔 2 개), `local/xr_filter_20261015` (필터 켬 1 개) |
+| LeRobot v2.1 데이터셋 | `lerobot_dataset_v21/<repo-id>/` | 병합 결과 (parquet + mp4 + `meta/`). 이름은 병합할 때 `--repo-id` 로 정한다 (bag 은 그대로). 예: `local/drone_grasp_tgt_hmid` |
 | PX4 비행 로그 | `isaacsim/reports/px4_<시각>/` | 리셋마다의 PX4 로그 (`episode.json` 의 `px4_log`) |
 | 텔레옵 시험 리포트 | `teleop/reports/` | `check_xr_teleop.py` 결과 |
 | PC 서비스 로그 | `~/.local/share/PICOBusinessSuitData/log/<날짜>.txt` | 헤드셋 연결 기록 |

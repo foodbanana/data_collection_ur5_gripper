@@ -40,7 +40,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
  +----------------------+<-- JSON response ---|                                                                 |
                                               |  OmniGraph Camera Helper x2 (RTX, DLSS Performance)             |
                                               |                                                                 |
-                                              |  PhysX: table + UR5 + RH-P12-RN(A) + D435i x2 + drone           |
+                                              |  PhysX: table + UR5 + RH-P12-RN(A) + D435i (wrist) + D455 + drone|
                                               +-+---------------------------------------------------------------+
                                                 |
                                                 | /clock                          Clock      120 Hz
@@ -103,7 +103,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 | `/cam/third_view/color/camera_info` | sensor_msgs/CameraInfo | sim → | 30 Hz | intrinsics (실물 D456 640x480 공장 보정값, 2026-10-15. 실물 렌즈 왜곡은 sim 에 넣지 않고 `third_view_camera.yaml` `real_distortion` 에 기록만) | — |
 | `/base/imu` | sensor_msgs/Imu | — | **8단계부터** | 고정 베이스에서는 sim·실물 모두 발행 안 함. stage1 `--base-imu const` | `observation.base_imu` |
 
-- **QoS**: 기본 (RELIABLE, depth 10). 카메라는 **받는 쪽도 RELIABLE** 로 받을 것 (best effort 면 640x480 이미지가 UDP 조각 손실로 통째로 버려짐, `docs/sim_performance.md` 5장)
+- **QoS**: RELIABLE, 깊이 = 3 s 분량 (`ros2_iface.yaml` `publish_queue_sec`, max(10, 3 × 주기): `/joint_states`·`/clock` 360, 카메라 90). 카메라는 **받는 쪽도 RELIABLE** 로 받을 것 (best effort 면 640x480 이미지가 UDP 조각 손실로 통째로 버려짐, `docs/sim_performance.md` 5장)
 - **stamp**: 모두 sim time. 카메라 이미지는 stamp 시각의 물리 상태 (팔이 움직이기 시작한 stamp = 이미지가 바뀐 첫 stamp, 0 프레임 지연, check_ros2 5 번)
 - `ros2 topic hz` 는 기본이 wall 시간 기준. sim 기준은 `ros2 topic hz --use-sim-time <토픽>`
 
@@ -146,7 +146,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 
-# sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] t ... 상태 줄이 나오면 준비 완료 (약 30 s)
+# sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] 준비: ... 줄이 나오면 준비 완료 (약 30 s)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 #   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure
 #   --seed: 리셋 순서·흔들림·사인파를 정하는 값 (같은 seed = 같은 순서, 재현·평가·검사용. 검사 스크립트는 0 고정). 안 주면 시작 시각 (수집할 때 세션마다 달라지게, 2026-10-16)

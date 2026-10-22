@@ -440,7 +440,6 @@ python3 isaacsim/scripts/make_fake_episodes.py             # 녹화 → 변환 �
 
 ## 다음 단계 (아직 안 만듦)
 
-- 텔레옵 장치 (`/joint_command` + `/gripper/command`, PLAN 5단계). `/joint_command` 에 stamp 를 넣고 일정한 주기 (50 Hz 이상) 로 보낼 것
-- 실물 PC 에서 새 토픽 이름 (`/cam/...`) 으로 녹화 → 변환 전 구간 검증 (지금까지 새 파이프라인은 sim 으로만 확인)
+- 텔레옵 장치는 만들었다: PICO VR 텔레옵 노드 `teleop/xr_teleop_node.py` (PLAN 5-B, 조작 안내 `docs/pico_vr_data_collection.md`). 실물 PC 녹화 → 변환 → 검수도 확인함 (2026-10-06, `docs/data_recording.md`)
 - openpi 쪽: data config (`wrist` → 손목 슬롯, `third_view` → base 슬롯), norm stats 계산, LoRA 학습 설정 (PLAN 7단계)
 - 추론: 정책의 그리퍼 출력 (0~1) 을 0.5 기준으로 나눠 0 / 1150 → `/gripper/command`

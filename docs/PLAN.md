@@ -2267,7 +2267,7 @@ source /opt/ros/jazzy/setup.bash
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60          # --flight geometric, --init-pose q1..q6, --prop-spin on|off,
                                                                                     # --protective-stop on|measure, --reset-offset 0, --seed N
-ros2 service call /sim/reset std_srvs/srv/Trigger                                   # 에피소드 리셋 (순간이동, 약 24 s: 팔 홈, 그리퍼 열림, 새 PX4 로 드론 팔 위 호버 ± offset)
+ros2 service call /sim/reset std_srvs/srv/Trigger                                   # 에피소드 리셋 (순간이동, 약 24 s: 팔 --init-pose 자세 (기본 홈), 그리퍼 열림, 새 PX4 로 드론 팔 위 호버 ± offset)
 python3 isaacsim/scripts/replay_commands.py <commands.csv>                          # 명령 CSV 재생 (grasp_demo commands_<케이스>.csv 등)
 python3 isaacsim/scripts/drone_cmd.py kill                                          # 드론 모터 정지 (잡은 뒤)
 ros2 run rqt_image_view rqt_image_view                                              # 다른 터미널: 카메라 보기
@@ -2346,7 +2346,7 @@ python3 teleop/ik_model.py
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --flight geometric --init-pose under_drone   # 터미널 1
 python3 teleop/check_xr_teleop.py                                                                         # 터미널 2
 
-# 5-B 텔레옵 (PC 서비스 실행, 헤드셋 앱 WORKING·Send 뒤). 터미널 1 = sim (아래), 터미널 2 = 노드, 터미널 3 = 녹화 도구 (노드를 띄운 뒤에)
+# 5-B 텔레옵 (PC 서비스 실행, 헤드셋 앱 WORKING·Send 뒤). 터미널 1 = sim (아래), 터미널 2 = 노드, 터미널 3 = 영상, 터미널 4 = 녹화 도구 (노드를 띄운 뒤에. docs/pico_vr_data_collection.md 4 장)
 ~/xrobotoolkit/venv/bin/python teleop/xr_teleop_node.py           # 같은 처음 자세로 오른손 컨트롤러를 앞으로 들고 Y (왼손) = 시작 / 다시 Y = 멈춤, 트리거 = 그리퍼
 ./6_record_bag.sh <작업명> --sim                                  # 터미널 3. 컨트롤러: B 리셋 → Y 텔레옵 → A 녹화 → X 모터 정지 → A 녹화 끝 (녹화 중 B = 실패로 버리고 리셋). d·q 는 키보드
 ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw # 손목 영상 (third view 는 창에서 토픽을 바꿈)
