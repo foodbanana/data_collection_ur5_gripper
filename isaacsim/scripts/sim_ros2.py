@@ -232,7 +232,7 @@ def main():
         render = ri.check_render_settings(cfg)
         reset.sim_info = episode_info(s, cfg, args, render, args.protective_stop)
         if not args.headless:
-            ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
+            ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=ds.GUI_EYE, target=ds.GUI_TARGET)   # 로봇 뒤에서 드론 쪽
         print(f"[sim_ros2] 준비: seed {args.seed}{' (시작 시각)' if args.seed_auto else ''}, 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
               f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']}, "
               f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "

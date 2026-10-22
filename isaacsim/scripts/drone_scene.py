@@ -45,6 +45,9 @@ import drone_flight as fl  # noqa: E402
 TABLE_PATH = "/World/Table"
 THIRD_VIEW_ROOT = "/World/ThirdView"
 THIRD_VIEW_LINK = f"{THIRD_VIEW_ROOT}/camera"    # 카메라 모양 (third_view_camera.yaml model) reference 자리
+# GUI 메인 뷰포트 처음 시점 (world m, 녹화 카메라와 무관). 2026-10-22: 텔레옵 조작자가 로봇과 같은 방향을 보게 로봇 뒤 위쪽에서 드론 쪽 (+x) 을 봄
+#   (텔레옵 노드는 컨트롤러 "앞" 을 base +x 에 맞춤 → 컨트롤러를 앞으로 밀면 화면에서도 앞으로). 예전 (1.9, −1.6, 1.7) → (0.4, 0, 1.1) 은 앞 오른쪽에서 마주 봄
+GUI_EYE, GUI_TARGET = [-1.3, 0.0, 2.2], [0.6, 0.0, 1.3]     # 로봇 바로 뒤 1.3 m·높이 2.2 m (더 가까우면 팔꿈치가 그리퍼를 가림)
 THIRD_VIEW_NAME = "third_view_color_camera"
 CHECK_SEC = 10.0
 # drone_err_mm: geometric 은 정답 상태로 mm 단위 유지, px4 는 PX4 위치 유지 흔들림 (모션캡처 호버 RMS 19 mm, 최대 약 33 mm, 2026-10-02)
@@ -524,7 +527,7 @@ def open_camera_windows(s, old=None):
 
     for win in old or []:
         win.destroy()
-    ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=[1.9, -1.6, 1.7], target=[0.4, 0.0, 1.1])
+    ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=GUI_EYE, target=GUI_TARGET)
     wins = []
     for title, path, cfg in (("Wrist camera", s.wrist_cam, s.cam_cfg), ("Third view camera", s.third_cam, s.tv_cfg)):
         w, h = (int(x) for x in cfg["resolution"])
