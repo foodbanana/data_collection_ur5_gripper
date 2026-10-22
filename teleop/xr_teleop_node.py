@@ -333,7 +333,7 @@ class XrTeleop:
         M, elev = heading_map(quat_to_R(s.quat), float(self.cfg["max_start_elevation_deg"]))
         if M is None:
             self.log(f"\a[xr_teleop] 시작 거부: 컨트롤러 끝이 수평에서 {elev:+.0f}° (한계 ±{self.cfg['max_start_elevation_deg']:g}°). "
-                     "컨트롤러를 앞으로 향하게 든 뒤 A")
+                     f"컨트롤러를 앞으로 향하게 든 뒤 {self.cfg['teleop_button']}")
             return
         self.q_cmd = q_meas.copy()
         self.ref = (s.pos.copy(), quat_to_R(s.quat), M, self.model.fk(self.q_cmd))

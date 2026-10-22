@@ -18,4 +18,4 @@ roles:
     sim: {config: isaacsim/config/wrist_camera.yaml}        # Camera prim 경로는 sim 이 에피소드 정보로 알려 준다 (4-2)
   third_view:                     # 외부 (로봇 base 근처에서 파지 구역을 올려다봄)
     real: {model: D456, serial: "252122301126"}             # 2026-10-15 D456 확정 (두 번째 D435i 로 바꾸지 않음)
-    sim: {config: isaacsim/config/third_view_camera.yaml}   # intrinsics 는 실물 D456 값 (2026-10-15). 위치는 아직 임시
+    sim: {config: isaacsim/config/third_view_camera.yaml}   # intrinsics 는 실물 D456 값 (2026-10-15). 위치 Q2 (2026-10-22)

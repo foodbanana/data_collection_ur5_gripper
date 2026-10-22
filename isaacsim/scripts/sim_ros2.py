@@ -53,7 +53,8 @@ def _init_pose_action():
 
 
 def parse():
-    p = argparse.ArgumentParser(description="sim ROS 2 인터페이스 (PLAN 3단계)")
+    # allow_abbrev=False·모르는 인자 에러: 옵션 철자가 틀리면 그 옵션 없이 수집되는 것을 막는다
+    p = argparse.ArgumentParser(description="sim ROS 2 인터페이스 (PLAN 3단계)", allow_abbrev=False)
     p.add_argument("--headless", action="store_true")
     p.add_argument("--duration", type=float, default=None, help="[sim s] 이만큼 돌고 끝냄 (없으면 GUI 창을 닫거나 Ctrl+C 까지)")
     p.add_argument("--flight", default=None, choices=("px4", "geometric"), help="드론 제어기 (기본 드론 설정)")
@@ -76,7 +77,7 @@ def parse():
     p.add_argument("--rc-port", default=None, help="조종기 직렬 장치 (기본 rc_input.yaml port)")
     p.add_argument("--ros2-config", default=None)
     p.add_argument("--report-dir", default=ts.REPORT_DIR)
-    args, _ = p.parse_known_args()
+    args = p.parse_args()
     if args.prop_spin is None:
         args.prop_spin = "off" if args.headless else "on"
     return args

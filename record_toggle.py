@@ -332,7 +332,7 @@ class BagRecorder:
 
 def reset_then_record(recorder, link):
     """--sim: /sim/reset → 성공하면 녹화 시작. 리셋 동안 sim 은 팔·그리퍼 명령을 무시한다."""
-    say(f"\n[RESET] {SIM_RESET_SERVICE} 호출 (약 24 s: 팔 홈, 그리퍼 열림, 드론 재이륙). 끝나면 녹화가 바로 시작됩니다")
+    say(f"\n[RESET] {SIM_RESET_SERVICE} 호출 (약 24 s: 팔 시작 자세, 그리퍼 열림, 드론 재이륙). 끝나면 녹화가 바로 시작됩니다")
     ok, info = link.sim_reset(on_tick=lambda el: say(f"\r[RESET] {el:5.1f} s ", end='', flush=True))
     if not ok:
         say(f"\n[ERROR] {info}")
