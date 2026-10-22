@@ -36,7 +36,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 대량 수집 전 준비 (2026-10-15 ~): 컨트롤러 One Euro 필터, 손목 카메라 마운트 t10 (CAD → 실물 출력 → sim 재import, 5-B "손목 카메라 마운트"),
   third view 카메라 D456 확정·실물 intrinsics·위치 후보 비교 (6단계 "수집 전 확인"). `/sim/reset` 시간 단축은 조종기 모드만 줄었다 (29 → 24 s, 6단계 "수집 전 확인"). 잡는 곳 빨간 테이프 (2026-10-16).
   드론 사인파 hover 프리셋 small·mid·big, 드론 기준 위치 목록 25 점 (2026-10-16). third view 위치 Q2 (1.10, −0.30, 0.20)·D455 모양 (2026-10-22).
-  **다음: third view 받침대 CAD** (6단계 "수집 전 확인")
+  third view 받침대 CAD (2026-10-22). **다음: 받침대 출력·설치, 소량 수집 → 첫 학습 루프** (6·7단계)
 
 ---
 
@@ -1997,7 +1997,17 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
   - **카메라 모양 = D455 메시** (`scripts/build_d455_usd.py` → `assets/cameras/d455/d455.usdc` 0.41 MB): realsense2_description (ROS 2 Jazzy, Apache-2.0) 의 `d455.stl`·`_d455.urdf.xacro` 에서
     프레임 값을 읽어 만듦. 최상위 prim = 아랫면 1/4-20 나사 자리, 메시 외곽 26 × 124 × 29 mm (xacro 와 같은지 확인, 다르면 에러), RGB optical frame = 나사 자리에서 앞 11.2·오른쪽 11.5·위 14.5 mm,
     몸체 상자 충돌 (정적). third view prim 이름 `/World/ThirdView/d435i` → `/World/ThirdView/camera` (`drone_scene.THIRD_VIEW_LINK`). `episode.json` `cameras.third_view.model` 에 모양 USD 를 기록
-  - 받침대 높이 (sim, 기둥) 184 mm. 실물 받침대는 CAD 로 (다음): 렌즈 위치·방향 (올려봄 49°) 에 맞춘 기울어진 받침
+  - 받침대 높이 (sim, 기둥) 184 mm. 실물 받침대는 CAD 로: 렌즈 위치·방향 (올려봄 49°) 에 맞춘 기울어진 받침 (아래)
+- [x] **third view 받침대 CAD (2026-10-22, 사용자 결정: 카메라 = 뒷면 M4 × 2, 테이블 = 나사 (Ø5.5 × 4, M5 볼트·목재 나사), 고정 각도)** — `isaacsim/cad/third_view_mount_cad.py` (CadQuery, `~/cad/venv`)
+  → `isaacsim/cad/out/third_view_mount.step`·`.stl`·`preview.png`. 카메라 자세는 `third_view_camera.yaml`·`scene_drone.yaml` 에서 읽음 (위치를 바꾸면 다시 실행)
+  - D456 고정 구멍 (Datasheet 337029-017 Figure 10-14, `~/Downloads/Intel-RealSense-D456-Datasheet-en.pdf`): **뒷면 M4 × 2 간격 95 mm, 최대 체결 깊이 4 mm**, 아랫면 1/4-20 최대 6 mm.
+    D456 은 USB-C 단자가 아랫면 (1/4-20 에서 37 mm 옆, 케이블 고정 M2 × 2) → 뒷면으로 고정하고 아랫면은 비움
+  - 모양: 카메라 뒷면 판 110 × 29 × 5 mm (48.85° 기울임, Ø4.5 × 2) ← 기둥 20 × 40 mm (윗면이 판 뒷면을 따라 기울어짐, 뒤·옆 리브 높이 60) ← 바닥판 115 × 100 × 7 mm
+    (Ø5.5 × 4, 카운터보어 Ø10.5 깊이 3.5). 높이 193.5 mm, 245 cm³. 카메라 나사 **M4 × 8** (판 5 mm → 카메라에 3 mm)
+  - 스크립트가 확인 (어긋나면 에러): 카메라 몸체·아랫면 아래 60 mm (USB 자리) 와 겹치지 않음, 나사 체결 깊이 0 ~ 4 mm, 렌즈 높이 = 설정 (200.0 mm)
+  - 설치: 바닥판 윗면 홈 = 원점 십자 (1/4-20 자리 바로 아래) + 화살표 (카메라가 보는 방향). 로봇 base 기준 **십자 (1090.9, −307.9) mm, 화살표 끝 (1065.4, −292.2) mm** → 두 점으로 위치·방향 (148.5°) 을 맞춤
+  - 출력: 바닥판을 아래로. 기울어진 판 아랫면은 수직에서 41° (서포트 없이 될 것으로 봄). 기둥 앞뒤 20 mm 는 판이 바닥에 투영되는 폭 (22 mm) 에 맞춤 → 실물에서 흔들리면 뒤로 두껍게
+  - 남은 것: 실물 출력·설치 뒤 실물 third view 영상과 sim 영상 비교, sim 받침대 (지금 원기둥) 를 CAD 모양으로 바꿀지
   - `check_ros2` 5 번 (이미지 지연) 을 고침: 화면 전체 평균 변화로 찾던 것을 **팔이 옮겨 간 픽셀만** 보게 (계단 전·1 s 뒤 평균 영상 차이 > 10 인 픽셀). Q2 에서는 팔이 화면 아래에 작게 보이고
     호버 드론 흔들림이 섞여 "이미지 변화를 못 찾음" 으로 실패했었다 (팔 픽셀 355 개, 지연 0 프레임)
   - 회귀: `drone_scene --check` 3/3, `grasp_demo --case all` (PX4) 6/6, `check_drone_hover` 6/6 (리셋 23.9 s), `check_ros2` 9/9 (5 번 고친 뒤, 리셋 23.8 ~ 23.9 s, 드론 오차 4 ~ 7 mm, RTF 1.005),
@@ -2354,6 +2364,8 @@ python3 teleop/measure_cmd_tracking.py bags/<bag> [bags/<bag> ...]          # --
 # third view 위치를 드론 기준 위치 목록 전체로 고르기 (계산으로 거른 뒤 상위만 렌더) → isaacsim/reports/compare_third_view_targets_<시각>/ (cands.csv, grid_start/grasp.png, cover_<후보>.png)
 ~/isaacsim/python.sh isaacsim/scripts/compare_third_view_targets.py --headless --start off --preset none   # 채택 조건 (2026-10-22). 엄격: --start on --preset big
 #   --x/--y/--z 격자 (base m), --cand "Q2:1.1,-0.3,0.20", --box hull|body, --render 6 (0 = 계산만), --border-px 8, --path-m 0.25
+# third view 받침대 CAD (레포 밖 venv ~/cad/venv, CadQuery. 카메라 자세는 third_view_camera.yaml 에서) → isaacsim/cad/out/third_view_mount.step·.stl·preview.png
+~/cad/venv/bin/python isaacsim/cad/third_view_mount_cad.py [--screw-len 8]
 # third view 카메라 모양 (D455) 다시 만들기 (realsense2_description 이 바뀌었을 때)
 source /opt/ros/jazzy/setup.bash && ~/isaacsim/python.sh isaacsim/scripts/build_d455_usd.py   # → isaacsim/assets/cameras/d455/d455.usdc
 # 드론 기준 위치 거르기 (팔 IK·한계·충돌·이륙 경로, third view 기본 = 설정 위치)
