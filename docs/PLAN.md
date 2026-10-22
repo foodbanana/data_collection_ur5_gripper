@@ -1998,7 +1998,7 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
     프레임 값을 읽어 만듦. 최상위 prim = 아랫면 1/4-20 나사 자리, 메시 외곽 26 × 124 × 29 mm (xacro 와 같은지 확인, 다르면 에러), RGB optical frame = 나사 자리에서 앞 11.2·오른쪽 11.5·위 14.5 mm,
     몸체 상자 충돌 (정적). third view prim 이름 `/World/ThirdView/d435i` → `/World/ThirdView/camera` (`drone_scene.THIRD_VIEW_LINK`). `episode.json` `cameras.third_view.model` 에 모양 USD 를 기록
   - 받침대 높이 (sim, 기둥) 184 mm. 실물 받침대는 CAD 로: 렌즈 위치·방향 (올려봄 49°) 에 맞춘 기울어진 받침 (아래)
-- [x] **third view 받침대 CAD (2026-10-22, 사용자 결정: 카메라 = 뒷면 M4 × 2, 테이블 = 나사 (Ø5.5 × 4, M5 볼트·목재 나사), 고정 각도)** — `isaacsim/cad/third_view_mount_cad.py` (CadQuery, `~/cad/venv`)
+- [x] **third view 받침대 CAD** (출력·설치 안내 `docs/third_view_mount.md`) **(2026-10-22, 사용자 결정: 카메라 = 뒷면 M4 × 2, 테이블 = 나사 (Ø5.5 × 4, M5 볼트·목재 나사), 고정 각도)** — `isaacsim/cad/third_view_mount_cad.py` (CadQuery, `~/cad/venv`)
   → `isaacsim/cad/out/third_view_mount.step`·`.stl`·`preview.png`. 카메라 자세는 `third_view_camera.yaml`·`scene_drone.yaml` 에서 읽음 (위치를 바꾸면 다시 실행)
   - D456 고정 구멍 (Datasheet 337029-017 Figure 10-14, `~/Downloads/Intel-RealSense-D456-Datasheet-en.pdf`): **뒷면 M4 × 2 간격 95 mm, 최대 체결 깊이 4 mm**, 아랫면 1/4-20 최대 6 mm.
     D456 은 USB-C 단자가 아랫면 (1/4-20 에서 37 mm 옆, 케이블 고정 M2 × 2) → 뒷면으로 고정하고 아랫면은 비움
@@ -2008,6 +2008,8 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
   - 설치: 바닥판 윗면 홈 = 원점 십자 (1/4-20 자리 바로 아래) + 화살표 (카메라가 보는 방향). 로봇 base 기준 **십자 (1090.9, −307.9) mm, 화살표 끝 (1065.4, −292.2) mm** → 두 점으로 위치·방향 (148.5°) 을 맞춤
   - 출력: 바닥판을 아래로. 기울어진 판 아랫면은 수직에서 41° (서포트 없이 될 것으로 봄). 기둥 앞뒤 20 mm 는 판이 바닥에 투영되는 폭 (22 mm) 에 맞춤 → 실물에서 흔들리면 뒤로 두껍게
   - 남은 것: 실물 출력·설치 뒤 실물 third view 영상과 sim 영상 비교, sim 받침대 (지금 원기둥) 를 CAD 모양으로 바꿀지
+- [x] **GUI 메인 뷰포트 처음 시점 (2026-10-22 사용자 요청)**: 텔레옵할 때 방향이 헷갈림 → 로봇 바로 뒤 1.3 m·높이 2.2 m 에서 드론 쪽 (+x) 을 봄 (`drone_scene.GUI_EYE`·`GUI_TARGET`, `sim_ros2.py`·`drone_scene.py` 공용).
+  텔레옵 노드는 컨트롤러 "앞" 을 base +x 에 맞추므로 화면 앞 = 컨트롤러 앞. 예전 (1.9, −1.6, 1.7) 은 앞 오른쪽에서 마주 봄. 로봇 뒤 0.9 m 는 팔꿈치가 그리퍼를 가려 더 뒤·위로. 녹화 카메라와 무관 (사용자 GUI 확인)
   - `check_ros2` 5 번 (이미지 지연) 을 고침: 화면 전체 평균 변화로 찾던 것을 **팔이 옮겨 간 픽셀만** 보게 (계단 전·1 s 뒤 평균 영상 차이 > 10 인 픽셀). Q2 에서는 팔이 화면 아래에 작게 보이고
     호버 드론 흔들림이 섞여 "이미지 변화를 못 찾음" 으로 실패했었다 (팔 픽셀 355 개, 지연 0 프레임)
   - 회귀: `drone_scene --check` 3/3, `grasp_demo --case all` (PX4) 6/6, `check_drone_hover` 6/6 (리셋 23.9 s), `check_ros2` 9/9 (5 번 고친 뒤, 리셋 23.8 ~ 23.9 s, 드론 오차 4 ~ 7 mm, RTF 1.005),

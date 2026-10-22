@@ -222,6 +222,7 @@
 | `docs/drone_flight.md` | [2] 안의 드론 (추력 모델, PX4 SITL) |
 | `docs/drone_teleop.md` | [2] 안의 드론을 실물 조종기로 움직이는 경로 (5단계 5-A, 만듦. 녹화되지 않음) |
 | `docs/arm_command_interpolation.md` | [2] ArmBridge 의 명령 보간 |
+| `docs/third_view_mount.md` | [2] 의 third view 카메라를 실물에 놓는 받침대 (STL, 출력, 설치 기준점) |
 | `docs/data_recording.md` | [3] 녹화: 키, 녹화 토픽, `episode.json`, 녹화 순서 |
 | `docs/pico_vr_data_collection.md` | [1] PICO 텔레옵으로 수집하는 조작자 안내: VR 연결, 명령, 버튼, 녹화 순서, 주의, 데이터 위치, 설정 |
 | `README.md`, `dataset_merge.md` | [4] ~ [6] 변환·병합·검수 옵션, 실물 수집 순서 |
