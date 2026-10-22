@@ -124,6 +124,8 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
   조종기 입력·드론 위치는 녹화하지 않는다. `check_rc.py` → 6/6
 - **드론 기준 위치 목록** (`sim_ros2.py --drone-targets`, `scene_drone.yaml` `drone_targets_base` 25 점, **base 기준**): 리셋마다 섞어 한 바퀴씩 고르고 ± `reset.drone_offset` (0.03). `--seed` 를 안 주면 시작 시각 (같은 seed = 같은 순서, 검사는 0 고정).
   점은 `compare_drone_targets.py` 로 거름 (시작 자세에서 IK·한계·충돌·여유 상자 ±8·±8·±5 cm·이륙 경로). 닿지 않는 곳은 데이터가 아니라 실행 때 판정 함수로 막는다 (7·9단계)
+- **third view 카메라 = Q2** (2026-10-22, `third_view_camera.yaml`): base (1.10, −0.30, 0.20) 에서 올려봄, 기준 위치 25 점 + 리셋 흔들림이 다 보이게 `compare_third_view_targets.py` 로 고름.
+  모양 = D455 메시 (`build_d455_usd.py` → `assets/cameras/d455/d455.usdc`, prim `/World/ThirdView/camera`). PX4 이륙 지점은 카메라와 떨어지게 (1.2, 0.15). **third view 위치가 다른 데이터는 섞지 않는다**
 - **드론 사인파 hover** (`sim_ros2.py --mode hover --hover small|mid|big`, 드론 설정 `flight.hover_presets`): 조종자 없이 수집. 리셋마다 주파수·위상을 새로 뽑고 (`episode.json` `drone_ref`),
   이륙이 끝난 뒤에만 사인파 목표를 보낸다 (이륙 중에 보내면 이륙 구간 목표를 덮어씀). 잡은 뒤에도 계속 (실물처럼, 잡혔는지 드론은 모름), 모터 정지 때 멈춤. `--drone-rc on` 과 같이 쓰면 에러. `check_drone_hover.py` → 6/6 (H6 = 기준 위치 목록)
 - **sim 안에서 시간을 잴 때는 sim time (`SimulationManager.get_simulation_time()`)**. `flight.t` 는 기하 제어기를 다시 켤 때 0 으로 돌아간다

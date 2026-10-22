@@ -173,7 +173,7 @@ sim 이 떠 있는 채로 재생하면 bag 의 `/clock`·`/joint_command` 가 �
 | `topics`, `camera_reliability` | 녹화한 토픽 목록, 카메라 수신 QoS |
 | `cameras` | 역할 → 토픽 + 장치 (실물 = 모델·시리얼, sim = 설정 파일) |
 | `sim_reset` (sim) | `/sim/reset` 응답: `seed`, `drone_target` (`--drone-targets` 면 고른 목록 점 이름·번호·바퀴·위치, 아니면 null, 2026-10-16 부터), `drone_goal`·`drone_pos` (world) 와 `_base` (로봇 base 기준), `t_start`·`t_end` (sim time), `duration_s`, `px4_log`, `sim`, 리셋 단계별 걸린 시간 `phases` (sim·wall) 와 `wall_s` (2026-10-16 부터), 드론 목표 `drone_ref` (모드·기준 위치·hover 프리셋·진폭·주파수·위상·seed, 2026-10-16 부터) |
-| `sim_reset.sim` | 고정 정보: git (commit·수정 여부), 물리·루프 주기, 렌더 (DLSS), 로봇·그리퍼 (`max_force_nm`·마찰)·드론 (제어기·위치 정보 방식) 설정, 카메라 prim·intrinsics·`cam_tilt_deg`, 보호 정지 기준. 손목 카메라 `cam_tilt_deg`·`optical_in_wrist_mount`·`mount_mesh` 는 로봇 USD 에서 읽는다 (2026-10-15 t10 마운트부터, 전에는 0.0 고정). third view 는 위치·look_at·intrinsics 와 실물 렌즈 왜곡 `real_distortion` (sim 렌더에는 없음, 2026-10-16 부터). 드론 `grasp_marker` = 잡는 곳 빨간 테이프 (색·크기·쪽별 면적, 없으면 null, 2026-10-16 부터) |
+| `sim_reset.sim` | 고정 정보: git (commit·수정 여부), 물리·루프 주기, 렌더 (DLSS), 로봇·그리퍼 (`max_force_nm`·마찰)·드론 (제어기·위치 정보 방식) 설정, 카메라 prim·intrinsics·`cam_tilt_deg`, 보호 정지 기준. 손목 카메라 `cam_tilt_deg`·`optical_in_wrist_mount`·`mount_mesh` 는 로봇 USD 에서 읽는다 (2026-10-15 t10 마운트부터, 전에는 0.0 고정). third view 는 위치·look_at·intrinsics 와 실물 렌즈 왜곡 `real_distortion` (sim 렌더에는 없음, 2026-10-16 부터), 카메라 모양 USD `model` (2026-10-22 부터, 위치 Q2·D455). **third view 위치가 다른 데이터는 섞지 않는다**. 드론 `grasp_marker` = 잡는 곳 빨간 테이프 (색·크기·쪽별 면적, 없으면 null, 2026-10-16 부터) |
 | `drone_kill` (sim) | `k` 를 누른 sim 시각 목록 (각 응답에 hover 사인파를 멈춘 이유·시각 `hover_freeze`, 2026-10-16 부터) |
 
 변환 (stage1) 은 `episode.json` 이 없는 bag 을 받지 않는다. 내용은 중간 파일 `meta.json` 의 `episode` 로 그대로 들어간다.
