@@ -5,7 +5,7 @@
 # 드론 파지 씬: 스크립트 한 번으로 만든다 (ROS 없음). build_scene() 은 2-4 파지 데모·3단계 ROS 브리지도 그대로 쓴다
 #   (다른 스크립트는 SimulationApp 을 만든 뒤 import drone_scene → build_scene(...). 인자·app 생성은 이 파일의 main 에서만).
 #   바닥 + 테이블(박스 collider) + 로봇(로봇 설정 yaml, fixed base, 확정 drive, 홈 자세) + Dome Light(headless 에서도)
-#   + 손목 카메라(1-7) + third view 카메라(base 근처에서 올려다봄. 모양 = 로봇 USD 의 D435i 메시, 받침대 포함)
+#   + 손목 카메라(1-7) + third view 카메라(로봇 앞 오른쪽 대각선에서 올려다봄. 모양 = D455 메시, 받침대 포함)
 #   + 비행하는 드론(drone_flight, Pegasus 방식)
 #   로봇·드론 USD 원본은 수정하지 않는다 (모두 메모리 stage 의 씬 레이어)
 #
@@ -44,6 +44,7 @@ import drone_flight as fl  # noqa: E402
 
 TABLE_PATH = "/World/Table"
 THIRD_VIEW_ROOT = "/World/ThirdView"
+THIRD_VIEW_LINK = f"{THIRD_VIEW_ROOT}/camera"    # 카메라 모양 (third_view_camera.yaml model) reference 자리
 THIRD_VIEW_NAME = "third_view_color_camera"
 CHECK_SEC = 10.0
 # drone_err_mm: geometric 은 정답 상태로 mm 단위 유지, px4 는 PX4 위치 유지 흔들림 (모션캡처 호버 RMS 19 mm, 최대 약 33 mm, 2026-10-02)
@@ -172,14 +173,14 @@ def optical_look_at(pos, target):
 
 
 def add_third_view_camera(stage, c, table_top):
-    """D435i 모양(로봇 USD 의 손목 카메라 링크 하위 트리 reference) + 받침대 + 렌더링 카메라(color optical frame 에).
+    """카메라 모양 (설정 model: USD 하위 트리 reference) + 받침대 + 렌더링 카메라 (color optical frame 에).
     렌즈(optical frame)가 c['position'] 에서 c['look_at'] 을 보도록 카메라 링크를 놓는다. 렌더링 Camera prim 경로를 돌려준다."""
     from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     import collision_geom as cg
 
     m = c["model"]
-    link_path = f"{THIRD_VIEW_ROOT}/d435i"
+    link_path = THIRD_VIEW_LINK
     UsdGeom.Xform.Define(stage, THIRD_VIEW_ROOT)
     prim = stage.DefinePrim(link_path, "Xform")
     prim.GetReferences().AddReference(ts._abs(m["usd"]), m["prim"])

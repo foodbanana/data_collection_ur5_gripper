@@ -147,7 +147,7 @@ def episode_info(s, cfg, args, render, stop_mode):
                               "intrinsics": s.cam_cfg["intrinsics"]},
                     "third_view": {"prim": str(s.third_cam), "config": rel(ts._abs(s.scene_cfg["third_view_camera_config"])),
                                    "position": [float(x) for x in s.tv_cfg["position"]], "look_at": [float(x) for x in s.tv_cfg["look_at"]],
-                                   "intrinsics": s.tv_cfg["intrinsics"],
+                                   "intrinsics": s.tv_cfg["intrinsics"], "model": s.tv_cfg["model"]["usd"],
                                    "real_distortion": s.tv_cfg["real_distortion"]}},   # 실물 렌즈 왜곡 (sim 렌더링에는 없음, 기록만)
         "protective_stop": {"mode": stop_mode, "contact_force_n": float(ps_c["contact_force_n"]),
                             "tracking_error_deg": float(ps_c["tracking_error_deg"]), "joint_speed_dps": float(ps_c["joint_speed_dps"])},

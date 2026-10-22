@@ -56,6 +56,8 @@ CRIT = {
     "open_raw": 20.0,
     "rtf": 0.9,
 }
+ARM_PX_DIFF = 10.0      # 5: 계단 전·후 평균 영상 (회색 0~255) 차이가 이보다 큰 픽셀 = 팔 영역
+ARM_PX_MIN = 20         # 5: 팔 영역 최소 픽셀 수 (1/4 축소 160x120 영상)
 
 
 def stamp(s):
@@ -311,19 +313,26 @@ def part_a(ros, R):
            f"50 % 도달 {t50:.0f} ms (기준 ≤ {CRIT['step50_ms']:.0f}), 움직이기 시작 {(tt[i_on] - t_step) * 1000:.0f} ms, "
            f"오버슈트 {over:.1f} %, 2 s 뒤 {final:.1f} %, 보호 정지 {any(ps_s)}")
     its = np.array([s for s, _ in imgs])
-    diffs = [float(np.abs(imgs[k][1] - imgs[k - 1][1]).mean()) for k in range(1, len(imgs))]
+    # 팔 영역만 본다 (2026-10-22 third view Q2: 팔은 화면 아래에 작게, 호버 드론이 흔들려 화면 전체 평균으로는 못 찾음):
+    #   계단 전 평균 영상 ↔ 1 s 뒤 평균 영상 차이가 큰 픽셀 = 팔이 옮겨 간 곳 (드론 흔들림은 평균으로 줄어듦)
+    pre = [g for s, g in imgs if s < t_step - 0.1]
+    post = [g for s, g in imgs if s > t_step + 1.0]
+    arm_px = (np.abs(np.mean(post, axis=0) - np.mean(pre, axis=0)) > ARM_PX_DIFF) if pre and post else np.zeros((1, 1), bool)
+    diffs = [float(np.abs(imgs[k][1] - imgs[k - 1][1])[arm_px].mean()) if arm_px.any() else 0.0 for k in range(1, len(imgs))]
     base = [d for s, d in zip(its[1:], diffs) if s < t_step - 0.1]
     thr = max(3 * (max(base) if base else 0.0), 0.5)
     after = [(s, d) for s, d in zip(its[1:], diffs) if s >= t_step - 0.1]
     img_on = next((s for s, d in after if d > thr), None)
-    if img_on is None:
-        R.item("5 이미지 지연", False, f"이미지 변화를 못 찾음 (기준 차이 {thr:.2f})")
+    if arm_px.sum() < ARM_PX_MIN:
+        R.item("5 이미지 지연", False, f"third view 에서 팔이 움직인 픽셀이 {int(arm_px.sum())} 개 (기준 ≥ {ARM_PX_MIN}, 1/4 축소 영상)")
+    elif img_on is None:
+        R.item("5 이미지 지연", False, f"이미지 변화를 못 찾음 (팔 픽셀 {int(arm_px.sum())} 개, 기준 차이 {thr:.2f})")
     else:
         lag = img_on - tt[i_on]
         frames = int(np.floor(lag * 30.0 + 1e-6))
         R.item("5 이미지 지연 (팔 움직임 → third view 이미지 변화)", 0 <= frames <= CRIT["image_lag_frames"],
                f"팔 움직임 시작 stamp {tt[i_on]:.4f} s, 이미지 변화 첫 stamp {img_on:.4f} s → {lag * 1000:.0f} ms ({frames} 프레임 뒤), "
-               f"정지 때 이미지 차이 최대 {max(base) if base else 0:.2f}")
+               f"정지 때 이미지 차이 최대 {max(base) if base else 0:.2f} (팔 픽셀 {int(arm_px.sum())} 개)")
     ros.play(hold_rows(HOME, 2.0))
 
     # 6·7 파지 신호, 재생 중 보호 정지 안 걸림

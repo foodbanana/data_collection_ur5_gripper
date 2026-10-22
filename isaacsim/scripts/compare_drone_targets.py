@@ -8,7 +8,7 @@
 #     1 팔이 닿나: 시작 자세에서 잡는 자세 (grasp_demo 와 같은 TCP) 와 그 10 cm 아래 (접근) 의 URDF IK (teleop/ik_model.py) 수렴,
 #       관절 한계 여유, 조작성 (특이점), 그 두 자세에서 자기 충돌 (충돌 형상 hull)·테이블 여유 (팔을 순간이동해 PhysX 링크 자세로 봄)
 #       + 여유 상자: 기준 위치 ± --margin 상자 꼭짓점 8 개에서 잡는 자세 IK (리셋 흔들림 + 사인파 진폭)
-#     2 카메라에 보이나: 드론 외곽 상자 (충돌 형상, 프로펠러 포함) 를 시작 자세 손목 카메라·third view 후보 (Q1·Q2) 에 투영
+#     2 카메라에 보이나: 드론 외곽 상자 (충돌 형상, 프로펠러 포함) 를 시작 자세 손목 카메라·third view (기본 = 설정 위치) 에 투영
 #       → 가운데가 화면 안인지, 꼭짓점 중 화면 안 비율. third view 는 여유 상자만큼 넓힌 외곽 상자로도
 #     3 이륙 경로: 테이블 이륙 지점에서 수직 상승 → 수평 이동 선분과 시작 자세 팔 (충돌 형상 꼭짓점) 의 최소 거리
 #   그림: 시작 자세 손목 카메라·third view (드론은 기본 위치) 에 후보 점을 겹쳐 그림 (초록 = 다 통과, 노랑 = 시야만 문제, 빨강 = 팔이 못 닿음·충돌)
@@ -33,8 +33,8 @@ parser.add_argument("--y", type=float, nargs="+", default=[-0.20, -0.10, 0.0, 0.
 parser.add_argument("--z", type=float, nargs="+", default=[0.65, 0.75, 0.85], help="base 기준 z 후보 [m] (지금 기본 위치 0.738)")
 parser.add_argument("--margin", type=float, nargs=3, default=[0.08, 0.08, 0.065],
                     help="여유 상자 반폭 [m] = 리셋 흔들림 ±0.05 + 사인파 진폭 (기본 mid 0.03·0.03·0.015)")
-parser.add_argument("--third-view", nargs="+", default=["Q1:1.1,0,0.20", "Q2:1.1,-0.3,0.20"],
-                    help="third view 후보 이름:x,y,z (base, 보는 점은 기본 위치 잡기와 시작 TCP 의 가운데)")
+parser.add_argument("--third-view", nargs="+", default=["cfg"],
+                    help="third view 후보: cfg (third_view_camera.yaml 의 위치·보는 점) 또는 이름:x,y,z (base, 보는 점은 기본 위치 잡기와 시작 TCP 의 가운데)")
 args, _ = parser.parse_known_args()
 
 from isaacsim import SimulationApp  # noqa: E402
@@ -156,6 +156,10 @@ def main():
     look_w = (tcp_start_w + grasp_nom_w) / 2
     tvs = []
     for txt in args.third_view:
+        if txt == "cfg":
+            pos_w = np.asarray(s.tv_cfg["position"], float)
+            tvs.append(("cfg", pos_w, ds.optical_look_at(pos_w, np.asarray(s.tv_cfg["look_at"], float))))
+            continue
         name, v = txt.split(":")
         pos_w = to_w([float(x) for x in v.split(",")])
         tvs.append((name, pos_w, ds.optical_look_at(pos_w, look_w)))
@@ -313,7 +317,7 @@ def main():
     wsens = CameraSensor(s.wrist_cam, resolution=(Hw, Ww), annotators=["rgb"])
     overlay(render(wsens), T_wrist, Kw, Ww, Hw, os.path.join(out, "wrist_start.png"),
             "wrist start: green ok / yellow third-view edge / red arm; circle size = z (small low)")
-    link = st.GetPrimAtPath(f"{ds.THIRD_VIEW_ROOT}/d435i")
+    link = st.GetPrimAtPath(ds.THIRD_VIEW_LINK)
     opt = next(p for p in Usd.PrimRange(link) if p.GetName() == s.tv_cfg["model"]["optical_frame"])
     cache = UsdGeom.XformCache(Usd.TimeCode.Default())
     T_lo = cg.mat_np(cache.GetLocalToWorldTransform(opt) * cache.GetLocalToWorldTransform(link).GetInverse()).T

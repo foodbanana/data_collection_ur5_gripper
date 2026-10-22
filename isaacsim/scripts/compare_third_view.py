@@ -2,7 +2,7 @@
 # =============================================================
 # compare_third_view.py — third view 카메라 위치 후보를 sim 영상으로 비교 (docs/PLAN.md 6단계 "수집 전 확인")
 #
-#   씬·설정 파일은 그대로. third view 카메라 (D435i 모양 + 렌더링 카메라) 를 후보 위치로 옮겨 찍는다 (메모리 stage 만).
+#   씬·설정 파일은 그대로. third view 카메라 (모양 + 렌더링 카메라) 를 후보 위치로 옮겨 찍는다 (메모리 stage 만).
 #   intrinsics 는 third_view_camera.yaml (실물 D456 640x480). 받침대 기둥은 지금 설정 위치에 남으므로 겉모습만 감춘다
 #   후보 = 로봇 base 기준 (테이블 상판 위) 렌즈 위치 x, y, z [m] + 보는 점
 #     보는 점 "m" = 시작 자세 TCP 와 잡는 곳의 가운데 (시작 ~ 잡기 전체가 화면에 들어오게), 숫자 3 개면 그 점 (base 기준)
@@ -129,7 +129,7 @@ def main():
     sensor = CameraSensor(s.third_cam, resolution=(H, W), annotators=["rgb", "semantic_segmentation"])
 
     # 카메라 링크 → optical 고정 변환 (drone_scene.add_third_view_camera 와 같은 계산)
-    link = st.GetPrimAtPath(f"{ds.THIRD_VIEW_ROOT}/d435i")
+    link = st.GetPrimAtPath(ds.THIRD_VIEW_LINK)
     opt = next(p for p in Usd.PrimRange(link) if p.GetName() == c["model"]["optical_frame"])
     cache = UsdGeom.XformCache(Usd.TimeCode.Default())
     T_lo = cg.mat_np(cache.GetLocalToWorldTransform(opt) * cache.GetLocalToWorldTransform(link).GetInverse()).T
