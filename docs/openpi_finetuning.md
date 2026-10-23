@@ -231,7 +231,8 @@ CUDA_VISIBLE_DEVICES=0,1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train
 | 옵션 | `--reset` (에피소드마다 `/sim/reset`), `--episodes N`, `--duration S` [sim s, 필수], `--auto-kill S` (닫기 명령 S 초 뒤 그리퍼가 막혀 있으면 (present < 0.9) 드론 모터 정지) |
 | 환경 | `~/openpi_client/venv` (레포 밖, `--system-site-packages` 로 시스템 ROS python 을 읽기만, `pip install -e ~/openpi/packages/openpi-client`) |
 
-**데스크탑 GPU (RTX 4070 Ti SUPER 16 GB) 실측**: 정책 (π0.5) 약 8.4 GB·추론 0.13 s (단독) / 0.19 s (sim 과 같이), sim 헤드리스 최대 약 3.6 GB (화면 포함) → 같이 약 12 GB.
+**데스크탑 GPU (RTX 4070 Ti SUPER 16 GB) 실측**: 정책 (π0.5) 약 8.4 GB·추론 0.13 s (단독) / 0.19 s (sim 과 같이). sim 은 헤드리스·**GUI (`--aux-views off`)** 모두 sim 몫 약 2.8 GB (GUI 전체 최대 3.2 GB = 화면 0.4 GB 포함, 메인 뷰포트는 거의 추가 비용 없음) → GUI + 정책 약 11.6 GB / 16 GB. 평가에는 보조 뷰포트를 쓰지 않는다 (사용자).
+정책 메모리는 **LoRA smoke 체크포인트로 잰 값**. full 도 같을 것으로 봄 (추론 때 모든 가중치를 bfloat16 으로 올리고 (`policy_config.py` `restore_params(dtype=bfloat16)`), 구조가 같고 LoRA 쪽만 어댑터가 더 있음, `train_state` 는 안 씀) → **full 10k 체크포인트로 확인할 것** (FSDP 2 장으로 저장한 것을 GPU 1 장에서 여는 것도 같이)
 정책 서버는 `XLA_PYTHON_CLIENT_PREALLOCATE=false` 로 띄운다 (기본은 GPU 의 75 % 를 미리 잡아 sim 과 같이 못 씀). 첫 추론은 서버 컴파일로 약 15 s → 노드가 에피소드 전에 한 번 미리 추론
 
 **시험 (LoRA smoke 체크포인트, 헤드리스, 기하 제어기 드론, 2026-10-23)**: 에피소드 2 개 × 15 s 끝까지, 보호 정지 0, RTF 1.03. 명령 893 개 / 15 s (60 Hz),
@@ -240,7 +241,7 @@ CUDA_VISIBLE_DEVICES=0,1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train
 ```bash
 # 터미널 1: sim (GUI)
 source /opt/ros/jazzy/setup.bash
-~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --init-pose under_drone --drone-targets --mode hover --hover mid --seed 0
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --init-pose under_drone --drone-targets --mode hover --hover mid --seed 0 --aux-views off
 # 터미널 2: 정책 서버 (데스크탑 ~/openpi)
 cd ~/openpi && XLA_PYTHON_CLIENT_PREALLOCATE=false uv run scripts/serve_policy.py policy:checkpoint \
   --policy.config=pi05_ur5 --policy.dir=checkpoints/pi05_ur5/full_first13_10k/9999
