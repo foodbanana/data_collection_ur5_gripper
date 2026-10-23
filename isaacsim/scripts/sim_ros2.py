@@ -69,6 +69,8 @@ def parse():
     p.add_argument("--init-pose", nargs="+", default=None, metavar="Q", action=_init_pose_action(),
                    help="팔 시작 자세: 관절각 6 개 [rad] 또는 씬 설정 init_poses 의 이름 (예: under_drone). 기본 home_pose. /sim/reset 도 이 자세로 되돌린다")
     p.add_argument("--prop-spin", choices=("on", "off"), default=None, help="프로펠러 회전 표시 (기본 GUI on, headless off)")
+    p.add_argument("--aux-views", choices=("on", "off"), default=None,
+                   help="GUI 옆·위 보조 뷰포트 (텔레옵 거리감, 녹화와 무관). 기본 GUI on, headless 에서는 off 만")
     p.add_argument("--protective-stop", choices=("on", "measure"), default="on", help="보호 정지 (measure = 최댓값만 기록)")
     p.add_argument("--reset-offset", type=float, default=None,
                    help="리셋 드론 위치 랜덤 범위 ±[m] (기본 ros2_iface.yaml reset.drone_offset, 0 = 항상 기준 위치)")
@@ -80,6 +82,10 @@ def parse():
     args = p.parse_args()
     if args.prop_spin is None:
         args.prop_spin = "off" if args.headless else "on"
+    if args.aux_views is None:
+        args.aux_views = "off" if args.headless else "on"
+    elif args.aux_views == "on" and args.headless:
+        p.error("--aux-views on 은 GUI 에서만 (headless 와 같이 쓸 수 없음)")
     return args
 
 
@@ -234,6 +240,8 @@ def main():
         reset.sim_info = episode_info(s, cfg, args, render, args.protective_stop)
         if not args.headless:
             ViewportManager.set_camera_view("/OmniverseKit_Persp", eye=ds.GUI_EYE, target=ds.GUI_TARGET)   # 로봇 뒤에서 드론 쪽
+            if args.aux_views == "on":
+                aux_wins = ds.open_aux_views(s)                # 옆·위 보조 뷰포트 (창이 닫히지 않게 참조 유지)
         print(f"[sim_ros2] 준비: seed {args.seed}{' (시작 시각)' if args.seed_auto else ''}, 드론 {s.backend} ({s.flight.ref.mode}), 렌더 {render}, loop {loop_hz:g} Hz, "
               f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']}, "
               f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "

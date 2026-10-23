@@ -48,6 +48,15 @@ THIRD_VIEW_LINK = f"{THIRD_VIEW_ROOT}/camera"    # 카메라 모양 (third_view_
 # GUI 메인 뷰포트 처음 시점 (world m, 녹화 카메라와 무관). 2026-10-22: 텔레옵 조작자가 로봇과 같은 방향을 보게 로봇 뒤 위쪽에서 드론 쪽 (+x) 을 봄
 #   (텔레옵 노드는 컨트롤러 "앞" 을 base +x 에 맞춤 → 컨트롤러를 앞으로 밀면 화면에서도 앞으로). 예전 (1.9, −1.6, 1.7) → (0.4, 0, 1.1) 은 앞 오른쪽에서 마주 봄
 GUI_EYE, GUI_TARGET = [-1.3, 0.0, 2.2], [0.6, 0.0, 1.3]     # 로봇 바로 뒤 1.3 m·높이 2.2 m (더 가까우면 팔꿈치가 그리퍼를 가림)
+# GUI 보조 뷰포트 (2026-10-23, 텔레옵 거리감: 메인만으로는 앞뒤·높이를 맞추기 어려움). world m, 녹화 카메라와 무관 (ROS 발행 없음)
+#   옆: 로봇 오른쪽 (−y) 에서 +y 를 봄 → 화면 오른쪽 = 앞 (+x), 위 = 위. 드론 기준 위치 (x 0.45~0.65, world z 1.46~1.56) 와 팔이 같이 보임
+#   위: 위에서 거의 수직으로 내려봄 (뒤로 7° 기울임) → 화면 위 = 앞 (+x), 오른쪽 = 로봇 오른쪽 (−y). 메인 화면과 같은 방향
+GUI_AUX_ROOT = "/World/GuiViews"
+GUI_AUX_VIEWS = (("Side view", "side", [0.40, -1.6, 1.40], [0.40, 0.0, 1.30]),
+                 ("Top view", "top", [0.30, 0.0, 3.20], [0.52, 0.0, 1.45]))
+GUI_AUX_RES = (640, 480)          # 창 크기 (붙인 뒤에는 dock 크기)
+GUI_AUX_RES_SCALE = 0.4          # 렌더 해상도 = 1280x720 × 0.4 = 512x288
+GUI_AUX_FOCAL_MM = 24.0          # 가로 화각 약 47° (USD 기본 aperture 20.955 mm)
 THIRD_VIEW_NAME = "third_view_color_camera"
 CHECK_SEC = 10.0
 # drone_err_mm: geometric 은 정답 상태로 mm 단위 유지, px4 는 PX4 위치 유지 흔들림 (모션캡처 호버 RMS 19 mm, 최대 약 33 mm, 2026-10-02)
@@ -533,6 +542,34 @@ def open_camera_windows(s, old=None):
         w, h = (int(x) for x in cfg["resolution"])
         win = create_viewport_window(title, width=w, height=h, camera_path=Sdf.Path(path))
         win.viewport_api.resolution = (w, h)
+        wins.append(win)
+    return wins
+
+
+def open_aux_views(s):
+    """GUI: 옆·위 보조 뷰포트 창 (GUI_AUX_VIEWS) 을 메인 'Viewport' 오른쪽에 붙여 띄운다. 카메라 prim 은 GUI_AUX_ROOT 아래에 만든다."""
+    import omni.ui as ui
+    from isaacsim.core.rendering_manager import ViewportManager
+    from omni.kit.viewport.utility import create_viewport_window
+    from pxr import Sdf, UsdGeom
+
+    main = ui.Workspace.get_window("Viewport")
+    if main is None:
+        raise RuntimeError("메인 'Viewport' 창이 없음 (headless 에서는 보조 뷰포트를 열지 않는다)")
+    w, h = GUI_AUX_RES
+    wins = []
+    for i, (title, name, eye, target) in enumerate(GUI_AUX_VIEWS):
+        path = f"{GUI_AUX_ROOT}/{name}"
+        cam = UsdGeom.Camera.Define(s.stage, path)
+        cam.GetFocalLengthAttr().Set(GUI_AUX_FOCAL_MM)
+        cam.GetClippingRangeAttr().Set((0.05, 100.0))
+        ViewportManager.set_camera_view(path, eye=eye, target=target)
+        win = create_viewport_window(title, width=w, height=h, camera_path=Sdf.Path(path))
+        if i == 0:
+            win.dock_in(main, ui.DockPosition.RIGHT, 0.35)     # 메인 오른쪽 35 %
+        else:
+            win.dock_in(wins[0], ui.DockPosition.BOTTOM, 0.5)  # 옆 view 아래
+        win.viewport_api.resolution_scale = GUI_AUX_RES_SCALE  # 렌더 비용 = 해상도. resolution 지정은 창을 붙이면 1280x720 으로 돌아감
         wins.append(win)
     return wins
 
