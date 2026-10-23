@@ -201,6 +201,57 @@ activation 은 깔끔하게 반으로 나뉘지 않으므로 **장당 48 GB 안�
 - sim 폐루프 평가: openpi 정책 서버 ↔ sim 클라이언트 (`/joint_command`·`/gripper/command` 를 내는 노드), 같은 `--seed` 로 성공률 측정 (PLAN 7단계). 정책 명령 앞에 닿는 영역 판정·작업 공간 제한 (PLAN 6단계 "드론 기준 위치 목록")
 - 학습에 쓴 데이터셋·config·step·체크포인트를 `docs/PLAN.md` 7단계에 기록하고, `docs/architecture.md` [6] 아래 "openpi … NOT STARTED" 를 고친다
 
+### 8.1 full 오래 학습 (2026-10-23 시작)
+
+first13 그대로, 데이터를 더 모으기 전에 학습 → 추론 → sim GUI 전체 고리를 보려고. 과적합이어도 된다.
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_ur5 \
+  --exp-name=full_first13_10k --project-name=ur5_sim --batch-size=16 \
+  --num-train-steps=10000 --lr-schedule.warmup-steps=1000 --lr-schedule.decay-steps=10000 \
+  --save-interval=10000 --keep-period=None --log-interval=100 --overwrite 2>&1 | tee train_full_first13_10k.log
+```
+
+- 10 000 step = 약 25 에포크, 1.9 s/step → 약 5 시간 15 분 (20:02 시작)
+- lr: warmup 1000 → 2.5e-5 → cosine 으로 10 000 step 에 2.5e-6 (기본 decay 30 000 이면 거의 안 내려간 채 끝남)
+- 체크포인트는 마지막 (step 9999) 한 번만: 중간에 저장하면 새것을 다 쓴 뒤 옛것을 지워 순간 2 개 (62 GB), `keep_period=None` (5000 배수를 남기지 않음). 서버 디스크는 예약함
+- 끝나면 `9999/params`·`assets` (추론에 필요한 것, 약 7 GB) 만 USB → 데스크탑, 서버 체크포인트는 지운다
+
+### 8.2 정책 클라이언트 노드 (sim GUI 에서 정책 돌리기)
+
+`policy/policy_client_node.py` + `policy/policy_client.yaml` (2026-10-23). 텔레옵 노드 자리를 대신한다 (CLAUDE.md 원칙 2: `/joint_command`·`/gripper/command` 만 보냄)
+
+| 항목 | 내용 |
+|------|------|
+| 관측 | 데이터셋과 같은 모양: state = 팔 6 + present / 1150, base = third view, wrist = 손목 (rgb8 640x480 그대로, resize 는 서버), prompt `"pick up the drone"` |
+| 시각 맞춤 | 카메라는 `/joint_states` 보다 1 ~ 2 프레임 늦게 도착 → 기준 시각 = 두 카메라 중 늦은 쪽의 최신 이미지, 그 이전의 관절·그리퍼를 고름 (stage1 과 같게). 66 ms 넘게 어긋나면 에러 |
+| 실행 | chunk 칸 i = sim t_obs + i/25 s 의 명령. 60 Hz (sim time) 로 칸 사이 선형 보간해 보냄. 4 칸째에 다음 추론을 뒤에서 시작 (그동안 계속 실행), 결과가 오면 바꿈. chunk 끝에 닿으면 마지막 칸 유지 |
+| 그리퍼 | 출력 > 0.5 → 1150 (닫기), 아니면 0, 바뀔 때만 보냄 |
+| 안전 | 텔레옵과 같은 값: 관절 목표 속도 1.5 rad/s, 측정 대비 앞섬 0.08 rad (보호 정지 5° 아래), 관절 한계 안쪽 0.05 rad. 보호 정지·측정 대비 0.2 rad 어긋남 (리셋)·관측 오래됨이면 멈춤 |
+| 옵션 | `--reset` (에피소드마다 `/sim/reset`), `--episodes N`, `--duration S` [sim s, 필수], `--auto-kill S` (닫기 명령 S 초 뒤 그리퍼가 막혀 있으면 (present < 0.9) 드론 모터 정지) |
+| 환경 | `~/openpi_client/venv` (레포 밖, `--system-site-packages` 로 시스템 ROS python 을 읽기만, `pip install -e ~/openpi/packages/openpi-client`) |
+
+**데스크탑 GPU (RTX 4070 Ti SUPER 16 GB) 실측**: 정책 (π0.5) 약 8.4 GB·추론 0.13 s (단독) / 0.19 s (sim 과 같이), sim 헤드리스 최대 약 3.6 GB (화면 포함) → 같이 약 12 GB.
+정책 서버는 `XLA_PYTHON_CLIENT_PREALLOCATE=false` 로 띄운다 (기본은 GPU 의 75 % 를 미리 잡아 sim 과 같이 못 씀). 첫 추론은 서버 컴파일로 약 15 s → 노드가 에피소드 전에 한 번 미리 추론
+
+**시험 (LoRA smoke 체크포인트, 헤드리스, 기하 제어기 드론, 2026-10-23)**: 에피소드 2 개 × 15 s 끝까지, 보호 정지 0, RTF 1.03. 명령 893 개 / 15 s (60 Hz),
+다음 chunk 도착 = 약 4 칸 (0.19 s) 뒤, 마지막 칸 유지 0 %, 안전 한계로 잘린 비율 28 % (100 step 정책이라 출력이 거칢), 그리퍼가 닫기·열기를 오감 (약한 정책)
+
+```bash
+# 터미널 1: sim (GUI)
+source /opt/ros/jazzy/setup.bash
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --init-pose under_drone --drone-targets --mode hover --hover mid --seed 0
+# 터미널 2: 정책 서버 (데스크탑 ~/openpi)
+cd ~/openpi && XLA_PYTHON_CLIENT_PREALLOCATE=false uv run scripts/serve_policy.py policy:checkpoint \
+  --policy.config=pi05_ur5 --policy.dir=checkpoints/pi05_ur5/full_first13_10k/9999
+# 터미널 3: 클라이언트 (sim 의 "준비" 줄과 서버의 "server listening" 뒤)
+source /opt/ros/jazzy/setup.bash
+~/openpi_client/venv/bin/python policy/policy_client_node.py --reset --episodes 5 --duration 30 --auto-kill 1.0
+```
+
+- 학습 영상은 AV1 mp4 를 풀어 쓴 것이고 실행 때는 압축 없는 sim 이미지다 (작은 차이. 문제가 보이면 확인)
+- 아직 없는 것: 성공 자동 판정·성공률 집계 (지금은 그리퍼 막힘 = 파지 신호만), 닿는 영역 판정
+
 ---
 
 ## 9. 관련 문서

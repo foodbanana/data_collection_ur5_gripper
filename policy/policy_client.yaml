@@ -1,0 +1,47 @@
+# =============================================================
+# policy_client.yaml — openpi 정책 클라이언트 노드 설정 (policy/policy_client_node.py, docs/openpi_finetuning.md 8장)
+#
+# 항목이 빠지면 노드가 에러로 멈춘다 (기본값을 코드에 두지 않는다)
+# =============================================================
+
+server:
+  host: localhost             # openpi scripts/serve_policy.py 가 떠 있는 곳
+  port: 8000
+
+prompt: "pick up the drone"   # 학습 데이터셋 task 와 같게
+
+# 데이터셋 25 Hz = action chunk 한 칸 간격
+control_hz: 25.0
+# 지금 chunk (10 칸 = 0.4 s) 의 몇 번째 칸에서 다음 추론을 뒤에서 시작할지 (그동안 지금 chunk 를 계속 실행).
+# 추론이 약 0.19 s (= 약 5 칸) 걸리므로 4 면 다음 chunk 가 9 칸 쯤에 도착 (10 칸 끝 전에). 늦으면 마지막 칸을 유지
+replan_steps: 4
+# /joint_command 를 보내는 주기 (sim time). chunk 칸 사이는 선형 보간. 텔레옵과 같은 60 Hz (sim 은 루프 30 Hz 마다 최신 명령을 33 ms 보간)
+publish_hz: 60.0
+
+# 관측 (sim time). 기준 시각 = 두 카메라 중 늦은 쪽의 최신 이미지 시각, 그 시각 이전의 관절값·그리퍼·다른 카메라를 고른다.
+# 고른 메시지가 기준 시각보다 이만큼 넘게 오래됐으면 에러 (stage1 --max-age 와 같은 값)
+obs_max_age: 0.066
+
+gripper:
+  threshold: 0.5              # 정책 출력 > threshold → 닫기 (데이터셋 action[6] 은 {0, 1}, CLAUDE.md "추론 시 0.5 threshold")
+  raw_open: 0.0               # /gripper/command 값 (데이터셋 goal / 1150 의 역)
+  raw_close: 1150.0
+  present_scale: 1150.0       # state[6] = /gripper/joint_states present / 1150
+
+# 안전 (텔레옵 노드 teleop/xr_teleop.yaml 과 같은 값·같은 이유)
+max_joint_speed: 1.5          # [rad/s] 보내는 관절 목표가 움직이는 최대 속도 (sim 관절 최대 π rad/s 아래)
+max_lead: 0.08                # [rad] 관절 목표가 측정 관절각보다 앞설 수 있는 최대 (sim 보호 정지 위치 오차 5° = 0.087 아래)
+limit_margin: 0.05            # [rad] 관절 한계 안쪽 여유 (sim 은 한계 밖 명령을 받으면 에러로 끝난다)
+desync: 0.2                   # [rad] 측정 관절각이 보낸 목표와 이만큼 다르면 멈춤 (리셋 순간이동·보호 정지)
+
+topics:
+  clock: /clock
+  joint_states: /joint_states
+  gripper_state: /gripper/joint_states
+  wrist_image: /cam/wrist/color/image_raw
+  third_view_image: /cam/third_view/color/image_raw
+  protective_stop: /protective_stop
+  joint_command: /joint_command
+  gripper_command: /gripper/command
+  reset_service: /sim/reset
+  kill_service: /sim/drone_kill
