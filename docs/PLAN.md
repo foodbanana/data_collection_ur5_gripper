@@ -1,6 +1,6 @@
 # Isaac Sim 드론 파지 데이터 수집 파이프라인 계획
 
-작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22)
+작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22) · 첫 소량 수집 13 개, GUI 보조 옆·위 뷰포트 (2026-10-23)
 
 ## 목표
 
@@ -2014,6 +2014,13 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
     호버 드론 흔들림이 섞여 "이미지 변화를 못 찾음" 으로 실패했었다 (팔 픽셀 355 개, 지연 0 프레임)
   - 회귀: `drone_scene --check` 3/3, `grasp_demo --case all` (PX4) 6/6, `check_drone_hover` 6/6 (리셋 23.9 s), `check_ros2` 9/9 (5 번 고친 뒤, 리셋 23.8 ~ 23.9 s, 드론 오차 4 ~ 7 mm, RTF 1.005),
     `check_rc` 6/6·6/6 (첫 번째는 5/6: R2 roll "놓은 뒤 마지막 1 s 이동" 20.5 mm > 기준 20 mm. 이륙 지점을 바꾸기 전에도 18.4·3.9·18.6 mm 로 기준 가까이 오가던 값 → 기준은 그대로, 계속 보기)
+- [x] **첫 소량 수집 (2026-10-23, PICO, `drone_grasp_t10_f1_tgt_hmid`)**: 25 번 시도 → 저장 13 개 (6337 프레임, 에피소드 12 ~ 30 s), 버림 12 개. 변환·병합·검수 5/5 PASS
+  (`lerobot_dataset_v21/local/drone_grasp_tgt_hmid_first13`): 13 개 모두 파지 신호 (닫힌 state 0.18 ~ 0.28)·모터 정지 기록, 보호 정지 0, 앞뒤 정지 0.04 ~ 0.24 s, 명령 끊김 0
+  - 성공률이 드론 위치에 따라 다름: z 0.70 11/15, **z 0.80 2/9**, **x 0.45 2/9** (x45 z80 은 5/5 실패), x 0.55·0.65 11/16. 사용자: "그냥은 잡기 어렵다" → 메인 화면만으로는 앞뒤·높이 거리감이 없음
+  - 수집 중 RTF 0.79 → 0.66 으로 조금씩 낮아짐 (뒤 4 개는 `/joint_command` 간격 중앙값 8.3 ms). 데이터 문제는 아님, 긴 세션에서 계속 보기
+- [x] **GUI 보조 뷰포트 옆·위 (2026-10-23 사용자 요청)**: 메인 오른쪽에 **Side view** (로봇 오른쪽 (−y) 에서 +y 를 봄, 화면 오른쪽 = 앞) 와 **Top view** (위에서 7° 기울여 내려봄, 화면 위 = 앞)
+  (`drone_scene.GUI_AUX_VIEWS`·`open_aux_views`, 카메라 prim `/World/GuiViews/*`, ROS 발행 없음). `sim_ros2.py --aux-views on|off` (기본 GUI on, headless 와 on 을 같이 주면 에러).
+  렌더 해상도 512x288 (`resolution_scale` 0.4). RTF 0.98 → 0.82 (드론 잡기 전, `docs/sim_performance.md` 4.2). 녹화와 무관 (사용자 GUI 확인)
 
 ---
 
@@ -2263,7 +2270,7 @@ source /opt/ros/jazzy/setup.bash
 #   옵션: --flight geometric|px4, --tick-rate 0|30, --cameras off, --camera-windows (GUI), --prop-spin on, --profile (cProfile → profile.txt),
 #         --init-pose q1..q6, --arm-motion, --save-images, --dlss-mode 0|1|2, --anti-aliasing 3|4 (렌더 비교, 기본은 ros2_iface.yaml render)
 
-# sim ROS 2 인터페이스 (실제 시간 속도). GUI: 메인 뷰포트 하나 + 프로펠러 회전 (손목·third view 는 rqt_image_view 등으로)
+# sim ROS 2 인터페이스 (실제 시간 속도). GUI: 메인 뷰포트 + 보조 옆·위 뷰포트 (--aux-views off) + 프로펠러 회전 (손목·third view 는 rqt_image_view 등으로)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py --headless --duration 60          # --flight geometric, --init-pose q1..q6, --prop-spin on|off,
                                                                                     # --protective-stop on|measure, --reset-offset 0, --seed N

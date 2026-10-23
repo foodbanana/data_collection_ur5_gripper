@@ -146,7 +146,7 @@ Isaac Sim 의 드론 파지 씬이 실물과 같은 ROS 2 토픽으로 동작하
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash            # ~/.bashrc 에 있으면 생략
 
-# sim (GUI: 메인 뷰포트 하나 + 프로펠러 회전). [sim_ros2] 준비: ... 줄이 나오면 준비 완료 (약 30 s)
+# sim (GUI: 메인 뷰포트 + 보조 옆·위 뷰포트 (--aux-views off 로 끔) + 프로펠러 회전). [sim_ros2] 준비: ... 줄이 나오면 준비 완료 (약 30 s)
 ~/isaacsim/python.sh isaacsim/scripts/sim_ros2.py
 #   --headless --duration 60, --flight geometric, --reset-offset 0, --seed N, --protective-stop on|measure
 #   --seed: 리셋 순서·흔들림·사인파를 정하는 값 (같은 seed = 같은 순서, 재현·평가·검사용. 검사 스크립트는 0 고정). 안 주면 시작 시각 (수집할 때 세션마다 달라지게, 2026-10-16)
