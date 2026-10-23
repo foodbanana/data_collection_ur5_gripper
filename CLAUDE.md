@@ -17,6 +17,7 @@ third view 카메라 받침대 (STL 위치, D456 고정 구멍, 출력, 설치 �
 PICO VR 컨트롤러로 sim 데이터 수집 (조작자 안내: VR 연결, 터미널 명령, 버튼, 녹화 순서, 주의, 데이터 위치): `docs/pico_vr_data_collection.md`
 시각 (stamp) 동기화 (변환이 stamp 를 쓰는 방법, sim = 같은 물리 스텝, 실물 = 토픽마다 다른 프로그램이 찍음·측정 결과·모르는 것): `docs/timestamp_sync.md`
 변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
+openpi π0.5 파인튜닝 계획 (데이터 → 모델 입력, 리허설과 다른 점, LoRA smoke → full 2 GPU, 서버 실행 순서): `docs/openpi_finetuning.md`
 
 ## 경로 규칙
 
