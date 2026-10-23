@@ -38,7 +38,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   드론 사인파 hover 프리셋 small·mid·big, 드론 기준 위치 목록 25 점 (2026-10-16). third view 위치 Q2 (1.10, −0.30, 0.20)·D455 모양 (2026-10-22).
   third view 받침대 CAD (2026-10-22). 첫 소량 수집 13 개 (2026-10-23).
 - 7단계 시작 (2026-10-23): first13 으로 openpi π0.5 LoRA smoke 100 step 통과 (연구실 서버 GPU 2 장, loss 0.074 → 0.051, `docs/openpi_finetuning.md`).
-  **다음: full 파인튜닝 2 GPU FSDP 메모리 확인, 데이터를 더 모은 뒤 본 학습 → sim 폐루프 평가** (7단계)
+  full 파인튜닝 smoke 도 GPU 2 장 FSDP·batch 16 으로 통과. **다음: 데이터를 더 모은 뒤 본 학습 (LoRA / full) → sim 폐루프 평가** (7단계)
 
 ---
 
@@ -2040,7 +2040,9 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 - [x] **LoRA smoke 100 step (2026-10-23)**: first13 (13 에피소드, 6337 프레임), openpi fork `~/openpi` 커밋 `9408e3b` (`pi05_ur5_lora`: 손목 키 `observation.images.wrist`, repo_id `foodbanana/drone_grasp_tgt_hmid_first13`).
   연구실 서버 1 GPU 0·1 data parallel, batch 32, 2.5 s/step (GPU 1 장 4.3 s), loss 0.0736 → 0.0514, `param_norm` 그대로, wandb 카메라 배치 확인 (base = third view, 왼쪽 손목 = 손목).
   데스크탑 확인: norm stats 그리퍼 action q01 0 / q99 1, action 이 state 를 1 프레임 앞섬 (action[t] ≈ state[t+1], 팔 RMS 0.063°)
-- [ ] full 파인튜닝 2 GPU FSDP smoke (`pi05_ur5`, 장당 48 GB 안에 드는지)
+- [x] **full 파인튜닝 2 GPU FSDP smoke (2026-10-23)**: `pi05_ur5` (LoRA 없음, EMA 끔, `fsdp_devices=2`). batch 32 는 OOM (activation 약 32 GB > 남은 약 23 GB), **batch 16 통과**:
+  loss 0.082 → 0.037, 1.9 s/step (같은 샘플 수당 LoRA 의 약 1.5 배), 체크포인트 31 GB
+- [x] 추론 경로 (LoRA smoke 체크포인트, 가짜 입력 → actions (10, 7))
 - [ ] 본 학습 (데이터를 더 모은 뒤. step 수에 맞춰 lr schedule 의 warmup·decay 도 조정, 서버 디스크에 맞춰 체크포인트 저장 간격)
 - [ ] sim 폐루프 평가
 

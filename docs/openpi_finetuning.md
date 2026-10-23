@@ -3,7 +3,7 @@
 작성: 2026-10-23 · 대상 데이터 `lerobot_dataset_v21/local/drone_grasp_tgt_hmid_first13` (첫 소량 수집, `docs/PLAN.md` 6단계), 브랜치 `isaacsim_v6.1.0` · LoRA smoke 통과 (2026-10-23, 6.5절)
 
 sim 에서 모은 데이터로 openpi π0.5 를 파인튜닝하는 순서를 정리한다. 먼저 LoRA 100 step smoke test 로 데이터 → 학습 경로가 끝까지 도는지 보고,
-그 뒤 full 파인튜닝 (GPU 2 장, FSDP) 이 가능한지 잰다. 상태: **1 ~ 3단계 끝 (LoRA smoke 통과, 2026-10-23). 4단계 full 은 아직**.
+그 뒤 full 파인튜닝 (GPU 2 장, FSDP) 이 가능한지 잰다. 상태: **1 ~ 4단계 끝 (2026-10-23): LoRA smoke 통과, full smoke 는 GPU 2 장 FSDP·batch 16 으로 통과 (batch 32 는 OOM)**.
 
 ---
 
@@ -167,6 +167,25 @@ activation 은 깔끔하게 반으로 나뉘지 않으므로 **장당 48 GB 안�
   ```
 - 메모리가 모자라면 (README 순서): `XLA_PYTHON_CLIENT_MEM_FRACTION` 확인 → EMA 끔 (이미) → `--batch-size=16`
 - 잴 것: 장당 메모리 (`nvidia-smi`), step 당 시간 (LoRA 1 장 약 4.3 s 와 비교), loss
+- **결과 (2026-10-23)**: GPU 0·1, FSDP 2, 디스크 여유 78 GB
+
+  | 시도 | 결과 |
+  |------|------|
+  | batch 32 | **OOM** (첫 step). XLA: 한 step 에 약 32 GB 필요한데 남은 공간 약 22.8 GB (`Can't reduce memory use below 22.78GiB … only reduced to 32.17GiB`), 13.1 GB 버퍼 할당 실패 (`RESOURCE_EXHAUSTED`). 장당 44 GB 중 약 21 GB 는 나눈 파라미터·optimizer 상태 |
+  | **batch 16** | **통과**, exit 0. 장당 8 |
+
+  | 항목 | full (batch 16) | LoRA (batch 32, 6.5절) |
+  |------|-----------------|------------------------|
+  | loss (step 0 → 90) | 0.0818 → **0.0374** | 0.0736 → 0.0514 |
+  | grad_norm | 1.34 → 0.57 | 0.45 → 0.32 |
+  | `param_norm` | 1802.3865 → 1802.3860 (가중치가 바뀜 = full) | 그대로 (freeze) |
+  | 속도 | **1.9 s/step** (샘플당 0.12 s) | 2.5 s/step (샘플당 0.08 s) |
+  | 같은 샘플 수당 시간 | LoRA 의 약 1.5 배 | 1 |
+  | 체크포인트 | **31 GB** (step 99) | 약 9 GB |
+
+  - loss 가 더 내려간 것은 바꾸는 파라미터가 많아서. 13 에피소드에서는 과적합일 수 있어 어느 쪽이 나은지는 sim 평가로만 판단한다
+  - 본 학습을 full 로 하면 체크포인트 하나 31 GB → 서버 디스크 (여유 수십 GB) 로는 하나만 둘 수 있다. 저장 간격·보관 개수, 끝난 뒤 바로 옮기기를 미리 정한다
+  - `config.py` `pi05_ur5` 의 batch 를 16 으로 고침 (`~/openpi`)
 - **지금 데이터 (13 에피소드) 로는 full 이 과적합하기 쉽다.** 바꾸는 파라미터가 LoRA 보다 훨씬 많다. full 본 학습은 데이터가 수십 ~ 수백 에피소드로 늘었을 때 LoRA 와 비교해 정한다
 
 ---
