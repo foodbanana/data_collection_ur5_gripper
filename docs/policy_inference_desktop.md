@@ -218,14 +218,78 @@ python3 isaacsim/scripts/drone_cmd.py kill            # 또는 ros2 service call
 
 ---
 
-## 7. 관련 파일·문서
+## 7. 추론에 쓰이는 파일
 
-| 파일 | 내용 |
+★ = 우리가 만들었거나 고친 파일, 나머지는 openpi 원본
+
+### 7.1 [A] sim (`~/data_collection_ur5_gripper`, 수집 때와 같음)
+
+| 파일 | 역할 |
 |------|------|
-| `policy/policy_client_node.py`, `policy/policy_client.yaml` | 클라이언트 노드와 설정 (항목이 빠지면 에러) |
-| `~/openpi/src/openpi/training/config.py` | `pi05_ur5` (full), `pi05_ur5_lora` (LoRA), `LeRobotUR5DataConfig` |
-| `~/openpi/src/openpi/policies/ur5_policy.py` | `UR5Inputs`, `UR5Outputs`, `make_ur5_example` |
-| `~/openpi/scripts/serve_policy.py`, `~/openpi/docs/remote_inference.md` | 정책 서버 |
+| `isaacsim/scripts/sim_ros2.py` | 실행 진입점: 씬, 토픽, `/sim/reset`·`/sim/drone_kill` |
+| `isaacsim/scripts/ros2_iface.py`, `isaacsim/config/ros2_iface.yaml` | 토픽 발행·구독, 팔 명령 보간, 카메라, 렌더 설정 |
+| `isaacsim/scripts/sim_reset.py` | 에피소드 리셋 (드론 기준 위치 목록, PX4 재이륙) |
+| `isaacsim/scripts/drone_cmd.py` | 모터 정지 CLI (`kill`, 사람이 씀) |
+| `isaacsim/config/scene_drone.yaml` | 시작 자세 `under_drone`, 드론 기준 위치 25 점 |
+
+### 7.2 [B] 정책 클라이언트 (`~/data_collection_ur5_gripper`)
+
+| 파일 | 역할 |
+|------|------|
+| ★ `policy/policy_client_node.py` | 관측 짝짓기 → 서버 요청 → chunk 실행 (60 Hz 보간, 비동기) → 안전 한계 → 명령 발행 |
+| ★ `policy/policy_client.yaml` | 서버 주소, prompt, 25 Hz, `replan_steps` 4, 그리퍼 0.5, 안전 한계, 토픽 이름 (항목이 빠지면 에러) |
+| `teleop/ik_model.py` | 관절 이름·관절 한계를 URDF 에서 (텔레옵과 같은 것) |
+| `isaacsim/ur5_rh_p12_description/out/ur5_rh_p12_d435i.urdf` | 위가 읽는 URDF (빌드 결과, git 제외) |
+| `~/openpi/packages/openpi-client/src/openpi_client/websocket_client_policy.py` | websocket 으로 관측을 보내고 action 을 받음 |
+| `~/openpi/packages/openpi-client/src/openpi_client/msgpack_numpy.py` | numpy 배열 직렬화 |
+| (환경) `~/openpi_client/venv` | 위 패키지가 든 venv (시스템 ROS python 을 읽기만) |
+
+### 7.3 [C] 정책 서버 (`~/openpi`, uv 환경)
+
+| 구분 | 파일 | 역할 |
+|------|------|------|
+| 실행·서빙 | `scripts/serve_policy.py` | 진입점 (`policy:checkpoint --policy.config=… --policy.dir=…`), 포트 8000 |
+| | `src/openpi/serving/websocket_policy_server.py` | websocket 서버, 요청마다 `policy.infer()` |
+| | `src/openpi/policies/policy_config.py` | `create_trained_policy`: params 를 bfloat16 으로 올리고 norm stats·변환을 묶어 policy 생성 |
+| | `src/openpi/policies/policy.py` | `Policy.infer`: 입력 변환 → 모델 → 출력 변환 |
+| 설정·변환 (학습과 같음) | ★ `src/openpi/training/config.py` | `pi05_ur5` (full), `pi05_ur5_lora` (LoRA), `LeRobotUR5DataConfig` (repack, delta 마스크) |
+| | ★ `src/openpi/policies/ur5_policy.py` | `UR5Inputs` (state·이미지 슬롯·mask), `UR5Outputs` (앞 7 차원), `make_ur5_example` (시험용 가짜 입력) |
+| | `src/openpi/transforms.py` | `Normalize`·`Unnormalize`, `ResizeImages` (224), `DeltaActions`·`AbsoluteActions`, `TokenizePrompt`, `PadStatesAndActions` (32) |
+| | `src/openpi/shared/normalize.py` | norm stats 읽기 |
+| | `src/openpi/shared/image_tools.py` | 비율 유지 resize (검은 띠) |
+| 모델 | `src/openpi/models/pi0_config.py` | π0.5 설정 (`pi05=True`, action_horizon 10) |
+| | `src/openpi/models/pi0.py` | π0.5 본체 (PaliGemma + action expert, flow matching) |
+| | `src/openpi/models/model.py` | `restore_params` (체크포인트 읽기, GPU 수에 맞춰 sharding) |
+| | `src/openpi/models/tokenizer.py` | prompt 토큰화 (PaliGemma tokenizer) |
+
+### 7.4 체크포인트 (데스크탑, git 제외)
+
+| 경로 | 추론에 쓰나 |
+|------|-------------|
+| `~/openpi/checkpoints/pi05_ur5/full_first13_10k/9999/params/` (12 GB) | **씀**: 모델 가중치 |
+| `…/9999/assets/foodbanana/drone_grasp_tgt_hmid_first13/norm_stats.json` | **씀**: 정규화 통계 (학습 때 것) |
+| `…/9999/train_state/` (19 GB) | 안 씀 (이어서 학습할 때만) |
+| `~/openpi/checkpoints/pi05_ur5_lora/smoke_first13/99/` | LoRA 정책으로 바꿔 시험할 때 |
+| `~/.cache/openpi/…` | 서버가 처음 받는 것 (tokenizer 등) 캐시 |
+
+### 7.5 한 번의 추론이 지나가는 순서
+
+```text
+policy_client_node.py      pair obs: state 7 + 2 images + prompt
+ -> websocket_client_policy.py  --ws :8000-->  websocket_policy_server.py
+ -> policy.py  Policy.infer
+      UR5Inputs (ur5_policy.py) -> Normalize -> ResizeImages 224 -> TokenizePrompt -> PadStatesAndActions 32   (transforms.py)
+      -> pi0.py  (pi0.5, weights = params/, restore_params in model.py)
+      -> Unnormalize -> AbsoluteActions (delta + state) -> UR5Outputs (7 dims)
+ <- actions (10, 7)
+policy_client_node.py      sim-time 60 Hz interpolation, safety limits  -> /joint_command, /gripper/command -> sim_ros2.py
+```
+
+### 7.6 관련 문서
+
+| 문서 | 내용 |
+|------|------|
 | `docs/openpi_finetuning.md` | 학습 계획·결과, 평가 결과 (8.3) |
 | `docs/sim_ros2_interface.md` | sim 토픽·서비스 |
 | `teleop/xr_teleop_node.py` | 같은 자리의 텔레옵 노드 (안전 한계 값의 출처) |
+| `~/openpi/docs/remote_inference.md` | openpi 공식 정책 서버·클라이언트 안내 |
