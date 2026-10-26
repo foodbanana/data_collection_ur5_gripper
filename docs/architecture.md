@@ -112,7 +112,8 @@
 +------------------------------------------------------------------------------------------------------------------------+
       |
       v
-      openpi pi0.5 fine-tuning (stage 7)   <-- LoRA smoke test passed (2026-10-23), see docs/openpi_finetuning.md
+      openpi pi0.5 fine-tuning (stage 7)   <-- smoke tests passed; full 10k policy grasped 5/6 in sim GUI (2026-10-26), see docs/openpi_finetuning.md
+      policy/policy_client_node.py         <-- runs a policy in sim in place of [1] (same two command topics)
 ```
 
 - 화살표 옆 글자 = 토픽 이름, 메시지 타입, 주기 (sim 시간 기준), 내용
@@ -132,7 +133,7 @@
 | [4] stage1 | bag → 25 Hz 중간 파일 | 완성 (4단계) |
 | [5] 병합 | 에피소드 여러 개 → v2.1 데이터셋 하나 | 완성 (4단계) |
 | [6] 검수 | 데이터셋이 스키마에 맞는지 PASS / FAIL | 완성 (4단계) |
-| 학습 | openpi π0.5 파인튜닝 (fork `~/openpi`, config `pi05_ur5_lora`, 연구실 GPU 서버) | **LoRA smoke 100 step 통과 (7단계, 2026-10-23)**: first13 데이터셋, GPU 2 장, loss 0.074 → 0.051, 카메라 배치 확인. full smoke 도 GPU 2 장 FSDP·batch 16 으로 통과 (체크포인트 31 GB). 다음: 데이터를 더 모은 뒤 본 학습 → sim 폐루프 평가. `docs/openpi_finetuning.md` |
+| 학습 | openpi π0.5 파인튜닝 (fork `~/openpi`, config `pi05_ur5_lora`, 연구실 GPU 서버) | **LoRA smoke 100 step 통과 (7단계, 2026-10-23)**: first13 데이터셋, GPU 2 장, loss 0.074 → 0.051, 카메라 배치 확인. full smoke 도 GPU 2 장 FSDP·batch 16 으로 통과 (체크포인트 31 GB). **full 10k (first13, 과적합) 를 정책 클라이언트 노드 (`policy/policy_client_node.py`, [1] 자리) 로 sim GUI 에서 돌려 6 개 중 5 개 파지 (2026-10-26)**, 약점은 그리퍼가 닫기·열기를 오감. 다음: 데이터를 더 모은 뒤 본 학습 → sim 폐루프 평가. `docs/openpi_finetuning.md` |
 
 [3] ~ [6] 을 한 번에 확인: `python3 isaacsim/scripts/make_fake_episodes.py` (sim 을 띄워 가짜 에피소드 녹화 → 변환 → 병합 → 검수, 3/3 PASS, 약 6 분).
 

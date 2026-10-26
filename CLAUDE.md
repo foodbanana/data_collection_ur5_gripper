@@ -18,6 +18,7 @@ PICO VR 컨트롤러로 sim 데이터 수집 (조작자 안내: VR 연결, 터�
 시각 (stamp) 동기화 (변환이 stamp 를 쓰는 방법, sim = 같은 물리 스텝, 실물 = 토픽마다 다른 프로그램이 찍음·측정 결과·모르는 것): `docs/timestamp_sync.md`
 변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
 openpi π0.5 파인튜닝 계획 (데이터 → 모델 입력, 리허설과 다른 점, LoRA smoke → full 2 GPU, 서버 실행 순서): `docs/openpi_finetuning.md`
+데스크탑 정책 추론 (sim GUI + 정책 서버 + 클라이언트 노드 구조·GPU 메모리 실측·실행 명령): `docs/policy_inference_desktop.md`
 
 ## 경로 규칙
 

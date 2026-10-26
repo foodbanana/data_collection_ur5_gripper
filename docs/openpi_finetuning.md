@@ -219,6 +219,8 @@ CUDA_VISIBLE_DEVICES=0,1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train
 
 ### 8.2 정책 클라이언트 노드 (sim GUI 에서 정책 돌리기)
 
+구조도·GPU 메모리 실측·실행 명령 정리: **`docs/policy_inference_desktop.md`**
+
 `policy/policy_client_node.py` + `policy/policy_client.yaml` (2026-10-23). 텔레옵 노드 자리를 대신한다 (CLAUDE.md 원칙 2: `/joint_command`·`/gripper/command` 만 보냄)
 
 | 항목 | 내용 |
@@ -251,7 +253,32 @@ source /opt/ros/jazzy/setup.bash
 ```
 
 - 학습 영상은 AV1 mp4 를 풀어 쓴 것이고 실행 때는 압축 없는 sim 이미지다 (작은 차이. 문제가 보이면 확인)
-- 아직 없는 것: 성공 자동 판정·성공률 집계 (지금은 그리퍼 막힘 = 파지 신호만), 닿는 영역 판정
+- 성공 자동 판정·자동 모터 정지 조건 강화는 하지 않는다 (2026-10-26 사용자): 평가 때도 사람이 GUI 를 보고 잡혔으면 모터를 끈다 (수집 때 X 와 같게).
+  클라이언트를 `--auto-kill` 없이 띄우고 다른 터미널에서 `python3 isaacsim/scripts/drone_cmd.py kill` (또는 `ros2 service call /sim/drone_kill std_srvs/srv/Trigger`). 닿는 영역 판정은 아직 없음
+
+### 8.3 full 10k 결과와 sim GUI 폐루프 (2026-10-26)
+
+**학습**: exit 0, loss 가 0.00 근처까지 → 과적합 (13 에피소드 × 25 에포크). 체크포인트 31 GB (`params` 12 GB = full 학습 가중치 float32, `train_state` 19 GB, `assets` 16 KB)
+→ USB 로 데스크탑 `~/openpi/checkpoints/pi05_ur5/full_first13_10k/9999` 에 옮기고 서버에서 지움
+
+**데스크탑 GPU 1 장에서 열기**: FSDP 2 장으로 저장 (`params/_sharding` 에 2 장 mesh) 했지만 `restore_params` 가 sharding 을 지금 GPU 에 맞춰 정해 그대로 열림.
+정책 몫 약 8.5 GB (LoRA 와 같음, bfloat16 으로 올림), 로딩 4.8 s, 첫 추론 11.3 s, 추론 0.12 s (단독) / 약 0.18 s (sim 과 같이). GUI sim + 정책 11.8 GB / 16 GB
+
+**sim GUI 폐루프** (`--drone-targets --mode hover --hover mid --seed 0 --aux-views off`, PX4, 에피소드 30 s, `--auto-kill 1.0`): **6 개 중 5 개 파지 (사용자 GUI 확인 "좋아 보임")**
+
+| # | 드론 위치 (목록 점) | 학습 데이터에 있던 점 | 첫 닫기 | 닫기 횟수 (오감) | 모터 정지 때 present | 끝 |
+|---|---|---|---|---|---|---|
+| 0 | x45_y+20_z80 | 없음 | 13.7 s | 약 9 | 0.18 | 닫힘 0.257 |
+| 1 | x45_y+20_z70 | 없음 (x45_y+10_z70 있음) | 12.4 s | 2 | 0.21 | 닫힘 0.246 |
+| 2 | x65_y-20_z70 | 없음 | 20.2 s | 2 | 0.26 | 닫힘 0.257 |
+| 3 | x65_y-10_z70 | 있음 | 12.5 s | 8 | 0.26 | 닫힘 0.259 |
+| 4 | x55_y+20_z80 | 없음 (x55_y+20_z70 있음) | 15.0 s | 3 | 0.23 | 닫힘 0.243 |
+| 5 | x45_y+00_z70 | 없음 | 11.6 s | 9 | 0.40 | **열림 → 놓침** |
+
+- 모두 30 s 끝까지, 보호 정지·desync 0. 다음 chunk 도착 약 3.5 ~ 4.2 칸 뒤, 마지막 칸 유지 0 %, 안전 한계에 잘림 0.7 ~ 6.5 % (LoRA smoke 28 %)
+- 학습 데이터의 드론 위치는 12 점 (13 에피소드). 파지 5 개 중 4 개가 학습에 없던 점 (이웃 점만 있음), z 0.80 (사람 수집 2/9) 2 개도 파지 → 과적합이지만 가까운 위치로는 일반화 (표본 6 개)
+- **약점: 그리퍼가 닫기·열기를 오감** (6 개 중 3 개가 8 ~ 9 번, 1 ~ 2 초 동안). 데이터에는 없는 행동. #5 는 오가다 1 초 닫힘에 자동 모터 정지 (present 0.40, 덜 감쌈) → 정책이 다시 열어 놓침
+- **대응 (2026-10-26 사용자): 정책으로 해결 = 데이터를 더 모으고 과적합을 줄인다.** 클라이언트에 "닫으면 유지" 같은 규칙은 넣지 않는다
 
 ---
 
