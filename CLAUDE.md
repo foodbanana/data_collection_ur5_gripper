@@ -19,6 +19,8 @@ PICO VR 컨트롤러로 sim 데이터 수집 (조작자 안내: VR 연결, 터�
 변환·병합·검수 옵션 전체 (sim·실물 공용): `README.md`, `dataset_merge.md`
 openpi π0.5 파인튜닝 계획 (데이터 → 모델 입력, 리허설과 다른 점, LoRA smoke → full 2 GPU, 서버 실행 순서): `docs/openpi_finetuning.md`
 데스크탑 정책 추론 (sim GUI + 정책 서버 + 클라이언트 노드 구조·GPU 메모리 실측·실행 명령): `docs/policy_inference_desktop.md`
+정책 클라이언트 노드 동작 (입출력, 스레드, 관측 짝짓기 예, 60 Hz 루프 바퀴별 예, 보간 위치): `docs/policy_client.md`
+π0.5 action 생성 원리 (flow matching 학습·추론, 모델 구성·attention mask·adaRMSNorm, 우리 config 에서 state 미사용): `docs/pi05_flow_matching.md`
 
 ## 경로 규칙
 

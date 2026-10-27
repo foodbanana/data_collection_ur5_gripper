@@ -290,6 +290,8 @@ policy_client_node.py      sim-time 60 Hz interpolation, safety limits  -> /join
 | 문서 | 내용 |
 |------|------|
 | `docs/openpi_finetuning.md` | 학습 계획·결과, 평가 결과 (8.3) |
+| `docs/policy_client.md` | 클라이언트 안쪽 (스레드, 관측 짝짓기 예, 60 Hz 루프 바퀴별 예, 보간) |
+| `docs/pi05_flow_matching.md` | 서버 안의 모델 (flow matching 학습·추론) |
 | `docs/sim_ros2_interface.md` | sim 토픽·서비스 |
 | `teleop/xr_teleop_node.py` | 같은 자리의 텔레옵 노드 (안전 한계 값의 출처) |
 | `~/openpi/docs/remote_inference.md` | openpi 공식 정책 서버·클라이언트 안내 |
