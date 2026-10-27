@@ -2030,7 +2030,8 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 
 - openpi 설정: 7차원 state/action, 카메라 키 매핑(`wrist` → 손목 슬롯, `third_view` → base 슬롯), LoRA
 - delta action: `DeltaActions(make_bool_mask(6, -1))` (관절 6개 delta, 그리퍼 절대값)
-- norm stats: **자체 데이터로 계산** (π0.5 문서상 제공되는 사전학습 stats 없음). 계산 후 그리퍼 action 의 q01/q99 가 0 과 1 로 잡혔는지 확인 (닫힘 프레임이 1% 미만이면 q99=0 → 정규화 붕괴)
+- norm stats: **자체 데이터로 계산** (지금까지). 계산 후 그리퍼 action 의 q01/q99 가 0 과 1 로 잡혔는지 확인 (닫힘 프레임이 1% 미만이면 q99=0 → 정규화 붕괴).
+  ~~π0.5 문서상 제공되는 사전학습 stats 없음~~ → **틀림 (2026-10-27 확인)**: `gs://openpi-assets/checkpoints/pi05_base/assets/` 에 `ur5e`·`ur5e_dual` 등 9 로봇 통계가 있다 (openpi `docs/norm_stats.md` 는 pi0 만 적음). 아래 "본 학습 전에 정할 것" 3 번
 - 추론: 25 Hz, 그리퍼 출력 0.5 기준 threshold → 0/1150 goal
 - 서버에서 학습
 - **sim 폐루프 평가**: openpi 정책 서버 ↔ sim 클라이언트로 실제 파지 시도, 성공률 측정
@@ -2048,6 +2049,21 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
   결정 (사용자): 데이터를 더 모으고 과적합을 줄여 정책으로 해결. 성공 자동 판정·자동 모터 정지 조건은 만들지 않음 (사람이 보고 모터 정지)
 - [ ] 본 학습 (데이터를 더 모은 뒤. step 수에 맞춰 lr schedule 의 warmup·decay 도 조정, 서버 디스크에 맞춰 체크포인트 저장 간격)
 - [ ] sim 폐루프 평가 (본 학습 정책, 같은 `--seed` 로 비교)
+
+**본 학습 전에 정할 것 (2026-10-27, openpi config 값의 출처를 확인한 결과)**
+지금 `pi05_ur5`·`pi05_ur5_lora` 는 모델 설정을 `pi05_libero` 에서 복사하고 학습 설정은 openpi 기본값을 썼다. 아래는 따져 보고 고른 값이 아니다.
+가능하면 같은 데이터로 둘 다 학습해 같은 `--seed` 로 sim 평가해 고른다.
+
+| # | 항목 | 지금 | 출처 | 다른 후보 | 근거·주의 |
+|---|------|------|------|-----------|-----------|
+| 1 | `discrete_state_input` | False → **모델이 state 를 안 봄** (이미지 2 장 + prompt 만. state 는 `AbsoluteActions` 의 기준점으로만) | `pi05_libero` (openpi 에서 False 는 이것뿐, 이유 기록 없음) | True = π0.5 기본값 (ALOHA·DROID 예제), state 를 256 칸 숫자로 prompt 에 | 바꾸면 재학습. 정규화 값 −1~1 밖은 끝 칸으로 뭉개짐 (빈손 닫힘 그리퍼 state 약 +6.3) |
+| 2 | `action_horizon` | 10 (0.4 s) | `pi05_libero` | openpi 기본 50, DROID 15·16, openpi UR5 예제 50 | 바꾸면 정책 클라이언트 chunk 교대 조건 (`docs/policy_client.md`) 다시 계산 |
+| 3 | norm stats | first13 으로 새로 계산 | — | PI 사전학습 `pi05_base/assets/ur5e` (UR5e + 평행 그리퍼, 20 Hz). openpi 권고: 로봇이 같으면 다시 쓰는 것을 고려, 둘 다 해 보고 고름 | PI 값 actions q01~q99 약 ±0.9 rad vs 우리 약 ±0.1 rad. PI 의 action 정의 (delta 기준·horizon·관절 0 점) 가 우리와 맞는지 먼저 확인 |
+| 4 | lr schedule | warmup 1000, peak 2.5e-5, **decay_steps 30 000** (기본값) | openpi 기본값 | 실제 step 수에 맞춤 (`pi05_libero` 는 batch 256·warmup 10 000·peak 5e-5·EMA 0.999) | full 10k 는 lr 이 덜 내려간 채 끝남 (계산상 약 2e-5) |
+| 5 | weight decay | 1e-10 (사실상 없음) | openpi 기본값 | — | 과적합 줄이는 장치가 사실상 없음 |
+
+- openpi UR5 예제 (`~/openpi/examples/ur5/README.md`) 는 π0 (state 를 모델에 넣음)·horizon 50·PI `ur5e` 통계 재사용·학습 설정 기본값
+- 추론 쪽도 같은 종류: flow matching 걸음 10 (`sample_actions` 기본값), 클라이언트 다음 추론 x ≥ 4, 그리퍼 기준 0.5
 
 **완료 기준**
 - [ ] 고정 베이스에서 sim 파지 성공률이 수치로 나옴
