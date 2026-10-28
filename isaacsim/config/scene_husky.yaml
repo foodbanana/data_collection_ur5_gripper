@@ -1,0 +1,31 @@
+# =============================================================
+# scene_husky.yaml — 움직이는 베이스 씬: Husky A200 위 UR5 (scripts/moving_base_scene.py, PLAN 8단계)
+#
+# 고정 베이스 씬 (drone_scene.py, scene_drone.yaml) 과 별도. scene_drone.yaml 은 **읽기만** 한다 (시작 자세·조명·테이블 높이)
+# world 좌표: 원점 = Husky 궤적 가운데에 있을 때의 로봇 base (xy), 바닥 z = 0. 로봇 정면 (base +x) = world +x (드론 쪽)
+# 경로는 isaacsim/ 기준 상대 경로. 길이 m, 각도 deg
+# =============================================================
+
+base_config: config/base_husky.yaml      # Husky 에셋·궤적
+fixed_scene_config: config/scene_drone.yaml   # 읽기만: init_poses, light, table.top_z (third view 위치를 base 기준으로 바꿀 때)
+
+# UR5 robot_mount (= UR5 base_link 원점) 의 Husky base_link 기준 위치. **임시값 (실물 Husky 측정 전)**
+#   2026-10-28 사용자: 윗판 가운데. top_plate_link (0.0812, 0, 0.245) = 판 가운데 아랫면 (메시 0.73 × 0.59 × 0.0064 m) + 판 위 0.0065
+#   (판 위 높이·yaw 는 Clearpath 공식 Husky+UR5 값: husky/husky indigo-devel husky.urdf.xacro ur5_arm_base (0.3058, 0, 0.0065), yaw −1.57.
+#    공식 위치는 윗판 앞쪽 끝 근처 xyz [0.387, 0.0, 0.2515])
+mount:
+  xyz: [0.0812, 0.0, 0.2515]
+  yaw_deg: -90.0                         # → Husky 앞 (+x) = 로봇 base −y. Husky 는 world +y 쪽을 보고 선다 (yaw +90°)
+
+init_pose: under_drone                    # fixed_scene_config init_poses 의 이름 (그리퍼는 열림)
+
+# 드론 (world 고정 호버). 궤적 가운데의 로봇 base 기준 = 고정 씬 drone_pos (0.60, 0, 1.50) 와 같은 상대 위치
+drone_base: [0.60, 0.0, 0.738]
+drone_flight: geometric                   # 이번 범위는 기하 제어기만 (PX4 이륙은 테이블 이륙 지점 기준이라 이 씬에 아직 없음)
+
+# third view 카메라: 고정 씬 설정 (third_view_camera.yaml) 의 base 기준 위치를 그대로, world 고정 (받침대는 바닥부터)
+third_view_camera_config: config/third_view_camera.yaml
+
+# UR5 base 쪽 링크와 Husky 사이 충돌 끔 (UR5 바닥이 윗판 위 6.5 mm 라 접촉 거리 안에서 서로 밀지 않게). 팔 나머지 링크 ↔ Husky 충돌은 그대로
+collision_filter:
+  robot_links: [robot_mount, base_link_inertia]   # 강체만 (base_link 은 질량 없는 Xform)

@@ -1,0 +1,29 @@
+# =============================================================
+# base_husky.yaml — 움직이는 베이스: Clearpath Husky A200 (PLAN 8단계, 고정 베이스 씬과 별도)
+#
+# 에셋은 assets/bases/husky/ (README: 출처·치수). 씬에서는 kinematic 으로 정해진 궤적을 따라 움직인다
+#   (scripts/moving_base.py. 바퀴 물리 없음, 바퀴는 이동 거리 / 반지름 만큼 도는 표시만)
+# 경로는 isaacsim/ 기준 상대 경로. 길이 m, 각도 deg
+# =============================================================
+
+usd: assets/bases/husky/husky.usda
+physics_variant: physx            # Physics variant 기본 선택이 없어 명시
+prim_name: husky                  # 씬에서 /World/<prim_name>
+body: Geometry/base_link          # 최상위 prim 기준. 차체 강체 (USD 원본의 articulation root)
+base_link_height: 0.13228         # base_link 원점의 바닥 위 높이 (URDF base_footprint_joint z 의 부호 반대)
+
+wheels:
+  links: [Geometry/base_link/front_left_wheel, Geometry/base_link/front_right_wheel,
+          Geometry/base_link/rear_left_wheel, Geometry/base_link/rear_right_wheel]
+  radius: 0.1651
+  axis: Y                          # 바퀴 링크 좌표계의 회전축 (URDF 바퀴 관절 축)
+  visual: wheel                    # 바퀴 링크 아래 보이는 메시 prim. 이것만 돌린다 (바퀴 강체 자세를 USD 로 바꾸면
+                                   # PhysX 가 충돌 형상을 다시 만들어 tensor view 가 무효가 됨, 2026-10-28)
+
+# 정해진 궤적 (임시값, 실물 Husky 측정 전). 시작 위치에서 direction 쪽으로 distance 까지 갔다가 돌아오기를 반복
+trajectory:
+  direction: [1, 0, 0]            # Husky base_link 좌표계 (x 앞). 크기는 무시하고 방향만
+  distance: 0.30                  # 한쪽 끝까지 [m]
+  max_speed: 0.05                 # [m/s]
+  accel: 0.10                     # 가속·감속 [m/s²]
+  dwell: 1.0                      # 양 끝에서 멈춰 있는 시간 [s]
