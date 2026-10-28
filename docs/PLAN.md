@@ -1,6 +1,6 @@
 # Isaac Sim 드론 파지 데이터 수집 파이프라인 계획
 
-작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22) · 첫 소량 수집 13 개, GUI 보조 옆·위 뷰포트, openpi LoRA smoke 통과 (2026-10-23)
+작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22) · 첫 소량 수집 13 개, GUI 보조 옆·위 뷰포트, openpi LoRA smoke 통과 (2026-10-23) · 8단계 Husky A200 위 UR5 씬, Stewart·움직이는 베이스 수집 계획 (2026-10-28)
 
 ## 목표
 
@@ -39,6 +39,8 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
   third view 받침대 CAD (2026-10-22). 첫 소량 수집 13 개 (2026-10-23).
 - 7단계 시작 (2026-10-23): first13 으로 openpi π0.5 LoRA smoke 100 step 통과 (연구실 서버 GPU 2 장, loss 0.074 → 0.051, `docs/openpi_finetuning.md`).
   full 파인튜닝 smoke 도 GPU 2 장 FSDP·batch 16 으로 통과. **다음: 데이터를 더 모은 뒤 본 학습 (LoRA / full) → sim 폐루프 평가** (7단계)
+- 8단계 시작 (2026-10-28, 데스크탑 디스크 부족으로 수집 대신): **Husky A200 위 UR5 씬** (kinematic 직선 왕복, 고정 씬과 별도 파일) — `moving_base_scene.py --check` 6/6, 고정 씬 회귀 통과.
+  **다음: Stewart 플랫폼 → 움직이는 베이스 수집 연결 (`sim_ros2_moving_base.py`)** (8단계 "다음 계획", `docs/moving_base.md`)
 
 ---
 
@@ -2119,6 +2121,48 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 - 정책이 베이스 움직임을 관측할지 결정 → state 확장 시 재학습/추가 파인튜닝
 - third view 카메라를 world 에 둘지 플랫폼 위에 둘지 결정
 - RL 경로: 같은 USD 를 Isaac Lab 으로 (Isaac Sim 6.1.0 과의 버전 호환성 확인 필요)
+
+**진행 (2026-10-28 ~, 데스크탑 디스크가 모자라 6단계 수집을 미루고 먼저 시작. 구조·실행·검사 한 장: `docs/moving_base.md`)**
+- 베이스 두 가지 (사용자 결정): ① **Husky A200 위 UR5, 직선 왕복** (먼저, 쉬움) ② **크게 키운 Stewart 플랫폼 위 UR5, 6 축 사인파** (다음). 실물 Husky 는 지금 고장 (고쳐서 실물로 옮길 예정), 실물 Stewart 는 없음 (sim 전용)
+- **고정 베이스 씬과 파일을 나눔**: 새 파일만 (`drone_scene.py`·`sim_ros2.py`·`sim_reset.py`·`scene_drone.yaml`·`ros2_iface.yaml`·로봇 USD 그대로)
+- [x] **Husky 에셋** (`isaacsim/assets/bases/husky/`, README): Clearpath `husky/husky` `humble-devel` 커밋 `729f8aa4` (BSD-3) `husky_description` → xacro (레포 밖 `~/husky_ws`) → URDF → GUI import.
+  `isaacsim/scripts/build_husky_urdf.sh` 가 같은 URDF 를 다시 만듦 (손으로 만든 것과 같음 확인). 차체 46.0 kg + 바퀴 2.6 kg × 4, 윗판 바닥 위 약 0.377 m.
+  Jazzy 용은 `clearpathrobotics/clearpath_common` `jazzy` (`clearpath_platform_description/a200`, 같은 치수·메시, 매크로라 wrapper 필요) — 실물을 최신 Clearpath 소프트웨어로 돌리면 다시 검토
+- [x] **kinematic 직선 궤적** (`moving_base.py` `LinearTrajectory`·`KinematicBase`, 설정 `config/base_husky.yaml`): 사다리꼴 속도 왕복, 매 물리 스텝 최상위 prim USD 변환 → PhysX kinematic target.
+  `check_moving_base.py` **4/4** (위치 오차 0.000 mm, PhysX 속도 = 궤적 (차이 0.42 mm/s = a·dt/2), 바퀴 회전 = 거리 / 반지름). 바퀴는 보이는 메시만 돌림 (바퀴 강체 회전을 USD 로 바꾸면 PhysX 가 충돌 형상을 다시 만들어 tensor view 무효)
+- [x] **방식 A 로 UR5 를 Husky 에 붙임** (`moving_base_scene.py`, 설정 `config/scene_husky.yaml`): root = `robot_mount` (floating), `root_joint` body0 → Husky 차체 + 마운트 위치,
+  **`excludeFromArticulation = true` 필수** (없으면 USD Physics 해석기가 관절을 따라 Husky 차체를 UR5 articulation 링크로 흡수 → 차체가 kinematic 이동을 안 받고 바닥에 내려앉음:
+  robot_mount 높이 0.384 → 0.2515, y 고정. OpenUSD `usdPhysics/parseUtils.cpp` `_TraverseHierarchy` 로 확인. 처음에 "fixed base 로 바뀜" 이라고 본 것은 틀림),
+  UR5 바닥 링크 ↔ Husky 충돌 끔 (Husky 쪽에 FilteredPairs: 로봇 쪽에 적으면 `verify_articulation` 이 설정과 다름으로 막음). 재생 중 로봇 링크로 `RigidPrim` 을 새로 만들면 view 무효 → articulation·sim view 로 읽음
+- [x] **검사 `moving_base_scene.py --headless --check` 6/6** (2026-10-28): Husky 실제 위치 = 궤적 0.000 mm, robot_mount = 마운트 위치 0.004 mm·0.0000°, 팔 자세 0.048°·관절 속도 0.42 °/s,
+  팔 ↔ Husky 접촉 0 N, 드론 (기하 제어기, world 고정) 6.8 mm (드론 5 s 자리 잡은 뒤, 기준 10 mm = `drone_scene --check`), 손목·third view 영상 정상.
+  회귀: `check_moving_base` 4/4, `check_articulation` 8/8, `drone_scene --check` 3/3, `check_ros2` 9/9 (리셋 23.9 s, RTF 0.979)
+- 임시값 (실물 Husky 측정 전): UR5 마운트 = **윗판 가운데** (Husky `base_link` 기준 (0.0812, 0, 0.2515), yaw −90° = Clearpath 공식 Husky+UR5 의 판 위 높이·방향. 공식 위치는 윗판 앞쪽 (0.387, 0, 0.2515)),
+  궤적 Husky 앞뒤 0.30 m 왕복 · 최고 0.05 m/s · 가속 0.1 m/s² (로봇 base 기준 드론 y ±0.15 m), 실물 Husky 구성 (윗판·범퍼·arch) 은 공식 기본 구성으로 가정
+- third view = **world 고정** (고정 씬 Q2 와 같은 base 기준 위치, 받침대는 바닥부터). Husky 윗판 위는 판이 닿는 범위 (로봇 앞 ±0.3 m) 가 Q2 (앞 1.1 m) 보다 짧아 시점을 새로 골라야 함 → 나중에 결정 (world 고정 / Husky 위 기둥)
+
+**다음 계획 (2026-10-28 사용자와 정함)**
+- 순서: **Stewart 플랫폼 → 움직이는 베이스 수집 연결** (연결을 한 번만 만들어 두 베이스에 씀. 디스크가 생기기 전에는 어차피 수집 안 함)
+- **Stewart**: 에셋 (판 2 장 + 다리 6 개, 스크립트로 생성, 다리는 보이기만·역기구학으로 길이), 윗판 kinematic 6 축 사인파, Husky 와 같은 `KinematicBase`·방식 A·`--check`
+  - 움직임 = 연구실 이전 연구 값 (`축(t) = 진폭 · sin(ω t)`, m·rad, ω rad/s): x 0.3·0.9, y 0.1·0.5, z 0.3·0.9, roll 0.105·0.5, pitch 0.209·0.9, yaw 0.053·0.2
+  - 프리셋 (드론 hover 와 같은 이름): `big` = 연구실 값, `mid` = 진폭 × 0.5, `small` = × 0.25. **위상은 리셋마다 seed**, ω 는 기준값 × 범위 (출발값 [0.7, 1.3], 잡을 수 있는 시간 비율 계산을 보고 정함. [1, 1] = 연구실 재현). 축별 값은 `episode.json` 에
+  - 크기: 실물이 없으므로 `big` 이 들어가게 (위아래 ±0.3 m + 기울기 12° → 다리 신축 0.7 m 이상)
+- **수집 연결 `sim_ros2_moving_base.py --base husky|stewart --base-motion static|small|mid|big`** (+ 드론 옵션은 `sim_ros2.py` 와 같은 이름: `--mode hover --hover …`, `--drone-targets`, `--seed`)
+  - 그대로 쓰는 것: 팔·그리퍼 브리지, 카메라 2 대, 텔레옵 노드, 녹화 도구, PX4 드론·기준 위치 목록·hover, 보호 정지
+  - 새로: 리셋 (베이스를 궤적 시작으로 + 팔·드론, 기준점 = 리셋 순간 로봇 base), 베이스 움직임 리셋마다 랜덤·기록, **PX4 이륙은 바닥에서** (`takeoff_xy` 고정 씬과 같은 (1.2, 0.15), 높이 0 → 상승이 약 0.4 m 길어 리셋 시간 다시 잼), 보호 정지 대상 (바닥·받침대·베이스)
+  - **새 토픽** (데이터셋에는 스키마의 `observation.base_imu` 만, 나머지는 bag·중간 파일에만. 정책에 쓸지는 나중에):
+    `/base/imu` (sensor_msgs/Imu, sim **120 Hz** = 물리 스텝마다. 참고: Husky UM7 Clearpath 기본 60 Hz, 배 MRU 최대 200 Hz),
+    `/base/odom` (nav_msgs/Odometry: 베이스 자세·속도), `/base/joint_states` (Husky 바퀴 4 / Stewart 다리 6), 리셋별 궤적 값 (`episode.json`), sim 정답 `base_pose.npy` (중간 파일)
+  - **IMU 위치**: Husky = `imu_link` (탈것의 IMU — 나중에 배 IMU 데이터로 파인튜닝하는 구조와 같음), Stewart = **윗판 아랫면 가운데** (사인파 회전 중심 = 윗판 윗면 가운데 = 로봇 base 자리, 배도 IMU 가 갑판 아래).
+    IMU ↔ 로봇 base 거리·방향은 설정값, `episode.json` 에 기록. Stewart 는 플랫폼 자세·다리 길이도 같이 기록 (검증용)
+  - 실물에서는 드라이버 토픽 (`/imu/data` 등) 을 `/base/*` 로 이름만 바꿔 같은 녹화·변환. 공용 파일은 옵션으로만 늘림 (`record_toggle.py --base moving` 일 때만 새 토픽, stage1 `/base/odom` → 중간 파일 옵션)
+- **정책 추론 (움직이는 베이스)**: 정책 서버 그대로, openpi 새 config (state 7 + base_imu 6). **`discrete_state_input=False` 면 모델이 state 를 안 보므로 IMU 를 붙여도 못 봄** → 7단계 "본 학습 전에 정할 것" 1 번 결과를 보고 정함.
+  클라이언트는 `/base/imu` 를 받아 stage1 과 같은 방식 (직전 40 ms 평균) 으로 붙임. 관측 → 실행 지연 (약 0.18 s) 동안 베이스가 움직이는 만큼 손끝이 밀림 (0.05 m/s 면 약 9 mm), 닿는 영역 판정을 매 순간 계산
+- **잡기 난이도 (사용자·Claude 같은 걱정)**: 로봇 base 기준 드론 상대 움직임이 `small` ±7.5 cm·7 cm/s (드론 hover big 수준), `mid` ±15 cm·14 cm/s, `big` ±30 cm·27 cm/s + pitch 12° (손끝 약 21 cm).
+  팔 여유 상자 ±6 ~ 8 cm, **그리퍼 닫는 데 약 2.2 s** → `big` 은 사람 텔레옵만으로는 어렵다고 봄. 대응 순서: ① 난이도 단계 (static → small → mid, 데이터 대부분 small·mid) ② 베이스가 흔들릴 때 드론은 제자리
+  ③ 흔들림 주기에 맞춰 잡는 시연 ④ **잡을 수 있는 시간 비율 계산 도구** (프리셋마다 드론이 팔 닿는 영역 안에 있는 시간 %, 기구학만, Stewart 때 같이) →
+  ⑤ **운동 보상** (IMU·베이스 자세로 팔이 흔들림을 상쇄, 해양 크레인·갱웨이 방식) 은 ① ~ ④ 결과를 본 뒤 결정 (사용자)
+- 작업명: 이미 모은 데이터 이름은 그대로. 검증 뒤 손목 마운트를 하나로 정하면 짧게 (예 `fix_tgt_hmid`, `stw_bmid_tgt_hmid`, `hsk_bsmall_tgt_hmid`), 그 전에 텔레옵 설정 (필터·배율) 을 `episode.json` 에 자동 기록하게 바꿀 것 (지금은 이름이 유일한 기록)
 
 **완료 기준 (베이스 IMU)**
 - [ ] 방법 1 IMU 값과 방법 2 계산값이 노이즈 범위 안에서 일치 (= 베이스 구동 방식이 올바름)

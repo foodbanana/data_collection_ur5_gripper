@@ -1,6 +1,6 @@
 # 데이터 수집 전체 구조
 
-작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인 · 2026-10-14 컨트롤러 버튼 (녹화·리셋·드론 정지), B-3·B-4 (텔레옵 녹화 → 검수) · 2026-10-15 컨트롤러 One Euro 필터, 손목 카메라 마운트 t10 (렌즈를 그리퍼 중심선에, 10° 기울임, 로봇 USD 재import, 시작 자세 다시 구함) · 2026-10-16 third view 카메라 D456 확정·실물 intrinsics (위치는 후보 비교 중), 리셋 시간 단축 (조종기 모드만 29 → 24 s), 드론 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (드론 사인파·기준 위치 범위 → third view 위치), 드론 사인파 hover 프리셋·기준 위치 목록 (`docs/PLAN.md` 6단계 "수집 전 확인") · 2026-10-22 third view 위치 Q2 (로봇 앞 1.1 m·오른쪽 0.3 m·상판 위 0.2 m, 기준 위치 25 점이 다 보임)·D455 모양, PX4 이륙 지점 (1.2, 0.15) · 2026-10-23 첫 소량 수집 13 개 (검수 5/5), GUI 보조 옆·위 뷰포트, 그 데이터로 openpi π0.5 LoRA smoke 통과
+작성: 2026-10-06 · 4단계 완료 시점 (`docs/PLAN.md`), 브랜치 `isaacsim_v6.1.0` · 2026-10-08 5단계 장치 결정 반영 (팔 = SpaceMouse, 드론 = 실물 조종기) · 2026-10-11 팔 텔레옵 장치를 PICO 4 Ultra 로 · 2026-10-12 PICO 입력 경로 (XRoboToolkit)·URDF 기구학 확인 · 2026-10-14 컨트롤러 버튼 (녹화·리셋·드론 정지), B-3·B-4 (텔레옵 녹화 → 검수) · 2026-10-15 컨트롤러 One Euro 필터, 손목 카메라 마운트 t10 (렌즈를 그리퍼 중심선에, 10° 기울임, 로봇 USD 재import, 시작 자세 다시 구함) · 2026-10-16 third view 카메라 D456 확정·실물 intrinsics (위치는 후보 비교 중), 리셋 시간 단축 (조종기 모드만 29 → 24 s), 드론 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (드론 사인파·기준 위치 범위 → third view 위치), 드론 사인파 hover 프리셋·기준 위치 목록 (`docs/PLAN.md` 6단계 "수집 전 확인") · 2026-10-22 third view 위치 Q2 (로봇 앞 1.1 m·오른쪽 0.3 m·상판 위 0.2 m, 기준 위치 25 점이 다 보임)·D455 모양, PX4 이륙 지점 (1.2, 0.15) · 2026-10-23 첫 소량 수집 13 개 (검수 5/5), GUI 보조 옆·위 뷰포트, 그 데이터로 openpi π0.5 LoRA smoke 통과 · 2026-10-28 움직이는 베이스 씬 (Husky A200 위 UR5, 별도 파일, 6 장)
 
 명령 → 시뮬레이터 (또는 실물 로봇) → 녹화 → 변환 → 병합 → 검수까지, 지금 만들어져 있는 데이터 수집 흐름 전체를 한 장으로 보여 준다.
 부분별 자세한 내용은 맨 아래 "관련 문서".
@@ -215,7 +215,29 @@
 
 ---
 
-## 6. 관련 문서
+## 6. 움직이는 베이스 씬 (8단계, 2026-10-28 ~)
+
+위 [1] ~ [6] 은 고정 베이스 수집 흐름이다. 움직이는 베이스는 **별도 파일**로 만들고 있고 위 블록은 바꾸지 않았다 (`docs/moving_base.md`).
+
+```text
+ now  : isaacsim/scripts/moving_base_scene.py   (no ROS 2, no recording yet)
+          Husky A200 (kinematic, linear back-and-forth)  ┄┄ root_joint (excludeFromArticulation) ┄┄  UR5 (floating) + wrist camera
+          drone (geometric, world-fixed hover)   third view (world-fixed)            check: --check 6/6
+ next : Stewart platform (6-axis sine, presets small / mid / big)
+        isaacsim/scripts/sim_ros2_moving_base.py --base husky|stewart --base-motion static|small|mid|big
+          = [2] with a moving base: same topics + /base/imu (120 Hz) + /base/odom + /base/joint_states, PX4 takeoff from the floor
+          -> [3] record_toggle.py --base moving -> [4] stage1 --base-imu topic -> [5] [6] unchanged
+```
+
+| 블록 | 상태 |
+|---|---|
+| Husky 씬 | 만듦: 에셋 (`isaacsim/assets/bases/husky/`), kinematic 궤적 (`moving_base.py`), UR5 연결 (방식 A), 검사 6/6, 고정 씬 회귀 통과 |
+| Stewart 씬 | 다음 (PLAN 8단계 "다음 계획") |
+| 움직이는 베이스 수집 (`sim_ros2_moving_base.py`) | Stewart 다음. 고정 베이스와 같은 녹화·변환을 쓰고 베이스 토픽만 더함. 데이터셋에는 `observation.base_imu` 만 (나머지는 bag·중간 파일) |
+
+---
+
+## 7. 관련 문서
 
 | 문서 | 그림의 어느 부분 |
 |------|------------------|
@@ -228,5 +250,6 @@
 | `docs/pico_vr_data_collection.md` | [1] PICO 텔레옵으로 수집하는 조작자 안내: VR 연결, 명령, 버튼, 녹화 순서, 주의, 데이터 위치, 설정 |
 | `README.md`, `dataset_merge.md` | [4] ~ [6] 변환·병합·검수 옵션, 실물 수집 순서 |
 | `docs/timestamp_sync.md` | 모든 블록에 걸친 시각 (stamp) 동기화: sim 과 실물 |
+| `docs/moving_base.md` | 움직이는 베이스 씬 (Husky 위 UR5): 구조, 붙이는 방법, 검사, 임시값 |
 | `docs/PLAN.md` | 단계별 계획·결과·남은 문제 |
 | `CLAUDE.md` | 데이터셋 스키마, 원칙 |
