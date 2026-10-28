@@ -1,0 +1,212 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.3.2"
+    }
+    defaultPrim = "husky"
+    endTimeCode = 1000000
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    startTimeCode = 0
+    upAxis = "Z"
+)
+
+over "husky" (
+    prepend apiSchemas = ["IsaacRobotAPI"]
+)
+{
+    prepend rel isaac:physics:robotJoints = [
+        </husky/Physics/root_joint>,
+        </husky/Physics/inertial_joint>,
+        </husky/Physics/front_left_wheel_joint>,
+        </husky/Physics/front_right_wheel_joint>,
+        </husky/Physics/rear_left_wheel_joint>,
+        </husky/Physics/rear_right_wheel_joint>,
+        </husky/Physics/top_chassis_joint>,
+        </husky/Physics/user_rail>,
+        </husky/Physics/front_bumper>,
+        </husky/Physics/rear_bumper>,
+        </husky/Physics/top_plate_joint>,
+    ]
+    prepend rel isaac:physics:robotLinks = [
+        </husky/Geometry/base_link>,
+        </husky/Geometry/base_link/inertial_link>,
+        </husky/Geometry/base_link/front_left_wheel>,
+        </husky/Geometry/base_link/front_right_wheel>,
+        </husky/Geometry/base_link/rear_left_wheel>,
+        </husky/Geometry/base_link/rear_right_wheel>,
+        </husky/Geometry/base_link/top_chassis_link>,
+        </husky/Geometry/base_link/user_rail_link>,
+        </husky/Geometry/base_link/front_bumper_link>,
+        </husky/Geometry/base_link/rear_bumper_link>,
+        </husky/Geometry/base_link/top_plate_link>,
+    ]
+    token isaac:robotType = "Default"
+
+    over "Geometry"
+    {
+        over "base_link" (
+            prepend apiSchemas = ["IsaacLinkAPI"]
+        )
+        {
+            over "front_left_wheel" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "front_right_wheel" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "rear_left_wheel" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "rear_right_wheel" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "top_chassis_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "user_rail_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "front_bumper_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "rear_bumper_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "top_plate_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+                over "top_plate_front_link" (
+                    prepend apiSchemas = ["IsaacSiteAPI"]
+                )
+                {
+                }
+
+                over "top_plate_rear_link" (
+                    prepend apiSchemas = ["IsaacSiteAPI"]
+                )
+                {
+                }
+            }
+
+            over "base_footprint" (
+                prepend apiSchemas = ["IsaacSiteAPI"]
+            )
+            {
+            }
+
+            over "inertial_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+            }
+
+            over "imu_link" (
+                prepend apiSchemas = ["IsaacSiteAPI"]
+            )
+            {
+            }
+
+            over "gps_link" (
+                prepend apiSchemas = ["IsaacSiteAPI"]
+            )
+            {
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        over "root_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "inertial_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "front_left_wheel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "front_right_wheel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rear_left_wheel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rear_right_wheel_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "top_chassis_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "user_rail" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "front_bumper" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "rear_bumper" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "top_plate_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+    }
+}
+
