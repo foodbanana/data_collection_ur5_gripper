@@ -2197,9 +2197,16 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 - 작업명: 이미 모은 데이터 이름은 그대로. 검증 뒤 손목 마운트를 하나로 정하면 짧게 (예 `fix_tgt_hmid`, `stw_bmid_tgt_hmid`, `hsk_bsmall_tgt_hmid`), 그 전에 텔레옵 설정 (필터·배율) 을 `episode.json` 에 자동 기록하게 바꿀 것 (지금은 이름이 유일한 기록)
 
 **완료 기준 (베이스 IMU)**
-- [ ] 방법 1 IMU 값과 방법 2 계산값이 노이즈 범위 안에서 일치 (= 베이스 구동 방식이 올바름)
-- [ ] 정지 상태에서 선가속도 ≈ (0, 0, +9.81) (IMU 축 기준), 각속도 ≈ 0
-- [ ] IMU 토픽 header.stamp 가 sim time, 발행 주기 ≥ 100 Hz
+- [x] 방법 1 IMU 값과 방법 2 계산값이 노이즈 범위 안에서 일치 (= 베이스 구동 방식이 올바름) — 2026-10-29 `check_ros2_moving_base` 6 번: Stewart small 비력 차 RMS 0.004 m/s², 각속도 차 1e-4 rad/s
+- [x] 정지 상태에서 선가속도 ≈ (0, 0, +9.81) (IMU 축 기준), 각속도 ≈ 0 — Husky 등속·정지 구간 (0, 0, 9.81)·각속도 0 (7 번)
+- [x] IMU 토픽 header.stamp 가 sim time, 발행 주기 ≥ 100 Hz — 120.00 Hz, stamp ∈ `/joint_states` stamp (5 번)
+
+**진행 (수집 연결 R1 ~ R7, 2026-10-29)**: R1 구조 검토 → **R2** `sim_ros2_moving_base.py` (고정 베이스와 같은 토픽, 보호 정지 대상 = 바닥·받침대·베이스, 검사 1·2·4) →
+**R3** 베이스 토픽 (`moving_base_ros2.BaseBridge`: `/base/imu` 120 Hz·`/base/odom`·`/base/joint_states` 30 Hz, 궤적 식에서 계산한 정답값, 잡음 없음, 식은 `docs/moving_base.md` 9.3).
+검사 `check_ros2_moving_base.py` 14/14 (Husky·Stewart small), 고정 베이스 회귀 `check_ros2` 9/9.
+결정 (사용자): IMU 잡음은 처음엔 없이 → 나중에 실물 Xsens (Stewart 용) 로 재서 옵션. odom = 정답값 (메시를 움직이는 방식이라. 실물처럼 구동하는 버전에서 다시).
+베이스 흔들림은 리셋이 끝난 뒤 시작 (R4 부터, 지금은 시작하자마자). 실제 배 데이터는 배 IMU 만 받을 예정 (찾는 중) → 받으면 형태를 보고 움직임 모드 (`--base-motion log:<파일>` 등) 로 붙일지 정함.
+다음: R4 리셋 (베이스·로봇 함께 순간이동, PX4 바닥 이륙, `/sim/drone_kill`, 에피소드 메타데이터) → R5 녹화·stage1 옵션 → R6 PICO 텔레옵 시험 (small) → R7 회귀·문서·커밋
 
 ---
 

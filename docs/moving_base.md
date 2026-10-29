@@ -1,9 +1,9 @@
 # 움직이는 베이스 씬 (Husky A200 / Stewart 플랫폼 위 UR5)
 
-작성: 2026-10-28 · Stewart 추가 2026-10-29 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
+작성: 2026-10-28 · Stewart 추가 2026-10-29 · 수집 연결 (sim ROS 2·베이스 토픽) 2026-10-29 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
 
 UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`drone_scene.py`, `sim_ros2.py`) 과 파일을 완전히 나눴다** (그쪽 파일·설정은 그대로).
-베이스는 두 가지: **Husky A200** (직선 왕복) 와 **Stewart 플랫폼** (윗판 6 축 사인파, sim 전용, 8 장). 다음은 수집 연결 (`sim_ros2_moving_base.py`) (PLAN 8단계 "다음 계획").
+베이스는 두 가지: **Husky A200** (직선 왕복) 와 **Stewart 플랫폼** (윗판 6 축 사인파, sim 전용, 8 장). 수집 연결은 `sim_ros2_moving_base.py` (9 장: 토픽·베이스 IMU 식, 리셋·녹화는 다음).
 둘 다 베이스를 kinematic 으로 정해진 대로 움직인다 (실물처럼 바퀴·액추에이터로 구동하는 버전은 나중, PLAN 8단계).
 
 ---
@@ -18,7 +18,8 @@ UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`d
 | 설정 | `isaacsim/config/scene_husky.yaml` (마운트·드론·시작 자세), `isaacsim/config/base_husky.yaml` (Husky 에셋·궤적) |
 | 에셋 | `isaacsim/assets/bases/husky/` (Clearpath 공식 description, README) |
 | Stewart | 8 장 (`--scene-config isaacsim/config/scene_stewart.yaml --base-motion small\|mid\|big\|lab`) |
-| 범위 밖 (다음) | ROS 2 토픽·텔레옵·녹화·리셋, `/base/imu`, PX4 드론 |
+| ROS 2 | 9 장 `sim_ros2_moving_base.py`: 고정 베이스와 같은 토픽 + `/base/imu`·`/base/odom`·`/base/joint_states` (검사 14/14) |
+| 범위 밖 (다음) | 리셋·PX4 드론 (R4), 녹화·변환 연결 (R5) |
 
 ---
 
@@ -175,3 +176,157 @@ python3 isaacsim/scripts/design_stewart.py --config isaacsim/config/base_stewart
     --base-motion small                                                                          # GUI
 ```
 
+
+---
+
+## 9. 수집 연결: sim ROS 2 (2026-10-29, PLAN 8단계 R2·R3)
+
+고정 베이스 `sim_ros2.py` 와 **같은 토픽 + 베이스 토픽 3 개**를 내는 별도 실행 파일. 고정 베이스 파일 (`sim_ros2.py`·`drone_scene.py`·`sim_reset.py`) 은 고치지 않고
+부품 (`ros2_iface` 브리지, `protective_stop`) 을 import·상속해서 쓴다. 아직 없음: `/sim/reset`·`/sim/drone_kill`·PX4 드론 (R4), 녹화·변환 연결 (R5).
+
+| 파일 | 내용 |
+|---|---|
+| `isaacsim/scripts/sim_ros2_moving_base.py` | 실행 (씬 + 브리지 + 루프). `--base husky\|stewart`, `--base-motion` (Stewart 필수), `--imu-compare` (검사용) |
+| `isaacsim/scripts/moving_base_ros2.py` | 부품: `MovingProtectiveStop`, `BaseBridge`, `add_isaac_imu` |
+| `isaacsim/scripts/moving_base.py` | `kinematics(t)`·`joint_states(t)` (두 베이스 공통 이름) |
+| `isaacsim/config/ros2_iface.yaml` `base` | 베이스 토픽 이름·주기·frame (고정 베이스 sim 은 이 섹션을 읽지 않음) |
+| `isaacsim/scripts/check_ros2_moving_base.py` | 자동 검사 (아래 9.5) |
+
+### 9.1 베이스 토픽
+
+| 토픽 | 타입 | 주기 | frame | 내용 |
+|---|---|---|---|---|
+| `/base/imu` | sensor_msgs/Imu | 120 Hz (물리 스텝마다) | `imu_link` | 각속도 [rad/s]·비력 [m/s²] (IMU 좌표계), 자세 (world 기준). 잡음 없음, 공분산 0 (= 모름) |
+| `/base/odom` | nav_msgs/Odometry | 30 Hz | `odom` → `base_link` / `top_plate` | 시작 자세 기준 위치·자세, twist 는 child 좌표계 |
+| `/base/joint_states` | sensor_msgs/JointState | 30 Hz | | Husky 바퀴 4 개 회전각 [rad] / Stewart 다리 6 개 길이 [m] |
+| `/base/imu_isaac` | sensor_msgs/Imu | 120 Hz | `imu_link` | `--imu-compare` 일 때만. Isaac IMU 센서 값 (검사용, 녹화 안 함) |
+
+- stamp = sim time. 30 Hz 토픽은 sim time 의 1/30 s 배수 시각 (카메라·그리퍼와 같은 물리 스텝)
+- **모두 정답값**: 베이스가 궤적 식대로 kinematic 으로 움직이므로, BaseBridge 가 **같은 식·같은 시각**으로 계산한다.
+  실물처럼 구동하는 버전 (Husky `/cmd_vel`·바퀴 물리, Stewart 모터) 에서는 궤적 식으로 계산할 수 없으므로 측정값 (Isaac IMU 센서·바퀴 odometry·다리 FK) 으로 바꾼다 (PLAN 8단계)
+- **수집 때는 `/base/imu` (궤적 계산값) 를 녹화** → stage1 이 25 Hz 구간 평균으로 `observation.base_imu`. `/base/odom`·`/base/joint_states` 는 bag·중간 파일에만
+- IMU 잡음: 처음엔 없음. 실물 Xsens (나중에 실물 Stewart 를 쓸 때 윗판 IMU) 로 잡음을 재면 옵션으로 추가. 실제 배 데이터는 배 IMU 만 받을 예정 (Xsens 아님)
+
+### 9.2 IMU 위치 (메시 없음)
+
+| 베이스 | prim | 위치 (베이스 강체 기준) |
+|---|---|---|
+| Husky | `/World/husky/Geometry/base_link/imu_link` | (0, 0, 0) = 차체 원점, 바닥 위 0.132 m. 공식 URDF 에서 들어온 것 (실물 위치는 Husky 를 고친 뒤 확인) |
+| Stewart | `/World/stewart/top_plate/imu_link` | (0, 0, −0.05) = 윗판 아랫면 가운데 (배의 갑판 아래 IMU 와 같은 구조). `build_stewart_usd.py` 가 넣음 |
+
+- 둘 다 빈 `Xform` (메시·충돌·질량 없음). 방향은 베이스 강체와 같아야 함 (다르면 에러, `imu_offset`)
+- BaseBridge 는 시작할 때 이 위치 r 만 한 번 읽고, 값은 궤적 식으로 계산한다 (prim 을 매 스텝 읽지 않음)
+- `--imu-compare` 일 때만 `imu_link/isaac_imu` (`IsaacImuSensor`, 필터 없음) 가 메모리 stage 에 생긴다
+
+### 9.3 BaseBridge 식 (`moving_base_ros2.BaseBridge` + `moving_base.kinematics`·`joint_states`)
+
+기호: world = 바닥 고정 좌표계 (z 위). 베이스 강체 = Husky `base_link` / Stewart 윗판 (원점 = 회전 중심 = 윗판 윗면 가운데).
+t = 베이스가 움직이기 시작한 뒤의 sim 시각 (이번 물리 스텝이 끝나는 시각 = PhysX 에 넣은 kinematic 자세의 시각).
+
+**① 궤적 → 베이스 강체 운동** (`kinematics(t)`, 모두 world): 위치 p, 선속도 v = ṗ, 선가속도 a = p̈, 회전 R, 각속도 ω, 각가속도 α = ω̇
+
+Husky (직선 왕복, 회전 없음):
+```text
+s, ṡ, s̈ = 사다리꼴 궤적 (가속 → 등속 → 감속 → 멈춤 → 반대로, LinearTrajectory)
+p = p0 + s·d      v = ṡ·d      a = s̈·d          (d = 진행 방향 단위벡터, world)
+R = Rz(yaw0)      ω = 0        α = 0
+```
+
+Stewart (6 축 사인파, 8.2):
+```text
+q_k(t) = e(t) · A_k · sin(ω_k t + φ_k),   e(t) = 10u³ − 15u⁴ + 6u⁵,  u = clamp(t / 5 s, 0, 1)
+q̇_k, q̈_k = 곱의 미분 (식으로 정확히)
+p = p0 + R0 · (q_x, q_y, H + q_z)              (H = 윗판 높이 1.0 m, R0 = 플랫폼 놓인 방향)
+v = R0 · (q̇_x, q̇_y, q̇_z)      a = R0 · (q̈_x, q̈_y, q̈_z)
+R = R0 · Rz(yaw) · Ry(pitch) · Rx(roll)          (ZYX 오일러)
+
+ω_body = [ ṙ − ẏ·sin p ,                         (r = roll, p = pitch, ẏ = yaw 변화율)
+           ṗ·cos r + ẏ·sin r·cos p ,
+          −ṗ·sin r + ẏ·cos r·cos p ]
+ω = R · ω_body
+α(t) ≈ ( ω(t + h) − ω(t − h) ) / 2h,  h = 1e-4 s  (궤적이 식이라 오차 ~1e-8)
+```
+오일러 각 변화율 (ṙ, ṗ, ẏ) 은 각속도가 아니다. 윗판 좌표 각속도로 바꾸는 위 식이 필요하다.
+
+**② 강체 운동 → IMU 자리 운동** (IMU 는 강체 원점에서 r 만큼 떨어짐: Husky r = 0, Stewart r = (0, 0, −0.05)):
+```text
+r_w   = R · r
+a_imu = a + α × r_w + ω × (ω × r_w)       (접선 가속도 + 구심 가속도)
+```
+
+**③ IMU 출력** (`/base/imu`):
+```text
+비력 (가속도계)  f     = Rᵀ · (a_imu − g),   g = (0, 0, −9.81)  (씬 PhysicsScene 에서 읽음)
+각속도 (자이로)  ω_imu = Rᵀ · ω
+자세             R → 쿼터니언 (w, x, y, z), world 기준
+```
+- 가속도계는 운동 가속도가 아니라 **비력**을 잰다: 정지 f = Rᵀ·(0, 0, +9.81) (수평이면 (0, 0, 9.81)), 자유낙하 f = 0. 기울면 중력이 x·y 축에도 나뉨 (실제 IMU 와 같음)
+- 베이스가 서 있을 때 (start 전·stop 뒤): 그 자리 자세, v = a = ω = α = 0 → f = Rᵀ·(0, 0, 9.81), ω_imu = 0
+
+**④ `/base/odom`** (원점 = 베이스가 처음 선 자세 (p₀, R₀), 실물 odometry 처럼 시작이 0):
+```text
+위치 = R₀ᵀ · (p − p₀)      자세 = R₀ᵀ · R
+선속도 = Rᵀ · v            각속도 = Rᵀ · ω          (ROS 규칙: twist 는 child 좌표계)
+```
+Stewart 위치는 윗판 회전 중심 (= 로봇 base 자리).
+
+**⑤ `/base/joint_states`**:
+```text
+Husky    θ = s / r_wheel,  θ̇ = ṡ / r_wheel          (r_wheel = 0.1651 m, 네 바퀴 같음, 미끄러짐 없음)
+Stewart  L_i = | p_top + R_top · P_i − B_i |          (P_i 윗판 부착점, B_i 아랫판 부착점, 최상위 prim 좌표)
+         L̇_i ≈ ( L_i(t + h) − L_i(t − h) ) / 2h
+```
+
+### 9.4 `--imu-compare`: 두 방법 비교
+
+| | 방법 2 (평소 발행·녹화) | 방법 1 (`--imu-compare` 일 때만) |
+|---|---|---|
+| 토픽 | `/base/imu` | `/base/imu_isaac` |
+| 만드는 곳 | `BaseBridge` (9.3 식) | Isaac Sim 내장 IMU 센서 (`isaacsim.sensors.experimental.physics.IMUSensor`) |
+| 계산 | 궤적 식을 미분 | PhysX 가 실제로 움직인 베이스 강체의 속도 변화 (스텝 차분) |
+
+- 방법 2 는 직접 짠 식이라 좌표계·중력 부호·r 항 (접선·구심) 실수 가능성이 있다. 방법 1 은 그 식과 독립이라, **같은 시각에 같은 값이면 식이 맞다**
+- 평소에 방법 1 을 쓰지 않는 이유: 스텝 차분이라 가속도가 갑자기 바뀌는 순간 한 스텝 (8.3 ms) 늦음 (Husky 사다리꼴 계단에서 그 한 샘플만 0.1 m/s² 차이),
+  접촉이 걸리면 PhysX 보고 속도가 실제와 다를 수 있음 (드론에서 확인, CLAUDE.md), 센서 계산이 더 듦
+- Isaac 센서 읽은 값 (C++ `ImuSensorReading`) 의 자세는 `orientation_w/x/y/z`, 시각 `time` 은 float32 정밀도 (소수 6 자리가 가끔 다름 → 검사는 가장 가까운 stamp 0.1 ms 이내로 짝지음)
+
+### 9.5 검사 `check_ros2_moving_base.py` (sim 을 `--imu-compare` 로 띄움, 베이스마다 약 2 분)
+
+| 번호 | 내용 | 기준 |
+|---|---|---|
+| 1 | 토픽 주기 (베이스 움직이는 중): `/joint_states`·`/clock` 120, 카메라·그리퍼 30, `/protective_stop` 약 30 Hz | ±1 %, 끊김 0 |
+| 2 | 같은 시계: 카메라·그리퍼 stamp ∈ `/joint_states` stamp | 안 맞음 0 |
+| 4 | 팔 명령 응답: 시작 자세에서 shoulder_pan 계단 0.03 rad | 50 % ≤ 80 ms, 보호 정지 없음 |
+| 5 | 베이스 토픽 주기 (imu 120, odom·joint_states 30 Hz) + stamp ∈ `/joint_states` stamp | ±1 %, 끊김·안 맞음 0 |
+| 6 | IMU 두 방법 일치 (같은 stamp) | 각속도 차 ≤ 0.005 rad/s, 비력 차 RMS ≤ 0.02·최대 ≤ 0.15 m/s², 자세 차 ≤ 0.1°, 짝 ≥ 95 % (기준은 처음 잰 값 보고 정함) |
+| 7 | IMU 물리 확인: 비력 z 평균 ≈ \|g\|. Husky 는 각속도 0, 등속·정지 구간 비력 = (0, 0, \|g\|) | ±0.05 / ±0.01 m/s² |
+| 8 | odom 일관성: 위치 차분 ≈ twist (child → odom 으로 돌려서), frame 하나, joint_states 개수 (4 / 6) | ≤ 2 mm/s |
+
+**결과 (2026-10-29) 14/14**:
+
+| 항목 | Husky | Stewart small |
+|---|---|---|
+| 5 주기 | 120.00 / 30.00 / 30.00 Hz | 같음 |
+| 6 두 방법 | 비력 차 RMS 0.0073·최대 0.100 (가속도 계단), 각속도 0 | 비력 차 RMS 0.0039·최대 0.0077, 각속도 차 0.00013 rad/s, 자세 차 0.014° |
+| 7 물리 | 각속도 0, 등속·정지 1081/1201 샘플 (0, 0, 9.81) | 비력 z 평균 9.8094 |
+| 8 odom | 0.21 mm/s | 0.011 mm/s |
+| 4 팔 계단 | 50 ms | 50 ms |
+| RTF (헤드리스, 참고) | 0.89 | 0.81 |
+
+고정 베이스 회귀 `check_ros2.py` 9/9 (공용 `ros2_iface.yaml` 에 `base` 섹션만 추가).
+
+### 9.6 알아 둘 것 (해 보고 찾음)
+- **보호 정지 접촉 view**: floating 로봇은 재생 중에 로봇 링크로 `RigidPrim` 을 만들면 PhysX 가 로봇을 다시 읽어 view 가 무효 → `MovingProtectiveStop` 이 sim view `create_rigid_contact_view` 로 직접 만듦
+  (`protective_stop.py` 는 `_body_contact_view` 함수로만 나눔, 고정 베이스 동작 그대로)
+- 보호 정지 대상 (손가락이 닿으면 안 되는 환경) 은 이 씬에 맞게 메모리에서만 바꿈: 바닥·third view 받침대·베이스 충돌체 (테이블 없음)
+- Stewart RTF 0.81 은 물리 스텝마다 다리 12 개 USD op 를 갱신하는 영향으로 보임 (재지 않음. 필요하면 렌더 주기로 줄일 수 있음)
+
+### 9.7 명령
+```bash
+source /opt/ros/jazzy/setup.bash
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2_moving_base.py --base husky                       # GUI
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2_moving_base.py --base stewart --base-motion small
+ros2 topic echo /base/imu --once                                                                   # 다른 터미널
+python3 isaacsim/scripts/check_ros2_moving_base.py                                                 # 검사 (Husky + Stewart small)
+python3 isaacsim/scripts/check_ros2_moving_base.py --base stewart --base-motion mid
+```

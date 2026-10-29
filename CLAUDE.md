@@ -21,7 +21,7 @@ openpi π0.5 파인튜닝 계획 (데이터 → 모델 입력, 리허설과 다�
 데스크탑 정책 추론 (sim GUI + 정책 서버 + 클라이언트 노드 구조·GPU 메모리 실측·실행 명령): `docs/policy_inference_desktop.md`
 정책 클라이언트 노드 동작 (입출력, 스레드, 관측 짝짓기 예, 60 Hz 루프 바퀴별 예, 보간 위치): `docs/policy_client.md`
 π0.5 action 생성 원리 (flow matching 학습·추론, 모델 구성·attention mask·adaRMSNorm, 우리 config 에서 state 미사용): `docs/pi05_flow_matching.md`
-움직이는 베이스 씬 (8단계, Husky A200·Stewart 플랫폼 위 UR5: 구조·UR5 를 베이스에 붙이는 방법·Stewart 움직임 식·검사·잡기 시간 비율·임시값. 고정 베이스 씬과 별도 파일): `docs/moving_base.md`
+움직이는 베이스 씬 (8단계, Husky A200·Stewart 플랫폼 위 UR5: 구조·UR5 를 베이스에 붙이는 방법·Stewart 움직임 식·검사·잡기 시간 비율·임시값, 수집 연결 sim ROS 2·베이스 토픽 `/base/imu`·odom 식. 고정 베이스 씬과 별도 파일): `docs/moving_base.md`
 
 ## 경로 규칙
 

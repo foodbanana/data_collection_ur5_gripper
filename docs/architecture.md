@@ -226,8 +226,9 @@
             small / mid / big / lab)                       ┘
           drone (geometric, world-fixed hover)   third view (world-fixed)            check: --check 6/6 (Husky; Stewart small/mid/big)
         isaacsim/scripts/reach_moving_base.py   (kinematics only: graspable time %, start-pose clearance)
- next : isaacsim/scripts/sim_ros2_moving_base.py --base husky|stewart --base-motion static|small|mid|big
-          = [2] with a moving base: same topics + /base/imu (120 Hz) + /base/odom + /base/joint_states, PX4 takeoff from the floor
+ now  : isaacsim/scripts/sim_ros2_moving_base.py --base husky|stewart [--base-motion small|mid|big]
+          = [2] with a moving base: same topics + /base/imu (120 Hz) + /base/odom + /base/joint_states (from the base trajectory)
+ next : + /sim/reset (base + robot teleport, PX4 takeoff from the floor), /sim/drone_kill
           -> [3] record_toggle.py --base moving -> [4] stage1 --base-imu topic -> [5] [6] unchanged
 ```
 
@@ -235,7 +236,7 @@
 |---|---|
 | Husky 씬 | 만듦: 에셋 (`isaacsim/assets/bases/husky/`), kinematic 궤적 (`moving_base.py`), UR5 연결 (방식 A), 검사 6/6, 고정 씬 회귀 통과 |
 | Stewart 씬 | 만듦 (2026-10-29): 에셋 (`isaacsim/assets/bases/stewart/`, 크기 `design_stewart.py`), 6 축 사인파 (`moving_base.StewartBase`), UR5 연결, 검사 small·mid·big 6/6, 잡기 시간 비율 (`reach_moving_base.py`: small 94 %·mid 26 %·big 4.5 %). 수집은 small 주력·mid 일부, big 은 시작 자세 충돌 위험으로 보류 |
-| 움직이는 베이스 수집 (`sim_ros2_moving_base.py --base husky\|stewart --base-motion …`) | 다음. 고정 베이스와 같은 녹화·변환을 쓰고 베이스 토픽만 더함. 데이터셋에는 `observation.base_imu` 만 (나머지는 bag·중간 파일) |
+| 움직이는 베이스 수집 (`sim_ros2_moving_base.py --base husky\|stewart --base-motion …`) | 진행 중 (2026-10-29): 고정 베이스와 같은 토픽 + `/base/imu` (120 Hz)·`/base/odom`·`/base/joint_states` (궤적 식 정답값, `docs/moving_base.md` 9 장), 검사 14/14. 다음: 리셋·PX4 바닥 이륙 (R4), 녹화·stage1 옵션 (R5). 데이터셋에는 `observation.base_imu` 만 (나머지는 bag·중간 파일) |
 
 ---
 
