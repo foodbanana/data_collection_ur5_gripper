@@ -6,6 +6,7 @@
 # 사용: ./6_record_bag.sh            → 날짜시간만  (예: 20260916_143022)
 #       ./6_record_bag.sh pick       → 날짜시간_라벨 (예: 20260916_143022_pick)
 #       ./6_record_bag.sh pick --sim → Isaac Sim (sim_ros2.py 실행 중): r 을 누르면 /sim/reset (약 24 s) 뒤 녹화 시작
+#       ./6_record_bag.sh pick --sim --base moving → 움직이는 베이스 (sim_ros2_moving_base.py 실행 중): /base/imu·odom·joint_states 도 녹화
 # 키:   r = 녹화 시작 / 녹화 종료 (r~r 구간 1개 = bag 1개 = 에피소드 1개)
 #       d = 방금 저장한 에피소드 버리기 → bags/_discarded/ 로 이동 (y 로 확인)
 #       q = 종료 (녹화 중이면 안전 종료 후 종료)

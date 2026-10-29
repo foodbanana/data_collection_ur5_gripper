@@ -6,18 +6,25 @@
 #                          (floating 로봇은 재생 중 로봇 링크로 RigidPrim 을 만들면 PhysX 가 로봇을 다시 읽어 view 가 무효, 2026-10-29)
 #   BaseBridge           : /base/imu·/base/odom·/base/joint_states (ros2_iface.yaml base). 값은 베이스 궤적 식에서 계산한 정답값 (R3)
 #   add_isaac_imu(s)     : 검사용 Isaac IMU 센서 (재생 전). BaseBridge 가 /base/imu_isaac 로 같이 발행 → 궤적 계산값과 비교
-#   (R4 에서) MovingEpisodeReset : /sim/reset·/sim/drone_kill
+#   MovingEpisodeReset   : /sim/reset·/sim/drone_kill (sim_reset.EpisodeReset 상속, R4). 고정 베이스 순서에 베이스 단계만 더함:
+#                          명령 무시 → 드론 kill·바닥 이륙 지점 순간이동 + PX4 재시작 → **베이스 멈춤·시작 자세로 순간이동·새 seed + 로봇 root 같이 순간이동 (속도 0)**
+#                          → 팔 시작 자세 → 드론 이륙 → **베이스 움직임 시작** (흔들림은 리셋이 끝난 뒤부터, 2026-10-29 사용자 결정)
 # SimulationApp 을 만든 뒤에 import 할 것.
 # =============================================================
+
+import json
 
 import numpy as np
 
 import protective_stop as ps
 import ros2_iface as ri
+import sim_reset as sr
 
 BASE_KEYS = ("imu_topic", "imu_hz", "imu_frame_id", "odom_topic", "odom_hz", "odom_frame_id",
              "joint_states_topic", "joint_states_hz", "isaac_imu_topic")
 ISAAC_IMU_NAME = "isaac_imu"
+BASE_SEED_OFFSET = 2_000_000      # 베이스 움직임 seed = 리셋 seed + 이 값 (드론 위치·hover 난수열과 겹치지 않게, sim_reset.HOVER_SEED_OFFSET 과 다름)
+MOUNT_TOL_MM = 2.0                # 리셋 뒤 robot_mount ↔ 베이스 마운트 위치 거리 최대
 
 
 class MovingProtectiveStop(ps.ProtectiveStop):
@@ -227,3 +234,106 @@ def _R_wxyz(w, x, y, z):
     return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
                      [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
+class MovingEpisodeReset(sr.EpisodeReset):
+    """sim_reset.EpisodeReset 와 같은 서비스·순서·응답에 베이스 단계를 더한다 (sim_reset.py 는 고치지 않음).
+    다른 점: 로봇 base = 에피소드 시작 (베이스 궤적 t = 0) 의 로봇 base (테이블 없음), PX4 이륙 지점 = 바닥 (s.px4_spawn()),
+    팔을 되돌릴 때 베이스와 로봇 root 를 같이 순간이동, 드론 이륙이 끝나면 베이스 움직임 시작, 응답에 "base" (이번 에피소드 베이스 움직임 값)."""
+
+    def __init__(self, s, cfg, node, arm, grip, stop, step, seed=0, realtime=True, targets=None):
+        # EpisodeReset.__init__ 과 같고 로봇 base 만 다름 (부모는 s.scene_cfg["table"] 을 읽어 테이블 없는 씬에서 쓸 수 없어 옮겨 적음)
+        from isaacsim.core.simulation_manager import SimulationManager
+        from std_srvs.srv import Trigger
+
+        c = cfg["reset"]
+        for k in ("service", "kill_service", "drone_offset", "kill_timeout"):
+            if k not in c:
+                raise KeyError(f"{cfg['path']}: 'reset.{k}' 항목이 없습니다")
+        self.c, self.s, self.arm, self.grip, self.stop, self.step = c, s, arm, grip, stop, step
+        self.seed0, self.realtime = int(seed), bool(realtime)
+        self.count = 0
+        self.home = np.asarray(s.init_pose, dtype=float)
+        self.nominal = np.asarray(s.drone_pos, dtype=float).copy()
+        self.targets = None if targets is None else [(str(n), np.asarray(p, dtype=float)) for n, p in targets]
+        if self.targets is not None and not self.targets:
+            raise ValueError("드론 기준 위치 목록이 비었음")
+        self.base = np.asarray(s.start_robot, dtype=float).copy()      # 에피소드 시작의 로봇 base (world, 축은 world 와 같음). 메타데이터 위치는 이 기준
+        self.now = SimulationManager.get_simulation_time
+        self.srv = node.create_service(Trigger, c["service"], self._on_reset)
+        self.kill_srv = node.create_service(Trigger, c["kill_service"], self._on_kill)
+        self.n_cb = 0
+        self.last = None
+        self.sim_info = None
+        self.release_pending = False
+        self.failed = False
+        self.phases = []
+        # 베이스: 아직 움직이지 않은 지금 (t = 0) 의 로봇 root 자세를 리셋 목표로
+        b = s.base
+        if b._cb is not None or b.t != 0.0:
+            raise RuntimeError("MovingEpisodeReset 은 베이스가 움직이기 전에 만들 것 (로봇 root 시작 자세를 읽음)")
+        self.root0 = s.robot._physics_articulation_view.get_root_transforms().numpy()[0].copy()   # (x, y, z, qx, qy, qz, qw)
+        self.base_res = None
+
+    # ── 바뀐 단계 ──
+    def _drone_off_and_away(self, goal):
+        f = self.s.flight
+        if f.backend == "px4":
+            if f.px4.armed:
+                f.release()
+                self._run_until(lambda: not f.px4.armed, float(self.c["kill_timeout"]), "PX4 kill (disarm)")
+            self._mark("kill")
+            f.teleport(self.s.px4_spawn(), yaw=0.0)         # 바닥 이륙 지점
+            f.restart_px4()
+            self._mark("teleport_restart")
+        else:
+            f.armed = False
+            f.teleport(goal, yaw=0.0)
+
+    def _base_to_start(self, seed):
+        """베이스를 멈추고 시작 자세로 + 새 seed, 로봇 root 를 시작 자세로 순간이동 (속도 0). 팔 관절은 다음 _arm_home 이."""
+        import warp as wp
+
+        import moving_base_scene as mbs
+
+        b = self.s.base
+        b.go_start()
+        b.reseed(seed)
+        v = self.s.robot._physics_articulation_view
+        dev = v.get_root_transforms().device
+        idx = wp.array([0], dtype=wp.int32, device=dev)
+        v.set_root_transforms(wp.array(self.root0[None, :].astype(np.float32), dtype=wp.float32, device=dev), idx)
+        v.set_root_velocities(wp.zeros((1, 6), dtype=wp.float32, device=dev), idx)
+        self.step()
+        _, gap = mbs.mount_gap(self.s)
+        if gap > MOUNT_TOL_MM:
+            raise RuntimeError(f"리셋: 베이스·로봇 순간이동 뒤 마운트 거리 {gap:.2f} mm (기준 {MOUNT_TOL_MM} mm)")
+        return gap
+
+    def _arm_home(self):
+        seed = self.seed0 + self.count - 1                  # 부모 _on_reset 이 count 를 이미 올림
+        gap = self._base_to_start(seed + BASE_SEED_OFFSET)
+        self._mark("base_teleport")
+        err = super()._arm_home()
+        self.base_res = {"seed": seed + BASE_SEED_OFFSET, "mount_gap_mm": round(gap, 3),
+                         "robot_base_world": np.round(self.base, 4).tolist(), **self.s.base.motion_params()}
+        return err
+
+    def _drone_up(self, goal):
+        dist = super()._drone_up(goal)
+        self.s.base.start()                                 # 흔들림은 리셋이 끝난 뒤부터 (녹화 = 리셋 뒤)
+        self.base_res["t_start"] = round(self.now(), 3)
+        self._mark("base_start")
+        return dist
+
+    def _on_reset(self, request, response):
+        self.base_res = None
+        response = super()._on_reset(request, response)
+        if not response.success:
+            self.s.base.stop()                              # 실패하면 베이스는 서 있게 (다음 리셋이 다시 시작 자세로)
+        res = json.loads(response.message)
+        res["base"] = self.base_res
+        response.message = json.dumps(res, ensure_ascii=False)
+        self.last = res
+        print(f"[sim_reset] base {json.dumps(self.base_res, ensure_ascii=False)}", flush=True)
+        return response

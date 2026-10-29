@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================
-# check_ros2_moving_base.py  (docs/PLAN.md 8단계 "움직이는 베이스 수집 연결" R2·R3)
+# check_ros2_moving_base.py  (docs/PLAN.md 8단계 "움직이는 베이스 수집 연결" R2·R3·R4)
 #
 # 움직이는 베이스 sim ROS 2 인터페이스 자동 검사. 시스템 python3 (source /opt/ros/jazzy/setup.bash) 로 실행하면
 # sim_ros2_moving_base.py --headless 를 베이스마다 직접 띄우고, ROS 2 로 받고 보내 **stamp (sim time) 기준**으로 판정한다.
@@ -12,6 +12,11 @@
 #   6 IMU 두 방법 일치: 궤적 계산값 (/base/imu) vs Isaac IMU 센서 (/base/imu_isaac), 같은 stamp 끼리
 #   7 IMU 물리 확인: 비력 z 평균 ≈ |g|, Husky 는 각속도 0·등속·정지 구간 비력 = (0, 0, |g|)
 #   8 odom 일관성: 위치 차분 ≈ twist (child → odom 좌표계로 돌려서), joint_states 이름·개수
+#   리셋 (R4, 드론 PX4 바닥 이륙):
+#   9  sim 시작 뒤 첫 리셋 전에는 베이스가 서 있음 (odom 속도 0, IMU 비력 (0, 0, |g|))
+#   10 리셋 1: 성공·시간, 팔·드론 오차, 마운트 거리, 리셋 중 베이스 서 있음 (odom 원점·속도 0), 끝난 뒤 베이스가 움직임
+#      (그 뒤 1·2·4·5~8 을 베이스가 움직이는 동안 잼)
+#   11 /sim/drone_kill 뒤 리셋 2: 성공, 움직이던 베이스가 시작 자세로 돌아옴 (odom 원점), 베이스 seed 가 리셋 1 과 다름
 #
 # 실행:
 #   source /opt/ros/jazzy/setup.bash
@@ -20,6 +25,7 @@
 
 import argparse
 import datetime
+import json
 import os
 import signal
 import subprocess
@@ -33,6 +39,7 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu, JointState
+from std_srvs.srv import Trigger
 
 import check_ros2 as c2
 
@@ -50,6 +57,10 @@ CRIT_IMU = {"gyro_max": 0.005,     # [rad/s] 두 방법 차이 최대 (임시: �
             "match_tol": 1e-4,     # [s] Isaac 센서 시각은 float32 라 소수 6 자리가 가끔 다름 (물리 스텝 8.3 ms 보다 훨씬 작게)
             "g_mean": 0.05,        # [m/s²] 비력 z 평균 − |g|
             "odom_v": 0.002}       # [m/s] 위치 차분 − twist 최대
+CRIT_RESET = {"duration_s": 40.0,  # 리셋 sim 시간 최대 (고정 베이스 약 24 s + 바닥 이륙 상승이 더 김)
+              "arm_deg": 1.0, "drone_mm": 50.0, "mount_mm": 2.0,
+              "rest_mm": 1.0,      # [mm] 리셋 중 odom 위치 (원점 = 시작 자세) 최대
+              "move_mm": 1.0}      # [mm] 리셋 끝나고 3 s 안에 odom 이 이만큼은 움직여야 함
 
 
 class Sim(c2.Sim):
@@ -91,6 +102,23 @@ class BaseRos(c2.Ros):
         self.create_subscription(Odometry, "/base/odom", lambda m: self._add("odom", self._odom_row(m)), rel)
         self.create_subscription(JointState, "/base/joint_states",
                                  lambda m: self._add("joint_states", (c2.stamp(m.header.stamp), list(m.name), list(m.position))), rel)
+        self.kill_cli = self.create_client(Trigger, "/sim/drone_kill")
+
+    def drone_kill(self, timeout=30.0):
+        if not self.kill_cli.wait_for_service(timeout_sec=10.0):
+            raise RuntimeError("/sim/drone_kill 서비스가 없음")
+        fut = self.kill_cli.call_async(Trigger.Request())
+        t_end = time.time() + timeout
+        while not fut.done():
+            if time.time() > t_end:
+                raise RuntimeError(f"/sim/drone_kill 응답이 {timeout:g} s 안에 없음")
+            time.sleep(0.05)
+        r = fut.result()
+        return r.success, json.loads(r.message)
+
+    def base_rows(self, k, t0, t1):
+        with self.lock:
+            return [r for r in self.base[k] if t0 <= r[0] <= t1]
 
     def _add(self, k, row):
         with self.lock:
@@ -177,6 +205,44 @@ def check_base_topics(ros, R, tag, base, t0, t1, js):
            f"frame {frames}, joint_states {names}")
 
 
+def rest_stats(ros, t0, t1):
+    """구간의 odom 위치 최대 [mm]·속도 최대 [m/s]·IMU 비력 − (0,0,g) 최대 [m/s²]·각속도 최대."""
+    od = ros.base_rows("odom", t0, t1)
+    im = ros.base_rows("imu", t0, t1)
+    if not od or not im:
+        return None
+    p = max(float(np.linalg.norm(r[1])) for r in od) * 1000
+    v = max(float(np.linalg.norm(r[3])) + float(np.linalg.norm(r[4])) for r in od)
+    f = max(float(np.abs(r[2] - [0, 0, G]).max()) for r in im)
+    w = max(float(np.abs(r[1]).max()) for r in im)
+    return {"pos_mm": p, "vel": v, "acc_dev": f, "gyro": w, "n": len(im)}
+
+
+def check_reset(ros, R, tag, ok, res, item, extra=""):
+    """리셋 응답 + 리셋 중 베이스 서 있음 + 끝난 뒤 움직임. 응답의 base 를 돌려줌."""
+    c = CRIT_RESET
+    if not ok or not res.get("ok"):
+        R.item(f"[{tag}] {item}", False, f"리셋 실패: {res.get('error')} {extra}")
+        return None
+    b = res["base"]
+    t_s, t_e = res["t_start"], res["t_end"]
+    ros.wait_sim(3.0)
+    names = [p["name"] for p in res["phases"]]
+    t_tp = t_s + sum(p["sim_s"] for p in res["phases"][:names.index("base_teleport") + 1])   # 베이스 순간이동 끝 (그 전은 kill 하는 동안 아직 움직임)
+    rest = rest_stats(ros, t_tp + 0.02, t_e - 1e-3)       # 리셋 중 베이스를 시작 자세에 세워 둔 구간
+    od = ros.base_rows("odom", t_e + 1e-3, t_e + 3.0)
+    moved = max(float(np.linalg.norm(r[1])) for r in od) * 1000 if od else 0.0
+    good = (res["duration_s"] <= c["duration_s"] and res["arm_err_deg"] <= c["arm_deg"] and res["drone_err_mm"] <= c["drone_mm"]
+            and b["mount_gap_mm"] <= c["mount_mm"] and rest is not None and rest["pos_mm"] <= c["rest_mm"] and rest["vel"] == 0.0
+            and rest["gyro"] == 0.0 and rest["acc_dev"] < 1e-6 and moved >= c["move_mm"])
+    ph = " / ".join(f"{p['name']} {p['sim_s']:.1f}" for p in res["phases"])
+    R.item(f"[{tag}] {item}", good,
+           f"{res['duration_s']:.1f} s (기준 ≤ {c['duration_s']:g}) [{ph}], 팔 {res['arm_err_deg']:.3f}°, 드론 {res['drone_err_mm']:.1f} mm, "
+           f"마운트 {b['mount_gap_mm']:.3f} mm, 리셋 중 베이스 {None if rest is None else {k: round(v, 6) for k, v in rest.items()}}, "
+           f"끝난 뒤 3 s 이동 {moved:.1f} mm (기준 ≥ {c['move_mm']}), 베이스 seed {b['seed']} {extra}")
+    return b
+
+
 def check_base(ros, R, tag):
     ros.wait_sim(2.0)
     t0, w0 = ros.now(), time.time()
@@ -251,7 +317,25 @@ def run_base(base, motion, R, out_dir):
             if time.time() > t_end:
                 raise RuntimeError("/clock 을 받지 못함")
             time.sleep(0.1)
+        ros.wait_sim(2.0)
+        t0 = ros.now()
+        ros.wait_sim(3.0)
+        rest = rest_stats(ros, t0, ros.now())
+        R.item(f"[{tag}] 9 첫 리셋 전 베이스 서 있음", rest is not None and rest["vel"] == 0.0 and rest["gyro"] == 0.0 and rest["acc_dev"] < 1e-6,
+               f"{rest}")
+        ok, res = ros.reset()
+        b1 = check_reset(ros, R, tag, ok, res, "10 리셋 1 (베이스 서 있음 → 끝난 뒤 움직임)")
         check_base(ros, R, tag)
+        ros.wait_sim(5.0)                                   # 베이스가 시작 자세에서 충분히 떠나게
+        k_ok, k_res = ros.drone_kill()
+        ros.wait_sim(2.0)
+        ok, res = ros.reset()
+        b2 = check_reset(ros, R, tag, ok and k_ok, res, "11 drone_kill 뒤 리셋 2 (움직이던 베이스 → 시작 자세)",
+                         extra=f"(kill {k_ok} {k_res.get('error', '')})")
+        if b1 is not None and b2 is not None:
+            differ = b1["seed"] != b2["seed"] and (b1["kind"] == "linear" or b1["phase"] != b2["phase"])
+            R.item(f"[{tag}] 11b 베이스 움직임이 리셋마다 새 seed", differ,
+                   f"seed {b1['seed']} → {b2['seed']}" + ("" if b1["kind"] == "linear" else f", 위상 {b1['phase'][:2]}… → {b2['phase'][:2]}…"))
     except Exception as e:  # noqa: BLE001
         R.item(f"[{tag}] 진행", False, f"{type(e).__name__}: {e} (sim 로그 {sim.log_path})")
     finally:
@@ -263,7 +347,7 @@ def run_base(base, motion, R, out_dir):
 
 
 def main():
-    p = argparse.ArgumentParser(description="움직이는 베이스 sim ROS 2 인터페이스 자동 검사 (PLAN 8단계 R2·R3)")
+    p = argparse.ArgumentParser(description="움직이는 베이스 sim ROS 2 인터페이스 자동 검사 (PLAN 8단계 R2·R3·R4)")
     p.add_argument("--base", nargs="+", default=["husky", "stewart"], choices=("husky", "stewart"))
     p.add_argument("--base-motion", default="small", help="Stewart 프리셋")
     a = p.parse_args()

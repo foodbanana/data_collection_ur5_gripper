@@ -50,5 +50,6 @@ motion:
     big:   {scale: 1.0,  amplitude: {x: 0.15, y: 0.10, z: 0.15, roll: 0.105, pitch: 0.105, yaw: 0.053}}
     mid:   {scale: 0.5,  amplitude: big}
     small: {scale: 0.25, amplitude: big}
+    static: {scale: 0.0,  amplitude: big}     # 서 있음 (진폭 0). 난이도 단계 static → small → mid, 파이프라인 검사 (2026-10-29)
     # lab = 연구실 이전 연구 값 그대로 (비교·평가용, 수집 안 함). 다리 길이가 한계를 넘어도 경고만 (다리는 보이기만 함)
     lab:   {scale: 1.0,  amplitude: {x: 0.30, y: 0.10, z: 0.30, roll: 0.105, pitch: 0.209, yaw: 0.053}, collect: false}

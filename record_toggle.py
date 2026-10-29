@@ -13,7 +13,9 @@
 #     drone_kill (X) : k 와 같음
 #     리셋·녹화 종료·모터 정지를 처리하는 동안 온 요청은 버린다. 키보드 r·k·d·q 는 그대로
 #
-# 사용: python3 record_toggle.py [작업명] [--sim]     (보통 6_record_bag.sh 를 통해 실행)
+# 사용: python3 record_toggle.py [작업명] [--sim] [--base fixed|moving]     (보통 6_record_bag.sh 를 통해 실행)
+#   --base moving (8단계, 움직이는 베이스): 베이스 토픽 /base/imu·/base/odom·/base/joint_states 도 상태 토픽으로 녹화 (발행자 확인 포함).
+#                 기본 fixed = 베이스 토픽 없음 (고정 베이스는 sim·실물 모두 발행 안 함, stage1 --base-imu const)
 # 저장: <이 파일이 있는 폴더>/bags/<이름>/  (+ episode.json: 녹화 정보, 카메라 역할 → 장치, sim 은 리셋 응답)
 #
 # 녹화 시작 전에 상태 토픽 (팔·그리퍼·카메라) 에 발행자가 있는지 확인하고, 없으면 녹화하지 않는다 (조용히 빈 bag 을 만들지 않음).
@@ -43,6 +45,8 @@ from camera_config import load_cameras
 STATE_TOPICS = ['/joint_states', '/gripper/joint_states', '/gripper/target']
 COMMAND_TOPICS = ['/joint_command', '/gripper/command']
 SIM_STATE_TOPICS = ['/protective_stop', '/clock']     # sim 전용 (보호 정지 흉내, sim time)
+BASE_TOPICS = ['/base/imu', '/base/odom', '/base/joint_states']   # --base moving 일 때만 (8단계). 실물은 드라이버 토픽을 이 이름으로
+BASE_CHOICES = ('fixed', 'moving')
 
 SIM_RESET_SERVICE = '/sim/reset'
 SIM_KILL_SERVICE = '/sim/drone_kill'
@@ -56,7 +60,7 @@ TELEOP_REQUESTS = ('record', 'reset', 'drone_kill')
 #   (다른 노드가 같이 뜰 때 30 번 중 10 번), 그동안 온 메시지는 수신 큐에 쌓인다. 큐가 짧으면 (기본 10 개 = 카메라 0.33 s) 넘쳐서 버려진다
 #   → 상태 토픽마다 이만큼의 메시지를 담을 수 있게 QoS override 로 큐를 늘린다 (docs/PLAN.md 4단계 남은 문제 A1)
 QUEUE_SEC = 3.0
-TOPIC_HZ = {'/joint_states': 125.0, '/clock': 120.0}     # 나머지 상태 토픽은 30 Hz
+TOPIC_HZ = {'/joint_states': 125.0, '/clock': 120.0, '/base/imu': 120.0}     # 나머지 상태 토픽은 30 Hz
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BAG_DIR = os.path.join(SCRIPT_DIR, 'bags')
@@ -79,13 +83,15 @@ def say(*args, **kwargs):
 class RosLink:
     """녹화 전 토픽 확인과 sim 리셋 호출 (rclpy). 녹화 자체는 ros2 bag record 프로세스가 한다."""
 
-    def __init__(self, sim, cameras):
+    def __init__(self, sim, cameras, base='fixed'):
         import rclpy
         from rclpy.signals import SignalHandlerOptions
         from std_msgs.msg import String
         from std_srvs.srv import Trigger
 
-        self.rclpy, self.sim, self.cameras = rclpy, sim, cameras
+        if base not in BASE_CHOICES:
+            raise ValueError(f"base 는 {BASE_CHOICES} 중 하나: {base}")
+        self.rclpy, self.sim, self.cameras, self.base = rclpy, sim, cameras, base
         # 신호 처리는 이 스크립트가 한다 (Ctrl+C → bag 안전 종료)
         rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         self.node = rclpy.create_node('record_toggle')
@@ -99,7 +105,8 @@ class RosLink:
 
     @property
     def state_topics(self):
-        return STATE_TOPICS + self.image_topics + self.info_topics + (SIM_STATE_TOPICS if self.sim else [])
+        return (STATE_TOPICS + self.image_topics + self.info_topics + (SIM_STATE_TOPICS if self.sim else [])
+                + (BASE_TOPICS if self.base == 'moving' else []))
 
     @property
     def topics(self):
@@ -226,7 +233,8 @@ class BagRecorder:
         cams = self.link.cameras
         mode = 'sim' if self.link.sim else 'real'
         self.info = {
-            'episode': ep_name, 'mode': mode, 'task_name': self.task_name, 'recorded_at': datetime.now().isoformat(timespec='seconds'),
+            'episode': ep_name, 'mode': mode, 'base': self.link.base, 'task_name': self.task_name,
+            'recorded_at': datetime.now().isoformat(timespec='seconds'),
             'topics': self.link.topics, 'camera_reliability': 'reliable', 'queue_sec': QUEUE_SEC,
             'cameras': {role: {'topic': r['topic'], **r[mode]} for role, r in cams['roles'].items()},
             'sim_reset': reset_info,
@@ -382,7 +390,7 @@ def request_reset(recorder, link, pending):
 def print_help(task_name, link):
     say()
     say("=== rosbag2 녹화 토글 ===")
-    say(f"  모드     : {'sim (r → /sim/reset → 녹화)' if link.sim else '실물'}")
+    say(f"  모드     : {'sim (r → /sim/reset → 녹화)' if link.sim else '실물'}, 베이스 {link.base}")
     say(f"  작업명   : {task_name if task_name else '(없음)'}")
     say(f"  저장 위치: {BAG_DIR}/<YYYYMMDD_HHMMSS>{'_' + task_name if task_name else ''}/")
     say(f"  토픽     : {' '.join(link.topics)}")
@@ -420,6 +428,8 @@ def main():
     ap = argparse.ArgumentParser(description='rosbag2 녹화 토글 (r 시작/종료, d 버리기, q 종료)')
     ap.add_argument('task_name', nargs='?', default='', help='bag 이름 뒤에 붙는 작업명')
     ap.add_argument('--sim', action='store_true', help='Isaac Sim: r 을 누르면 /sim/reset 뒤 녹화 시작, sim 전용 토픽도 녹화')
+    ap.add_argument('--base', default='fixed', choices=BASE_CHOICES,
+                    help='moving = 움직이는 베이스 (8단계): /base/imu·/base/odom·/base/joint_states 도 녹화. 기본 fixed')
     args = ap.parse_args()
     task_name = args.task_name
 
@@ -431,7 +441,7 @@ def main():
         sys.exit(1)
 
     os.makedirs(BAG_DIR, exist_ok=True)
-    link = RosLink(args.sim, load_cameras())
+    link = RosLink(args.sim, load_cameras(), base=args.base)
     recorder = BagRecorder(task_name, link)
     print_help(task_name, link)
 

@@ -34,8 +34,9 @@ import yaml  # noqa: E402
 import test_scene as ts  # noqa: E402
 
 DEFAULT_SCENE_CONFIG = os.path.join(ts.CONFIG_DIR, "scene_husky.yaml")
-SCENE_KEYS = ("base_config", "fixed_scene_config", "mount", "init_pose", "drone_base", "drone_flight",
+SCENE_KEYS = ("base_config", "fixed_scene_config", "mount", "init_pose", "drone_base", "drone_flight", "px4_surface_z",
               "third_view_camera_config", "collision_filter")
+FLIGHTS = ("geometric", "px4")
 
 
 def load_scene_config(path=None):
@@ -48,8 +49,8 @@ def load_scene_config(path=None):
     for k in ("xyz", "yaw_deg"):
         if k not in sc["mount"]:
             raise KeyError(f"{path}: 'mount.{k}' 항목이 없습니다")
-    if sc["drone_flight"] != "geometric":
-        raise ValueError(f"{path}: drone_flight 는 지금 geometric 만 (PX4 이륙은 이 씬에 아직 없음): {sc['drone_flight']}")
+    if sc["drone_flight"] not in FLIGHTS:
+        raise ValueError(f"{path}: drone_flight 는 {FLIGHTS} 중 하나: {sc['drone_flight']}")
     sc["path"] = path
     return sc
 
@@ -136,13 +137,21 @@ def base_collision_prims(stage, base):
 
 
 class Scene:
-    pass
+    def px4_spawn(self):
+        """PX4 드론 이륙 지점 (world): 고정 씬과 같은 takeoff_xy, 높이 = 바닥 (씬 px4_surface_z) + spawn_above_table (다리가 면에 닿는 body 높이)."""
+        c = self.px4_cfg
+        return np.array([*c["takeoff_xy"], float(self.scene_cfg["px4_surface_z"]) + float(c["spawn_above_table"])])
 
 
-def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_motion=None):
+def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_motion=None, flight=None, mode="static", hover=None,
+                position_source=None, report_dir=None, realtime=False, init_pose=None):
     """씬을 만들고 재생까지 한다. 베이스는 start_base() 를 부를 때 움직이기 시작한다. Scene 을 돌려준다.
     pre_play(s): 재생 직전에 부를 함수 (접촉 보고·카메라 센서 등).
-    base_motion: Stewart 움직임 프리셋 (small·mid·big·lab, 필수), seed 로 ω·위상. Husky 는 None (궤적은 base 설정 trajectory)."""
+    base_motion: Stewart 움직임 프리셋 (small·mid·big·lab, 필수), seed 로 ω·위상. Husky 는 None (궤적은 base 설정 trajectory).
+    flight: 드론 제어기 geometric | px4 (None = 씬 설정 drone_flight). px4 면 바닥 이륙 지점 (고정 씬 px4.takeoff_xy, 높이 = 씬 px4_surface_z
+            + px4.spawn_above_table) 에서 PX4 로 이륙해 드론 위치 호버까지 마치고 돌려준다 (drone_scene.px4_takeoff 그대로).
+    mode·hover·position_source·report_dir: drone_flight.DroneFlight 에 그대로 (sim_ros2 와 같은 뜻).
+    init_pose: 팔 시작 자세. None = 씬 설정 init_pose (이름), 이름 = 고정 씬 init_poses 에서, 관절각 6 개 [rad] (drone_scene.parse_init_pose 결과)."""
     import isaacsim.core.experimental.utils.app as app_utils
     from isaacsim.core.experimental.objects import DomeLight
     from isaacsim.core.experimental.prims import XformPrim
@@ -172,7 +181,8 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
         tr = s.base_cfg["trajectory"]
         d = np.asarray(tr["direction"], dtype=float)
         dir_world = _rz(base_yaw) @ (d / np.linalg.norm(d))
-        start_robot = np.zeros(3) - 0.5 * float(tr["distance"]) * dir_world
+        half = 0.0 if base_motion == "static" else 0.5 * float(tr["distance"])     # static: 가운데에 서 있음
+        start_robot = np.zeros(3) - half * dir_world
         base_xy = start_robot[:2] - (_rz(base_yaw) @ mount_xyz)[:2]
         s.base_z = float(s.base_cfg["base_link_height"]) + float(mount_xyz[2])     # 로봇 base 높이 (바닥 위)
     else:                                                   # Stewart: 윗판 회전 중심 기준 마운트, 사인파는 가운데 자세에서 시작 (램프)
@@ -180,6 +190,7 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
         base_xy = -(_rz(base_yaw) @ mount_xyz)[:2]
         s.base_z = float(s.base_cfg["geometry"]["height"]) + float(mount_xyz[2])
     start_robot[2] = s.base_z
+    s.start_robot = start_robot.copy()                     # 에피소드 시작 (베이스 궤적 t = 0) 의 로봇 base world (리셋이 여기로 되돌림)
     s.mid_robot = np.array([0.0, 0.0, s.base_z])
 
     # 로봇 (새 stage, PhysX, ground). base="floating" = USD 원본 구조 (articulation root = robot_mount, root_joint 는 바깥 구속)
@@ -206,7 +217,11 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
     s.fixed_cfg = fixed                                  # 고정 씬 설정 (읽기만: 테이블 높이·기준 위치 목록·시작 자세)
 
     s.drone_pos = s.mid_robot + np.asarray(s.scene_cfg["drone_base"], dtype=float)
-    s.drone_info = dr.add_drone(s.stage, s.drone_cfg, position=s.drone_pos, prop_spin=prop_spin)
+    s.backend = flight or s.scene_cfg["drone_flight"]
+    s.waypoints = []
+    s.px4_cfg = fixed["px4"] if s.backend == "px4" else None             # 고정 씬 px4 (이륙 지점·시간 기준) 를 그대로, 이륙 면만 바닥
+    spawn = s.px4_spawn() if s.backend == "px4" else s.drone_pos
+    s.drone_info = dr.add_drone(s.stage, s.drone_cfg, position=spawn, prop_spin=prop_spin)
     s.pre_play = pre_play(s) if pre_play is not None else None
 
     app_utils.play()
@@ -218,13 +233,24 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
     s.drive.apply()
     s.drive.start()
     named = fixed.get("init_poses") or {}
-    if s.scene_cfg["init_pose"] not in named:
-        raise ValueError(f"init_pose '{s.scene_cfg['init_pose']}' 이 {fixed_path(s)} init_poses 에 없음 ({sorted(named)})")
-    s.init_pose = np.asarray(named[s.scene_cfg["init_pose"]], dtype=float)
+    if init_pose is None or isinstance(init_pose, str):
+        s.init_pose_name = s.scene_cfg["init_pose"] if init_pose is None else init_pose
+        if s.init_pose_name not in named:
+            raise ValueError(f"init_pose '{s.init_pose_name}' 이 {fixed_path(s)} init_poses 에 없음 ({sorted(named)})")
+        s.init_pose = np.asarray(named[s.init_pose_name], dtype=float)
+    else:
+        s.init_pose_name, s.init_pose = None, np.asarray(init_pose, dtype=float)
+    lo, hi = (x.numpy()[0][s.drive.arm_i] for x in s.robot.get_dof_limits())
+    if s.init_pose.shape != (len(ts.ARM_JOINTS),) or not np.all((lo <= s.init_pose) & (s.init_pose <= hi)):
+        raise ValueError(f"init_pose 는 관절 한계 안의 팔 {len(ts.ARM_JOINTS)} 관절 값: {s.init_pose.tolist()}")
     s.drive.reset_pose(s.init_pose, gripper=0.0)
-    s.flight = fl.DroneFlight(s.drone_cfg, s.drone_info, mode="static", seed=seed, target=s.drone_pos, backend="geometric")
+    s.flight = fl.DroneFlight(s.drone_cfg, s.drone_info, mode=mode, seed=seed, target=s.drone_pos, backend=s.backend,
+                              report_dir=report_dir, position_source=position_source, hover=hover)
     s.flight.start()
-    s.flight.arm()
+    if s.backend == "px4":
+        ds.px4_takeoff(s, realtime)
+    else:
+        s.flight.arm()
     return s
 
 

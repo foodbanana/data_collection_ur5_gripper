@@ -160,6 +160,12 @@ class _StepDriver:
             err, self._err = self._err, None
             raise RuntimeError(f"{type(self).__name__} 물리 콜백 실패: {err}") from err
 
+    def go_start(self):
+        """리셋: 멈추고 궤적 시작 자세 (t = 0) 로 순간이동 (USD). 다음 start() 에서 t = 0 부터 다시 움직인다."""
+        self.stop()
+        self.t = 0.0
+        self._apply(0.0)
+
 
 class KinematicBase(_StepDriver):
     """베이스 USD 를 /World/<prim_name> 에 넣고 kinematic 궤적으로 움직인다.
@@ -168,8 +174,9 @@ class KinematicBase(_StepDriver):
     순서: add() (재생 전) → 재생 → start() → 루프마다 check() → stop()
     """
 
-    def __init__(self, cfg, start_xy=(0.0, 0.0), start_yaw_deg=0.0):
+    def __init__(self, cfg, start_xy=(0.0, 0.0), start_yaw_deg=0.0, static=False):
         self.cfg = cfg
+        self.static = bool(static)                           # True = 서 있음 (--base-motion static: 궤적 시작 자세에 그대로)
         self.path = f"/World/{cfg['prim_name']}"
         self.body_path = f"{self.path}/{cfg['body']}"
         self.imu_path = f"{self.body_path}/imu_link"
@@ -188,6 +195,7 @@ class KinematicBase(_StepDriver):
         self.dir_world = Rz @ (d / np.linalg.norm(d))        # 궤적 방향 (world)
         self.p0 = np.array([start_xy[0], start_xy[1], float(cfg["base_link_height"])])
         self.traj = LinearTrajectory(tc["distance"], tc["max_speed"], tc["accel"], tc["dwell"])
+        self.seed = None                                     # 리셋 seed (기록용, reseed)
         self._init_driver()
         self._t_op = None
         self._wheel_ops = []
@@ -246,10 +254,24 @@ class KinematicBase(_StepDriver):
         return ops[0]
 
     # ── 궤적 ──
+    def _sample(self, t):
+        return (0.0, 0.0, 0.0) if self.static else self.traj.sample(t)
+
     def target(self, t):
         """시각 t (start 뒤 sim s) 의 base_link (위치, 속도, 가속도) world 와 바퀴 회전각 [rad]."""
-        s, v, a = self.traj.sample(t)
+        s, v, a = self._sample(t)
         return self.p0 + s * self.dir_world, v * self.dir_world, a * self.dir_world, s / self.wheel_r
+
+    def reseed(self, seed):
+        """리셋: 직선 궤적은 정해진 하나라 seed 로 바뀌는 값이 없음 (기록용으로만 받음)."""
+        self.seed = int(seed)
+
+    def motion_params(self):
+        """episode.json 에 남길 베이스 움직임 값."""
+        if self.static:
+            return {"kind": "linear", "preset": "static", "seed": self.seed}
+        return {"kind": "linear", "preset": None, "seed": self.seed, **{k: self.cfg["trajectory"][k] for k in TRAJ_KEYS},
+                "direction_world": np.round(self.dir_world, 6).tolist(), "period": round(self.traj.period, 4)}
 
     def kinematics(self, t):
         """시각 t 의 차체 (base_link) (위치, 선속도, 선가속도, 회전 R, 각속도, 각가속도) world. 직선 이동이라 회전은 처음 yaw 그대로."""
@@ -259,7 +281,7 @@ class KinematicBase(_StepDriver):
 
     def joint_states(self, t):
         """(관절 이름, 위치, 속도): 바퀴 4 개 회전각 [rad]·각속도 [rad/s] (네 바퀴 같음, 미끄러짐 없음)."""
-        s, v, _ = self.traj.sample(t)
+        s, v, _ = self._sample(t)
         n = len(self.joint_names)
         return self.joint_names, [s / self.wheel_r] * n, [v / self.wheel_r] * n
 
@@ -356,6 +378,7 @@ class StewartBase(_StepDriver):
         self.height = float(g["height"])
         self.B, self.P = dst.anchors(g)              # B: 최상위 prim 좌표 (아랫판 윗면), P: 윗판 좌표
         self.lmin, self.lmax = float(cfg["legs"]["length_min"]), float(cfg["legs"]["length_max"])
+        self.omega_scale = omega_scale
         self.traj = SineTrajectory(cfg["motion"], preset, seed, omega_scale)
         self.yaw = math.radians(start_yaw_deg)
         self.R0 = _rz(self.yaw)
@@ -423,6 +446,15 @@ class StewartBase(_StepDriver):
         Rw = self.R0 @ R
         return (self.p0 + self.R0 @ c, self.R0 @ dq[:3], self.R0 @ ddq[:3], Rw, Rw @ self.omega_body(q, dq))
 
+    def reseed(self, seed):
+        """리셋: 같은 프리셋으로 ω·위상을 새 seed 로 다시 뽑는다 (움직이지 않을 때만 부를 것. t = 0 은 항상 가운데 자세)."""
+        if self._cb is not None:
+            raise RuntimeError("움직이는 중에는 reseed 할 수 없음 (stop() 먼저)")
+        self.traj = SineTrajectory(self.cfg["motion"], self.traj.preset, seed, self.omega_scale)
+
+    def motion_params(self):
+        return {"kind": "stewart", **self.traj.params()}
+
     def kinematics(self, t):
         """시각 t 의 윗판 회전 중심 (위치, 선속도, 선가속도, 회전 R, 각속도, 각가속도) world.
         각가속도는 각속도의 중심 차분 (궤적이 식이라 h = 1e-4 s 에서 오차 ~1e-8)."""
@@ -469,11 +501,12 @@ class StewartBase(_StepDriver):
 
 
 def make_base(cfg, start_xy=(0.0, 0.0), start_yaw_deg=0.0, motion=None, seed=0, omega_scale=None):
-    """설정 kind 로 베이스를 만든다. linear (Husky) 는 motion 을 받지 않음 (궤적은 설정 trajectory), stewart 는 motion = 프리셋 이름 필수."""
+    """설정 kind 로 베이스를 만든다. linear (Husky): motion None = 설정 trajectory, "static" = 서 있음.
+    stewart: motion = 프리셋 이름 필수 (static 프리셋 = 진폭 0)."""
     if cfg["kind"] == "linear":
         if motion not in (None, "static"):
-            raise ValueError(f"linear 베이스 (Husky) 는 아직 움직임 프리셋이 없음 (설정 trajectory 하나): {motion}")
-        return KinematicBase(cfg, start_xy, start_yaw_deg)
+            raise ValueError(f"linear 베이스 (Husky) 의 움직임은 설정 trajectory (motion 없음) 또는 static (서 있음): {motion}")
+        return KinematicBase(cfg, start_xy, start_yaw_deg, static=motion == "static")
     if motion is None:
         raise ValueError("stewart 베이스는 motion (프리셋 이름: small·mid·big·lab) 이 필요")
     return StewartBase(cfg, motion, seed, start_xy, start_yaw_deg, omega_scale)

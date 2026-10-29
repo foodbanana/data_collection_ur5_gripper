@@ -31,11 +31,15 @@
 #   base_imu = [각속도 xyz (rad/s), 선가속도 xyz (m/s²)] — --base-imu 로 정한다 (필수):
 #       const : 고정 베이스. /base/imu 가 없는 bag 에서 상수 [0, 0, 0, 0, 0, 9.81] (bag 에 /base/imu 가 있으면 에러)
 #       topic : /base/imu 를 격자 구간 (t − 1/fps, t] 평균으로 (8단계부터)
+#   base_pose (데이터셋에는 안 들어감, 중간 파일만) — --base-pose 로 정한다 (기본 none = 만들지 않음):
+#       odom  : /base/odom (nav_msgs/Odometry) 의 격자 시각 직전 최신 자세 → base_pose.npy (N, 7) = [x, y, z, qw, qx, qy, qz]
+#               (odom frame = 베이스 시작 자세. sim 은 정답값, 8단계 움직이는 베이스). --max-age 검사 같음
 #
 # 출력(중간 파일):  <데이터수집폴더>/bag_lerobot_intermediate/<bag이름>/
 #     states.npy       (N, 7)
 #     actions.npy      (N, 7)
 #     base_imu.npy     (N, 6)
+#     base_pose.npy    (N, 7)  --base-pose odom 일 때만
 #     timestamps.npy   (N,)    = 각 프레임 기준 시각(초)
 #     wrist/000000.png ...      = /cam/wrist/color/image_raw
 #     third_view/000000.png ... = /cam/third_view/color/image_raw
@@ -70,6 +74,7 @@ TOPIC_ARM_CMD = '/joint_command'                # 팔 관절 목표 (--arm-actio
 TOPIC_GRIP  = '/gripper/joint_states'          # 그리퍼 present (observation)
 TOPIC_GRIP_TARGET = '/gripper/target'          # 그리퍼 goal, 30Hz 상시 발행 (action)
 TOPIC_IMU = '/base/imu'                         # 베이스 IMU (8단계부터)
+TOPIC_ODOM = '/base/odom'                       # 베이스 자세 (8단계, --base-pose odom)
 TOPIC_PSTOP = '/protective_stop'                # sim 보호 정지 흉내 (std_msgs/Bool, header 없음)
 TOPIC_CLOCK = '/clock'                          # sim time (header 없는 토픽의 시각을 sim time 으로 바꾸는 데 씀)
 
@@ -177,6 +182,8 @@ def main():
                     help='팔 action: command = /joint_command (텔레옵·sim), next_state = states[i+1] (freedrive)')
     ap.add_argument('--base-imu', required=True, choices=('const', 'topic'),
                     help='base_imu: const = 고정 베이스 상수 [0,0,0,0,0,9.81], topic = /base/imu 구간 평균')
+    ap.add_argument('--base-pose', default='none', choices=('none', 'odom'),
+                    help='odom = /base/odom 자세를 base_pose.npy (N, 7) 로 (중간 파일만, 움직이는 베이스). 기본 none')
     ap.add_argument('--fps', type=float, default=25.0, help='목표 fps (기본 25)')
     ap.add_argument('--max-age', type=float, default=0.066,
                     help='[s] 격자 시각과 고른 메시지 stamp 의 차이 한계 (기본 0.066 = 카메라 2 프레임). 넘으면 에러')
@@ -228,11 +235,14 @@ def main():
     print(f"출력 위치: {out_dir}")
     print("bag 읽는 중...")
     wanted = {TOPIC_ARM, TOPIC_ARM_CMD, TOPIC_GRIP, TOPIC_GRIP_TARGET, TOPIC_IMU, TOPIC_PSTOP, TOPIC_CLOCK, *cam_topics.values()}
+    if args.base_pose == 'odom':
+        wanted.add(TOPIC_ODOM)
     buckets, unstamped, bag_topics = load_all_messages(bag_path, wanted)
 
     # ── 필요한 토픽 확인 (없으면 중단. 다른 토픽으로 조용히 대체하지 않음) ──
     state_topics = [TOPIC_ARM, TOPIC_GRIP, TOPIC_GRIP_TARGET, *cam_topics.values()]
-    need = state_topics + ([TOPIC_ARM_CMD] if use_cmd else []) + ([TOPIC_IMU] if args.base_imu == 'topic' else [])
+    need = (state_topics + ([TOPIC_ARM_CMD] if use_cmd else []) + ([TOPIC_IMU] if args.base_imu == 'topic' else [])
+            + ([TOPIC_ODOM] if args.base_pose == 'odom' else []))
     for t in need:
         print(f"  {t:36s}: {len(buckets.get(t, []))}")
     missing = [t for t in need if not buckets.get(t)]
@@ -355,6 +365,21 @@ def main():
                 fail(f"프레임 {i} (t {qt:.3f}): 구간 ({qt - dt:.3f}, {qt:.3f}] 에 {TOPIC_IMU} 메시지가 없음")
             base_imu[i] = imu_v[sel].mean(axis=0)
 
+    # ── base_pose (N, 7), --base-pose odom ──
+    base_pose, odom_frames = None, None
+    if args.base_pose == 'odom':
+        base_pose = np.empty((N, 7))
+        frames = set()
+        for i, qt in enumerate(grid):
+            m, a = pick(TOPIC_ODOM, qt, i)
+            max_age[TOPIC_ODOM] = max(max_age.get(TOPIC_ODOM, 0.0), a)
+            p, q = m.pose.pose.position, m.pose.pose.orientation
+            base_pose[i] = [p.x, p.y, p.z, q.w, q.x, q.y, q.z]
+            frames.add((m.header.frame_id, m.child_frame_id))
+        if len(frames) != 1:
+            fail(f"{TOPIC_ODOM} frame 이 에피소드 안에서 바뀜: {sorted(frames)}")
+        odom_frames = list(frames.pop())
+
     # ── 보호 정지 (sim). Bool 에 header 가 없어 bag 도착 시각 → /clock 으로 sim time 환산 ──
     pstop = None
     if TOPIC_PSTOP in bag_topics:
@@ -374,6 +399,8 @@ def main():
     np.save(os.path.join(out_dir, 'actions.npy'), actions.astype(np.float32))
     np.save(os.path.join(out_dir, 'base_imu.npy'), base_imu.astype(np.float32))
     np.save(os.path.join(out_dir, 'timestamps.npy'), stamps)
+    if base_pose is not None:
+        np.save(os.path.join(out_dir, 'base_pose.npy'), base_pose.astype(np.float64))
 
     meta = {
         'schema_version': SCHEMA_VERSION,
@@ -389,6 +416,9 @@ def main():
         'gripper_action_source': TOPIC_GRIP_TARGET,
         'gripper_scale': f'raw / {GRIPPER_RAW_MAX:g} (0 = 열림, 1 = 닫힘)',
         'base_imu': args.base_imu, 'base_imu_names': ['gyro_x', 'gyro_y', 'gyro_z', 'accel_x', 'accel_y', 'accel_z'],
+        'base_imu_stats': interval_stats(times[TOPIC_IMU]) if args.base_imu == 'topic' else None,     # /base/imu 간격 (구간 평균에 든 개수 판단)
+        'base_pose': None if base_pose is None else {'source': TOPIC_ODOM, 'frame': odom_frames[0], 'child_frame': odom_frames[1],
+                                                     'names': ['x', 'y', 'z', 'qw', 'qx', 'qy', 'qz']},
         'image_keys': list(ROLES), 'image_size': [cams['resolution'][1], cams['resolution'][0], 3],
         'cameras': cameras,
         'max_age_limit_ms': round(args.max_age * 1000, 1),
@@ -405,7 +435,10 @@ def main():
 
     print("\n-- 추출 완료 --")
     print(f"출력 폴더: {out_dir}")
-    print(f"  states.npy {states.shape}, actions.npy {actions.shape}, base_imu.npy {base_imu.shape}, timestamps.npy {stamps.shape}")
+    print(f"  states.npy {states.shape}, actions.npy {actions.shape}, base_imu.npy {base_imu.shape}, timestamps.npy {stamps.shape}"
+          + (f", base_pose.npy {base_pose.shape}" if base_pose is not None else ""))
+    if args.base_imu == 'topic':
+        print(f"base_imu 평균 {np.round(base_imu.mean(axis=0), 4).tolist()}, 범위 (최대 − 최소) {np.round(np.ptp(base_imu, axis=0), 4).tolist()}")
     print(f"  {', '.join(f'{r}/*.png' for r in ROLES)}: 각 {N} 장, meta.json")
     print(f"state  예시(첫 프레임): {np.round(states[0], 4).tolist()}")
     print(f"action 예시(첫 프레임): {np.round(actions[0], 4).tolist()}")
