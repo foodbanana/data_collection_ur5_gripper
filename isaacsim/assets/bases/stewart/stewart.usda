@@ -1,0 +1,438 @@
+#usda 1.0
+(
+    customLayerData = {
+        string anchor_angles_source = "daniel-s-ingram/stewart (MIT) f276d049 src/ik.cpp"
+        double base_radius = 0.8
+        string config = "config/base_stewart.yaml"
+        string generated_by = "isaacsim/scripts/build_stewart_usd.py"
+        double height = 1
+        double leg_length_max = 1.395
+        double leg_length_min = 0.747
+        double leg_part_length = 0.7225
+        double top_radius = 0.6
+    }
+    defaultPrim = "stewart"
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "stewart"
+{
+    def Xform "base_plate"
+    {
+        def Cylinder "geom" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            float3[] extent = [(-0.9, -0.9, -0.025), (0.9, 0.9, 0.025)]
+            double height = 0.05
+            color3f[] primvars:displayColor = [(0.35, 0.35, 0.37)]
+            double radius = 0.9
+            double3 xformOp:translate = (0, 0, 0.025)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_1"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.1002665868514435, 0.7936917610515822, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_2"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.1002665868514434, 0.7936917610515823, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_3"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.7374905212708005, -0.3100124691616824, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_4"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.6372239344193571, -0.4836792918898999, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_5"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.6372239344193572, -0.4836792918898997, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_6"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.7374905212708004, -0.31001246916168257, 0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Xform "top_plate" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:kinematicEnabled = 1
+        float physics:mass = 50
+        quatd xformOp:orient = (1, 0, 0, 0)
+        double3 xformOp:translate = (0, 0, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+        def Cylinder "geom" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            float3[] extent = [(-0.7, -0.7, -0.025), (0.7, 0.7, 0.025)]
+            double height = 0.05
+            color3f[] primvars:displayColor = [(0.25, 0.42, 0.62)]
+            double radius = 0.7
+            double3 xformOp:translate = (0, 0, -0.025)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "imu_link"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+        }
+
+        def Sphere "joint_1"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.4779179508145179, 0.3627594689174248, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_2"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.4779179508145177, 0.3627594689174249, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_3"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.5531178909531003, 0.2325093518712618, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_4"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (0.07519994013858255, -0.5952688207886867, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_5"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.07519994013858262, -0.5952688207886866, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "joint_6"
+        {
+            float3[] extent = [(-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)]
+            color3f[] primvars:displayColor = [(0.1, 0.1, 0.1)]
+            double radius = 0.05
+            double3 xformOp:translate = (-0.5531178909531003, 0.23250935187126187, -0.05)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    def Scope "legs"
+    {
+        def Xform "leg_1"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, 0.21034589616455726, -0.18433850523749998, 0)
+                double3 xformOp:translate = (-0.1002665868514435, 0.7936917610515822, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166553, -0.7220553097878045, 0.6327796212432659, 0)
+                double3 xformOp:translate = (-0.4779179508145179, 0.3627594689174248, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+
+        def Xform "leg_2"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, 0.2103458961645573, 0.18433850523749995, -0)
+                double3 xformOp:translate = (0.1002665868514434, 0.7936917610515823, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166552, -0.7220553097878049, -0.632779621243266, 0)
+                double3 xformOp:translate = (0.4779179508145177, 0.3627594689174249, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+
+        def Xform "leg_3"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, -0.26481477651360447, -0.08999563704156031, 0)
+                double3 xformOp:translate = (0.7374905212708005, -0.3100124691616824, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166553, 0.9090308818876659, 0.30892843059204844, -0)
+                double3 xformOp:translate = (0.5531178909531003, 0.2325093518712618, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+
+        def Xform "leg_4"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, 0.0544688803490472, -0.2743341422790603, 0)
+                double3 xformOp:translate = (0.6372239344193571, -0.4836792918898999, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166552, -0.18697557209986146, 0.9417080518353146, 0)
+                double3 xformOp:translate = (0.07519994013858255, -0.5952688207886867, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+
+        def Xform "leg_5"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, 0.054468880349047226, 0.2743341422790603, -0)
+                double3 xformOp:translate = (-0.6372239344193572, -0.4836792918898997, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166552, -0.18697557209986157, -0.9417080518353146, 0)
+                double3 xformOp:translate = (-0.07519994013858262, -0.5952688207886866, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+
+        def Xform "leg_6"
+        {
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+            def Xform "cylinder"
+            {
+                quatd xformOp:orient = (0.9600905787755307, -0.2648147765136045, 0.08999563704156026, 0)
+                double3 xformOp:translate = (-0.7374905212708004, -0.31001246916168257, 0.05)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.045, -0.045, -0.36125), (0.045, 0.045, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.15, 0.15, 0.16)]
+                    double radius = 0.045
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+
+            def Xform "rod"
+            {
+                quatd xformOp:orient = (0.2796892571166554, 0.9090308818876659, -0.30892843059204816, 0)
+                double3 xformOp:translate = (-0.5531178909531003, 0.23250935187126187, 0.95)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+
+                def Cylinder "geom"
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.025, -0.025, -0.36125), (0.025, 0.025, 0.36125)]
+                    double height = 0.7225
+                    color3f[] primvars:displayColor = [(0.75, 0.76, 0.78)]
+                    double radius = 0.025
+                    double3 xformOp:translate = (0, 0, 0.36125)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                }
+            }
+        }
+    }
+}
+

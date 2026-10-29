@@ -1,0 +1,54 @@
+# =============================================================
+# base_stewart.yaml — 움직이는 베이스: Stewart 플랫폼 (PLAN 8단계, 고정 베이스 씬과 별도)
+#
+# 실물이 없는 sim 전용 플랫폼. 다리는 보이기만 하고 (역기구학으로 길이·방향만), 윗판을 kinematic 6 축 사인파로 움직인다.
+# 부착 각도 = daniel-s-ingram/stewart (MIT, 커밋 f276d049) src/ik.cpp 의 b·p 좌표 (반지름 0.806 m, 짝 ±7.2°) 를 크기만 바꿔 씀.
+# 크기는 scripts/design_stewart.py 로 정한다 (2026-10-28 S2, 출발값).
+# 길이 m, 각도 deg (부착 각도) / rad (움직임 진폭), 주파수 rad/s
+#
+# 윗판 움직임 (축 k = x, y, z, roll, pitch, yaw):
+#   q_k(t) = e(t) · s · A_k · sin(ω_k t + φ_k),  ω_k = c_k · Ω_k,  c_k ~ U(omega_scale_range),  φ_k ~ U(0, 2π)  (리셋마다·축마다, seed)
+#   e(t) = 10u³ − 15u⁴ + 6u⁵, u = clamp(t / ramp_time, 0, 1)  (램프 시작·끝에서 위치·속도·가속도가 이어짐)
+#   윗판 자세: 위치 (x, y, height + z), 회전 Rz(yaw)·Ry(pitch)·Rx(roll)  — 회전 중심 = 윗판 윗면 가운데 (= 로봇 base 자리)
+# =============================================================
+
+kind: stewart                  # moving_base.make_base
+usd: assets/bases/stewart/stewart.usda   # build_stewart_usd.py 결과
+prim_name: stewart
+body: top_plate                # 최상위 prim 기준. 윗판 kinematic 강체 (원점 = 회전 중심)
+
+geometry:
+  height: 1.0                  # 가운데 자세의 윗판 윗면 높이 (바닥 위). 2026-10-28 결정 (0.8 = 다리 비율 2.09 초과, 1.2 = 비율 1.68 이지만 드론 world 1.94 m)
+  base_radius: 0.8             # 아랫판 부착점 반지름
+  top_radius: 0.6              # 윗판 부착점 반지름
+  base_plate: {radius: 0.9, thickness: 0.05}   # 아랫판 (바닥에 놓임). 부착점 = 윗면
+  top_plate: {radius: 0.7, thickness: 0.05}    # 윗판. 부착점 = 아랫면
+  # 다리 i 는 base_angles_deg[i] → top_angles_deg[i] (Ingram ik.cpp 순서)
+  base_angles_deg: [97.2, 82.8, -22.8, -37.2, -142.8, -157.2]
+  top_angles_deg: [142.8, 37.2, 22.8, -82.8, -97.2, 157.2]
+
+legs:                          # 보이는 다리 (실린더 + 로드). 길이 = 부착점 사이 (관절 중심 사이)
+  # design_stewart.py (2026-10-28, height 1.0): 수집 프리셋 big 0.777 ~ 1.365 m + 여유 ±0.03 → 신축 0.648 m, 비율 1.87.
+  # 넘으면 수집 프리셋은 에러, lab (0.567 ~ 1.591) 은 경고만
+  length_min: 0.747
+  length_max: 1.395
+  cylinder_radius: 0.045
+  rod_radius: 0.025
+  overlap: 0.05                # 가장 길 때도 로드가 실린더 안에 남는 길이. 실린더·로드 길이 = (length_max + overlap) / 2 (build_stewart_usd.py)
+  joint_radius: 0.05           # 부착점 관절 구 (보이기만)
+
+imu:                           # 윗판 아랫면 가운데 (배의 갑판 아래 IMU 와 같은 구조). 회전 중심 (윗판 윗면) 기준
+  offset: [0.0, 0.0, -0.05]    # = −top_plate.thickness
+
+motion:
+  ramp_time: 5.0               # [s] 시작 램프
+  omega_scale_range: [0.7, 1.3]
+  axes: [x, y, z, roll, pitch, yaw]
+  base_omega: {x: 0.9, y: 0.5, z: 0.9, roll: 0.5, pitch: 0.9, yaw: 0.2}       # Ω_k (연구실 이전 연구 값)
+  presets:
+    # big = 연구실 값에서 x·z·pitch 를 절반 (2026-10-28 사용자: 잡기 난이도·다리 신축 비율, docs/PLAN.md 8단계)
+    big:   {scale: 1.0,  amplitude: {x: 0.15, y: 0.10, z: 0.15, roll: 0.105, pitch: 0.105, yaw: 0.053}}
+    mid:   {scale: 0.5,  amplitude: big}
+    small: {scale: 0.25, amplitude: big}
+    # lab = 연구실 이전 연구 값 그대로 (비교·평가용, 수집 안 함). 다리 길이가 한계를 넘어도 경고만 (다리는 보이기만 함)
+    lab:   {scale: 1.0,  amplitude: {x: 0.30, y: 0.10, z: 0.30, roll: 0.105, pitch: 0.209, yaw: 0.053}, collect: false}
