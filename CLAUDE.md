@@ -21,7 +21,7 @@ openpi π0.5 파인튜닝 계획 (데이터 → 모델 입력, 리허설과 다�
 데스크탑 정책 추론 (sim GUI + 정책 서버 + 클라이언트 노드 구조·GPU 메모리 실측·실행 명령): `docs/policy_inference_desktop.md`
 정책 클라이언트 노드 동작 (입출력, 스레드, 관측 짝짓기 예, 60 Hz 루프 바퀴별 예, 보간 위치): `docs/policy_client.md`
 π0.5 action 생성 원리 (flow matching 학습·추론, 모델 구성·attention mask·adaRMSNorm, 우리 config 에서 state 미사용): `docs/pi05_flow_matching.md`
-움직이는 베이스 씬 (8단계, Husky A200 위 UR5: 구조·UR5 를 베이스에 붙이는 방법·검사·임시값. 고정 베이스 씬과 별도 파일): `docs/moving_base.md`
+움직이는 베이스 씬 (8단계, Husky A200·Stewart 플랫폼 위 UR5: 구조·UR5 를 베이스에 붙이는 방법·Stewart 움직임 식·검사·잡기 시간 비율·임시값. 고정 베이스 씬과 별도 파일): `docs/moving_base.md`
 
 ## 경로 규칙
 
@@ -146,10 +146,12 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 - **카메라 렌더 설정은 `ros2_iface.yaml` `render` 에 명시** (DLSS Performance). RTX 실시간 렌더러는 DLSS·DLAA 만 지원(TAA·끔 불가),
   DLSS 모드는 새 stage 마다 기본값으로 돌아가므로 stage 를 만든 뒤 적용하고 다시 읽어 확인
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다
-- **움직이는 베이스 (8단계, `docs/moving_base.md`)는 고정 베이스 씬과 별도 파일** (`moving_base.py`, `moving_base_scene.py`, `config/base_husky.yaml`·`scene_husky.yaml`, 에셋 `assets/bases/husky/`).
+- **움직이는 베이스 (8단계, `docs/moving_base.md`)는 고정 베이스 씬과 별도 파일** (`moving_base.py`, `moving_base_scene.py`, `config/base_husky.yaml`·`scene_husky.yaml`·`base_stewart.yaml`·`scene_stewart.yaml`,
+  에셋 `assets/bases/husky/`·`assets/bases/stewart/`). 베이스 설정에 `kind: linear | stewart` 필수. Stewart 프리셋 `--base-motion small|mid|big|lab` (수집은 small·mid, big 은 시작 자세 충돌 위험으로 보류, lab = 연구실 값 비교용)
   `drone_scene.py`·`sim_ros2.py`·`scene_drone.yaml` 은 베이스 작업으로 고치지 않는다
   - 로봇을 kinematic 베이스에 붙일 때: root 는 `robot_mount` 그대로 (`base="floating"`), `root_joint` body0 = 베이스 강체, **`physics:excludeFromArticulation = true` 필수**
     (없으면 USD Physics 해석기가 베이스 강체를 로봇 articulation 링크로 흡수 → 베이스가 kinematic 이동을 안 받고 내려앉음. 시험 하중 FixedJoint 흡수와 같은 현상)
   - 재생 중에 로봇 링크로 `RigidPrim` 을 새로 만들지 말 것 (PhysX 가 로봇을 다시 읽어 tensor view 무효). root 는 articulation view, 다른 강체는 sim view `create_rigid_body_view`
   - kinematic 강체의 회전을 USD 로 바꿀 때 그 강체의 충돌 형상이 다시 만들어져 tensor view 가 무효가 된다 (Husky 바퀴) → 보이는 메시 prim 만 돌린다.
-    최상위 prim translate 로 옮기는 것은 괜찮고 PhysX 가 속도도 안다
+    최상위 prim translate 로 옮기는 것은 괜찮고 PhysX 가 속도도 안다. 부모가 강체가 아닌 kinematic 강체 (Stewart 윗판) 는 translate + orient 를 바꿔도 괜찮다
+  - **PhysX 강체 선속도 (`get_velocities`) 는 질량 중심 속도**: prim 원점이 COM 이 아니면 원점 속도와 ω × r_com 만큼 다르다 (Stewart 윗판 2.5 cm)

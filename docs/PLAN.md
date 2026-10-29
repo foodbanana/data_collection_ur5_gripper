@@ -1,6 +1,6 @@
 # Isaac Sim 드론 파지 데이터 수집 파이프라인 계획
 
-작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22) · 첫 소량 수집 13 개, GUI 보조 옆·위 뷰포트, openpi LoRA smoke 통과 (2026-10-23) · 8단계 Husky A200 위 UR5 씬, Stewart·움직이는 베이스 수집 계획 (2026-10-28)
+작성일: 2026-09-29 · 0단계 확정 반영 (2026-09-29) · 1-3 import 확인 결과 반영 (2026-09-30) · 5단계 장치 결정 (2026-10-08: 드론 조종기 먼저, 팔은 SpaceMouse → 2026-10-11: 팔은 PICO 4 Ultra) · 5-B 설치·B-0·B-1·B-2 결과 (2026-10-12) · 5-B B-3·B-4, 컨트롤러 버튼 (2026-10-14) · 컨트롤러 필터, 손목 카메라 마운트 t10 (2026-10-15) · third view D456 intrinsics·위치 후보 비교, 리셋 시간 단축 계획 (2026-10-16) · 실물 드론 Spry+ 조사 (Iris 0.75 배 0.8 kg 유지), 잡는 곳 빨간 테이프, 대량 수집 전 순서 변경 (2026-10-16) · 드론 사인파 hover 프리셋 (2026-10-16) · 드론 기준 위치 목록 (2026-10-16) · third view 위치 Q2·D455 모양·이륙 지점 (2026-10-22) · 첫 소량 수집 13 개, GUI 보조 옆·위 뷰포트, openpi LoRA smoke 통과 (2026-10-23) · 8단계 Husky A200 위 UR5 씬, Stewart·움직이는 베이스 수집 계획 (2026-10-28) · Stewart 플랫폼 씬·잡기 시간 비율 (2026-10-29)
 
 ## 목표
 
@@ -40,7 +40,7 @@ Isaac Sim 6.1.0(standalone zip) 에서 UR5(CB3) + RH-P12-RN(A) 그리퍼 + 손�
 - 7단계 시작 (2026-10-23): first13 으로 openpi π0.5 LoRA smoke 100 step 통과 (연구실 서버 GPU 2 장, loss 0.074 → 0.051, `docs/openpi_finetuning.md`).
   full 파인튜닝 smoke 도 GPU 2 장 FSDP·batch 16 으로 통과. **다음: 데이터를 더 모은 뒤 본 학습 (LoRA / full) → sim 폐루프 평가** (7단계)
 - 8단계 시작 (2026-10-28, 데스크탑 디스크 부족으로 수집 대신): **Husky A200 위 UR5 씬** (kinematic 직선 왕복, 고정 씬과 별도 파일) — `moving_base_scene.py --check` 6/6, 고정 씬 회귀 통과.
-  **다음: Stewart 플랫폼 → 움직이는 베이스 수집 연결 (`sim_ros2_moving_base.py`)** (8단계 "다음 계획", `docs/moving_base.md`)
+  Stewart 플랫폼 씬 (6 축 사인파 small·mid·big·lab, UR5 6/6, 잡기 시간 비율 계산) (2026-10-29). **다음: 움직이는 베이스 수집 연결 (`sim_ros2_moving_base.py`)** (8단계 "다음 계획", `docs/moving_base.md`)
 
 ---
 
@@ -2140,6 +2140,38 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 - 임시값 (실물 Husky 측정 전): UR5 마운트 = **윗판 가운데** (Husky `base_link` 기준 (0.0812, 0, 0.2515), yaw −90° = Clearpath 공식 Husky+UR5 의 판 위 높이·방향. 공식 위치는 윗판 앞쪽 (0.387, 0, 0.2515)),
   궤적 Husky 앞뒤 0.30 m 왕복 · 최고 0.05 m/s · 가속 0.1 m/s² (로봇 base 기준 드론 y ±0.15 m), 실물 Husky 구성 (윗판·범퍼·arch) 은 공식 기본 구성으로 가정
 - third view = **world 고정** (고정 씬 Q2 와 같은 base 기준 위치, 받침대는 바닥부터). Husky 윗판 위는 판이 닿는 범위 (로봇 앞 ±0.3 m) 가 Q2 (앞 1.1 m) 보다 짧아 시점을 새로 골라야 함 → 나중에 결정 (world 고정 / Husky 위 기둥)
+
+- [x] **Stewart 플랫폼 (2026-10-28 ~ 29, S1 ~ S6)** — 구조·식은 `docs/moving_base.md`
+  - 참고 모델 (레포 밖 `~/stewart_ws`): `daniel-s-ingram/stewart` (MIT, `f276d049`, Gazebo SDF + `ik.cpp`) 의 부착 각도 (120° 마다 짝 ±7.2°) 만 씀,
+    `mlayek21/Stewart-Platform` (MIT, `7d14aaf6`, PyBullet URDF·STL) 은 나중 메시 후보. 둘 다 "자세 → IK → 다리 6 개 위치 제어 → 물리" 로 움직이고 (Ingram: ROS 조이스틱 → `ik` → Gazebo PID,
+    mlayek21: 고리를 `createConstraint` 로 닫고 `POSITION_CONTROL`), 우리는 반대로 **윗판 자세를 직접 (kinematic)**, 다리는 IK 로 그리기·범위 검사만
+  - **크기 (S2, `design_stewart.py`, numpy 만)**: 윗판 윗면 (회전 중심 = 로봇 base) 높이 **1.0 m**, 부착 반지름 아랫판 0.8 / 윗판 0.6 m, 판 r 0.9 / 0.7 · 두께 0.05,
+    다리 **0.747 ~ 1.395 m** (신축 0.648, 비율 1.87, 수집 프리셋 big 0.777 ~ 1.365 + 여유 3 cm), 조건수 ≤ 3.3, 다리 간격 ≥ 15 cm. 높이 0.8 = 비율 2.09 초과, 1.2 = 비율 1.68 이지만 드론 world 1.94 m.
+    Ingram 을 같은 배율로 줄이면 (r 0.403·H 1.0) 신축은 같지만 조건수 9.4·다리 간격 10 cm 라 안 씀. 모양은 기본 도형 (A), 메시 (B, mlayek21) 는 수집 전에 다시 정함
+  - **움직임**: `q_k(t) = e(t)·s·A_k·sin(ω_k t + φ_k)` (k = x, y, z, roll, pitch, yaw, 회전 Rz·Ry·Rx, 회전 중심 = 윗판 윗면 가운데). ω_k = 기준 Ω_k (연구실 값) × U(0.7, 1.3), φ_k ~ U(0, 2π) (seed),
+    e(t) = **5 차 램프** 10u³ − 15u⁴ + 6u⁵ (5 s, 시작·끝에서 위치·속도·가속도가 이어짐 → IMU 계단 없음. 처음 3u² − 2u³ 는 가속도가 뜀).
+    프리셋: **big = 연구실 값에서 x·z·pitch 절반** (x 0.15, y 0.10, z 0.15 m, roll 6°, pitch 6°, yaw 3°; 사용자 결정, heave ±0.3 은 다리 비율 2.57·잡기 어려움), mid × 0.5, small × 0.25,
+    **lab = 연구실 값 그대로** (x 0.3·0.9, y 0.1·0.5, z 0.3·0.9, roll 0.105·0.5, pitch 0.209·0.9, yaw 0.053·0.2, 비교용·수집 안 함, 다리 범위 넘으면 경고만)
+  - **에셋 (S3)** `build_stewart_usd.py` → `assets/bases/stewart/stewart.usda` (18 kB, README): 아랫판 정적 collider, 윗판 kinematic 강체 (원점 = 회전 중심), `imu_link` (윗판 아랫면 가운데),
+    다리 = 실린더 + 로드 각 0.7225 m (보이기만, 가장 짧을 때 여유 24.5 mm·가장 길 때 겹침 50 mm), 관절 구 12 개
+  - **구동 (S4)** `moving_base.SineTrajectory`·`StewartBase`·`make_base` (설정 `kind: linear | stewart`), `check_moving_base.py` S1 ~ S4 → small·mid·big·lab **4/4**
+    (윗판 자세 0.000 mm·≤ 0.003°, 선속도 ≤ 1.5 mm/s·각속도 ≤ 0.06 °/s, 다리 끝 = 부착점 0.000 mm). 윗판 (부모가 강체 아님) 은 USD translate + orient 로 돌려도 tensor view 유지 (실험).
+    **PhysX 강체 선속도 = 질량 중심 속도** (윗판 COM 은 회전 중심 2.5 cm 아래) → 검사는 v + ω × r_com 과 비교 (안 하면 big 에서 3.5 mm/s 차이)
+  - **UR5 씬 (S5)** `config/scene_stewart.yaml` (마운트 = 윗판 윗면 가운데, yaw 0), `moving_base_scene.py --scene-config … --base-motion …` → small·mid·big **6/6**
+    (big: 기울기 8.5°·높이 0.85 ~ 1.15 m 에서 robot_mount ↔ 마운트 0.005 mm·0.020°, 팔 0.047° — 고정 베이스 게인 그대로 버팀), **lab 5/6: base 가 +0.17 m 넘게 올라오면 시작 자세 팔이 드론을 밈** (C5 334 mm)
+  - **잡기 시간 비율 (S6)** `reach_moving_base.py` (numpy + `ik_model`, 기구학만): 25 점 × seed 3 × 40 s, 손가락이 드론에 닿기까지 0.6 s (완전히 닫는 데 2.2 s, 잡힐 때 state 0.18 ~ 0.28)
+    | 프리셋 | 닿는 시간 | 잡기 창 (0.6 s 동안 3 cm 안) | 시작 자세 충돌 여유 |
+    |---|---|---|---|
+    | small | 100 % | 94 % | 12.4 cm |
+    | mid | 100 % | 26 % | 7.1 cm |
+    | big | 94 % (최소 82) | 4.5 % | **−3.3 cm** (낮은 z 0.70 점에서 리셋 직후 닿을 수 있음) |
+    | (Husky 0.05 m/s) | 100 % | 68 % | 19.1 cm |
+    충돌 여유는 sim 결과로 맞춤 (팔 점 반지름 0: lab 이 0 아래로 가는 시각 5.04 s = 실제로 민 시각, big 기본 위치 +2.4 cm = 안 닿음)
+  - **결정 (2026-10-29 사용자)**: 수집은 **small 주력 → mid 일부**, **big 은 지금 그대로 수집 안 함** (시작 자세 충돌 위험·잡기 창 4.5 %).
+    **운동 보상 (팔이 베이스 흔들림을 상쇄) 은 필요** — 지금은 환경 만들기 단계라 나중에
+- **나중 버전: 실물처럼 구동하는 베이스** (2026-10-29 사용자, 지금 버전과 따로, 지금은 안 함): Husky = ROS 2 `/cmd_vel` → diff drive → 바퀴 관절 drive·바닥 마찰 (실물 Husky 인터페이스),
+  Stewart = 목표 자세 → IK → 다리 6 개 prismatic 위치 제어, 닫힌 고리는 구속으로 (mlayek21·Ingram 방식). 실물 Stewart 를 쓰게 되거나 리뷰어가 사실적인 플랫폼을 요구할 때 시작.
+  같은 씬에서 고르게 (`kind` 추가 또는 `--base-dynamics kinematic|actuated`), 방식 A·검사·수집 연결은 다시 씀. Stewart 닫힌 고리는 PhysX 에서 불안정할 수 있어 작은 실험부터
 
 **다음 계획 (2026-10-28 사용자와 정함)**
 - 순서: **Stewart 플랫폼 → 움직이는 베이스 수집 연결** (연결을 한 번만 만들어 두 베이스에 씀. 디스크가 생기기 전에는 어차피 수집 안 함)

@@ -1,9 +1,10 @@
-# 움직이는 베이스 씬 (Husky A200 위 UR5)
+# 움직이는 베이스 씬 (Husky A200 / Stewart 플랫폼 위 UR5)
 
-작성: 2026-10-28 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
+작성: 2026-10-28 · Stewart 추가 2026-10-29 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
 
 UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`drone_scene.py`, `sim_ros2.py`) 과 파일을 완전히 나눴다** (그쪽 파일·설정은 그대로).
-지금은 Husky A200 (직선 왕복) 만 있고, 다음에 Stewart 플랫폼 (6 축 사인파) 과 수집 연결 (`sim_ros2_moving_base.py`) 을 만든다 (PLAN 8단계 "다음 계획").
+베이스는 두 가지: **Husky A200** (직선 왕복) 와 **Stewart 플랫폼** (윗판 6 축 사인파, sim 전용, 8 장). 다음은 수집 연결 (`sim_ros2_moving_base.py`) (PLAN 8단계 "다음 계획").
+둘 다 베이스를 kinematic 으로 정해진 대로 움직인다 (실물처럼 바퀴·액추에이터로 구동하는 버전은 나중, PLAN 8단계).
 
 ---
 
@@ -16,7 +17,8 @@ UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`d
 | 검사 | `moving_base_scene.py --headless --check` → C1 ~ C6 **6/6** (약 1 분), `check_moving_base.py --headless` (Husky 단독) → **4/4** |
 | 설정 | `isaacsim/config/scene_husky.yaml` (마운트·드론·시작 자세), `isaacsim/config/base_husky.yaml` (Husky 에셋·궤적) |
 | 에셋 | `isaacsim/assets/bases/husky/` (Clearpath 공식 description, README) |
-| 범위 밖 (다음) | ROS 2 토픽·텔레옵·녹화·리셋, `/base/imu`, PX4 드론, Stewart |
+| Stewart | 8 장 (`--scene-config isaacsim/config/scene_stewart.yaml --base-motion small\|mid\|big\|lab`) |
+| 범위 밖 (다음) | ROS 2 토픽·텔레옵·녹화·리셋, `/base/imu`, PX4 드론 |
 
 ---
 
@@ -107,3 +109,69 @@ source /opt/ros/jazzy/setup.bash && isaacsim/scripts/build_husky_urdf.sh
 | `docs/PLAN.md` 8단계 | 진행 기록, 다음 계획 (Stewart, `sim_ros2_moving_base.py`, `/base/imu`, 잡기 난이도·운동 보상) |
 | `isaacsim/assets/bases/husky/README.md` | Husky 에셋 출처·구조·다시 만드는 법 |
 | `docs/architecture.md` | 전체 수집 구조 (고정 베이스) 와 이 씬의 관계 |
+
+---
+
+## 8. Stewart 플랫폼 (2026-10-29)
+
+실물이 없는 sim 전용 플랫폼. 윗판 (kinematic 강체) 을 6 축 사인파로 움직이고 UR5 를 윗판 윗면 가운데에 붙인다 (Husky 와 같은 방식 A).
+
+### 8.1 구조 (`assets/bases/stewart/stewart.usda`, `build_stewart_usd.py`)
+```text
+ z [m]
+ 1.74 ┤                         ✕ 드론 (world 고정, 로봇 base 기준 앞 0.60 · 위 0.738)
+ 1.00 ┤   ═══════╪★═╪═══════   윗판 r 0.7 (kinematic 강체)  ★ 회전 중심 = 윗판 윗면 가운데 = UR5 robot_mount
+ 0.95 ┤   ●  ●     ◆     ●  ●  ◆ imu_link (윗판 아랫면 가운데)  ● 윗판 부착점 r 0.6
+      │    \  \       /  /     다리 6 개 = 실린더 + 로드 (보이기만), 길이 0.747 ~ 1.395 m (가운데 1.067)
+ 0.05 ┤   ■  ■         ■  ■    ■ 아랫판 부착점 r 0.8 (Ingram ik.cpp 각도, 짝 ±7.2°)
+ 0.00 ┼═══════════════════════ 아랫판 r 0.9 (정적 collider)
+```
+크기는 `design_stewart.py` (numpy, 몇 초) 로 정함: 수집 프리셋 big 이 다리 범위 안 (신축 비율 1.87), 조건수 ≤ 3.3, 다리 간격 ≥ 15 cm.
+
+### 8.2 움직임 (`moving_base.SineTrajectory`·`StewartBase`, 설정 `config/base_stewart.yaml`)
+```text
+q_k(t) = e(t) · s · A_k · sin(ω_k t + φ_k)        k = x, y, z, roll, pitch, yaw
+  e(t) = 10u³ − 15u⁴ + 6u⁵, u = t / 5 s            시작 램프 (위치·속도·가속도가 0 에서 이어짐)
+  ω_k = Ω_k × U(0.7, 1.3),  φ_k ~ U(0, 2π)         seed 로 (같은 seed = 같은 움직임)
+윗판 자세: 위치 (x, y, 1.0 + z), 회전 Rz(yaw)·Ry(pitch)·Rx(roll)
+매 물리 스텝: 윗판 USD translate + orient (→ PhysX kinematic target, 속도·각속도를 앎), 다리 IK L_i = ‖p + R·P_i − B_i‖ 로 메시 갱신·범위 검사
+```
+| 프리셋 | 진폭 x, y, z [m] · roll, pitch, yaw [°] | 쓰임 |
+|---|---|---|
+| `small` | big × 0.25 | **수집 주력** |
+| `mid` | big × 0.5 | 수집 일부 |
+| `big` | 0.15, 0.10, 0.15 · 6, 6, 3 (연구실 값에서 x·z·pitch 절반) | 지금 수집 안 함 (시작 자세 충돌 위험) |
+| `lab` | 0.30, 0.10, 0.30 · 6, 12, 3 (연구실 이전 연구 값, Ω 0.9·0.5·0.9·0.5·0.9·0.2) | 비교용, 다리 범위 넘으면 경고만 |
+
+실물 Stewart (참고 레포) 는 자세 → IK → 다리 6 개 위치 제어 → 물리로 윗판이 움직이지만, 여기서는 윗판 자세를 직접 넣고 IK 는 다리 그리기·검사에만 쓴다 (윗판 오차 0, 액추에이터 지연 없음).
+
+### 8.3 검사
+| 명령 | 결과 (2026-10-29, seed 0) |
+|---|---|
+| `check_moving_base.py --headless --base-config isaacsim/config/base_stewart.yaml --base-motion <프리셋>` | small·mid·big·lab **4/4** (윗판 자세 0.000 mm, 선속도 ≤ 1.5 mm/s·각속도 ≤ 0.06 °/s, 다리 끝 = 부착점) |
+| `moving_base_scene.py --headless --check --scene-config isaacsim/config/scene_stewart.yaml --base-motion <프리셋>` | small·mid·big **6/6** (big: 기울기 8.5°, robot_mount ↔ 마운트 0.005 mm·0.02°, 팔 0.047°). lab 5/6 (base +0.17 m 에서 시작 자세 팔이 드론을 밈) |
+| `python3 isaacsim/scripts/reach_moving_base.py --scene-config isaacsim/config/scene_stewart.yaml --base-motion small mid big` | 아래 표 |
+
+| 프리셋 | 닿는 시간 | 잡기 창 (0.6 s 동안 3 cm 안) | 시작 자세 충돌 여유 |
+|---|---|---|---|
+| small | 100 % | 94 % | 12.4 cm |
+| mid | 100 % | 26 % | 7.1 cm |
+| big | 94 % | 4.5 % | −3.3 cm |
+
+`reach_moving_base.py` 는 기구학만 (자기 충돌·시야·드론 hover 는 안 봄). 충돌 여유는 sim 결과 (lab 부딪힘 5.0 ~ 5.3 s, big 기본 위치 안 닿음) 로 맞춤.
+
+### 8.4 알아 둘 것 (해 보고 찾음)
+- 윗판처럼 **부모가 강체가 아닌** kinematic 강체는 USD translate + orient 로 돌려도 tensor view 가 유지된다 (Husky 바퀴처럼 강체 안의 강체를 돌리면 무효)
+- **PhysX 강체 선속도는 질량 중심 속도**: 윗판 COM 은 회전 중심 2.5 cm 아래라 회전 중심 속도와 ω × r_com 만큼 다르다 (검사는 그 점에서 비교)
+- 램프가 3u² − 2u³ 이면 시작·끝에서 가속도가 뛰어 IMU 가 계단처럼 튄다 → 5 차 램프
+- 고정 베이스에서 튜닝한 팔 게인은 big (기울기 8.5°) 에서도 다시 튜닝할 필요 없음 (팔 0.047°)
+
+### 8.5 명령
+```bash
+python3 isaacsim/scripts/design_stewart.py --config isaacsim/config/base_stewart.yaml             # 크기 확인
+~/isaacsim/python.sh isaacsim/scripts/build_stewart_usd.py --config isaacsim/config/base_stewart.yaml   # 에셋 다시 빌드
+~/isaacsim/python.sh isaacsim/scripts/moving_base_scene.py \
+    --scene-config isaacsim/config/scene_stewart.yaml \
+    --base-motion small                                                                          # GUI
+```
+
