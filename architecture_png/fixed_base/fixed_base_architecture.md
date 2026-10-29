@@ -1,7 +1,7 @@
 # 고정 베이스 구조 (손그림 -> ASCII)
 
 손그림 10 장 (`Screenshot from 2026-10-29 19-34-26.png` ~ `20-26-20.png`) 을 옮긴 것 (2026-10-29). 그림의 [1] ~ [4] 순서.
-글씨가 작아 읽기 어려운 곳은 코드·문서 값으로 채웠다 (`docs/architecture.md`, `docs/sim_ros2_interface.md`, `docs/policy_client.md`).
+글씨가 작아 읽기 어려운 곳은 코드·문서 값으로 채웠다 (`docs/architecture.md`, `docs/sim_ros2_interface.md`, `docs/policy_client.md`, `docs/policy_inference_desktop.md`).
 상자 안에는 한글·ASCII 만 쓴다 (한글 = 2 칸으로 맞춤. 원 숫자·삼각 화살표·그리스 문자는 글꼴마다 폭이 달라 상자가 깨짐).
 
 ---
@@ -16,21 +16,21 @@
                                             |  TCP 127.0.0.1
                                             v
 ┌─────┐                      ┌─ teleop node ─────────────────────────────────────────────────────────────────┐
-│ Sim │                      │ xr_teleop_node.py  (XRoboToolkit SDK 활용)                                    │
+│ Sim │                      │ xr_teleop_node.py  (XRoboToolkit SDK 활용)                                     │
 └─────┘                      │   C++ SDK libPXREARobotSDK.so -> Python binding xrobotoolkit_sdk              │
                              │                                                                               │
-ros2 --------------------->  │ 가져오는 값 (60 Hz 발행)                                                      │
-/joint_states, /clock,       │   - 컨트롤러 pose (x, y, z, qx, qy, qz, qw) = 위치 3 + 쿼터니언 4             │
+ros2 --------------------->  │ 가져오는 값 (60 Hz 발행)                                                          │
+/joint_states, /clock,       │   - 컨트롤러 pose (x, y, z, qx, qy, qz, qw) = 위치 3 + 쿼터니언 4                  │
 /protective_stop             │   - trigger / grip (0 ~ 1)                                                    │
-                             │   - 버튼 A / B / X / Y                                                        │
+                             │   - 버튼 A / B / X / Y                                                         │
                              │         |                                                                     │
                              │         v  One Euro filter (LPF)                                              │
                              │         v  URDF IK                                                            │
-                             │         v  safety limit 기준                                                  │
-                             │              (max joint speed, 관절 오차 한계, max joint rad,                 │
-                             │               TCP < 0.09 m = 책상 충돌 등)                                    │
+                             │         v  safety limit 기준                                                   │
+                             │              (max joint speed, 관절 오차 한계, max joint rad,                    │
+                             │               TCP < 0.09 m = 책상 충돌 등)                                       │
                              │         v                                                                     │
-                             │   joint command          trigger (> 0.6 닫기 / < 0.4 열기) -> gripper command │
+                             │   joint command          trigger (> 0.6 닫기 / < 0.4 열기) -> gripper command   │
                              └───────────────────────────────────────────────────────────────────────────────┘
                               |
                               v
@@ -55,25 +55,25 @@ ros2 토픽 (출력)
                        --> (ROS)  (2) /gripper/command (raw 0 or 1150, float64)
                                       -> 0, 1150 binary 값, 에피소드 결과 기록
 
-┌─ Simulation: sim_ros2.py - app loop 30 Hz (카메라, 렌더) / sim loop 120 Hz (PhysX)  [터미널 1] ─┐          ┌─ PhysX scene [120 Hz] (8.3 ms) - 물리 계산 ───────────────────┐
-│ ┌─ (1) UR5 로봇팔 - ArmBridge ──────────────────────────────────────────────────────┐           │          │ PhysX scene 구성 (테이블, 드론, 그리퍼, 카메라 ...)           │
-│ │ Step1. /joint_command 30 Hz 수신 (명령 2 개씩 수신, latest cmd 이용)              │           │          │   로봇 USD = floating base -> scene 에서 articulation root 를 │
-│ │ Step2. 선형 보간 (command_interp_time): q_start / q_goal / t_start                │           │          │   최상위 prim 으로 옮겨 고정                                  │
-│ │        120 Hz 물리 step 마다 u = (t - t_start) / T   (T = 1/30 s)                 │           │          │                                                               │
+┌─ Simulation: sim_ros2.py - app loop 30 Hz (카메라, 렌더) / sim loop 120 Hz (PhysX)  [터미널 1] ─┐             ┌─ PhysX scene [120 Hz] (8.3 ms) - 물리 계산 ───────────────────┐
+│ ┌─ (1) UR5 로봇팔 - ArmBridge ──────────────────────────────────────────────────────┐           │           │ PhysX scene 구성 (테이블, 드론, 그리퍼, 카메라 ...)           │
+│ │ Step1. /joint_command 30 Hz 수신 (명령 2 개씩 수신, latest cmd 이용)                  │           │          │   로봇 USD = floating base -> scene 에서 articulation root 를 │
+│ │ Step2. 선형 보간 (command_interp_time): q_start / q_goal / t_start                 │           │          │   최상위 prim 으로 옮겨 고정                                  │
+│ │        120 Hz 물리 step 마다 u = (t - t_start) / T   (T = 1/30 s)                  │           │          │                                                               │
 │ │        q_target = q_start + u * (q_goal - q_start)  -> PD drive 목표              │           │          │ (1) PD drive 토크  tau = Kp (q_k - q) - Kd q_dot              │
-│ │        (보간 없으면 step input -> 팔이 덜컥거림. 실물 UR = servoJ 1 kHz 보간)     │           │          │     (최대 tau = 150 N*m 제한)                                 │
+│ │        (보간 없으면 step input -> 팔이 덜컥거림. 실물 UR = servoJ 1 kHz 보간)           │           │          │     (최대 tau = 150 N*m 제한)                                 │
 │ │        -> 지연 33 ms                                                              │           │          │ (2) contact force 계산                                        │
 │ │ Step3. q_k (drive 목표) [120 Hz]  --> PhysX                                       │           │          │ (3) link pose 계산                                            │
 │ │ Step4. /joint_states [120 Hz] (ROS) <-- PhysX : position, velocity, effort (토크) │           │    <-->  │ (4) self-collision 계산                                       │
-│ │ Step5. 범위 넘으면 ProtectiveStop                                                 │           │          │ (5) app loop [30 Hz]: PhysX 4 step 마다                       │
-│ │        (접촉 150 N, 관절 오차 5 deg, 관절 속도 200 deg/s)                         │           │          │     GUI 렌더, camera image [30 Hz], ROS 메시지                │
-│ └───────────────────────────────────────────────────────────────────────────────────┘           │          │                                                               │
+│ │ Step5. 범위 넘으면 ProtectiveStop                                                   │           │         │ (5) app loop [30 Hz]: PhysX 4 step 마다                       │
+│ │        (접촉 150 N, 관절 오차 5 deg, 관절 속도 200 deg/s)                              │           │         │     GUI 렌더, camera image [30 Hz], ROS 메시지                │
+│ └───────────────────────────────────────────────────────────────────────────────────┘           │         │                                                               │
 │                                                                                                 │          │ 그리퍼: tau = Kp (q_k - q) + Kd q_dot                         │
-│ ┌─ (2) RH 그리퍼 - GripperBridge ────────────────────────────────────────────────────────┐      │          │   토크 제한 2.28 N*m, Kp = 45.6, Kd = 1.3758                  │
-│ │ Step1. /gripper/command [30 Hz] 수신: 0 / 1150 raw -> 0 rad / 1.1351 rad (latch)       │      │          │   근거: 실물 peak current 3.33 A, max grip force 170 N        │
-│ │ Step2. 매 120 Hz 마다 target 이 0.516 rad/s 씩 이동 (GripperProfile, drive_gains.yaml) │      │          │         실험 전류 400 mA -> 0.4 / 3.33 x 170 = 약 20 N        │
-│ │        0.516 x 1/120 = 0.0043 rad 씩 목표 이동                                         │      │          │         (손가락 하나) -> 20 N x 2 x 0.057 m = 2.28 N*m        │
-│ │ Step3. q_k (drive 목표)  --> PhysX                                                     │      │          └───────────────────────────────────────────────────────────────┘
+│ ┌─ (2) RH 그리퍼 - GripperBridge ────────────────────────────────────────────────────────┐       │          │   토크 제한 2.28 N*m, Kp = 45.6, Kd = 1.3758                  │
+│ │ Step1. /gripper/command [30 Hz] 수신: 0 / 1150 raw -> 0 rad / 1.1351 rad (latch)        │      │          │   근거: 실물 peak current 3.33 A, max grip force 170 N        │
+│ │ Step2. 매 120 Hz 마다 target 이 0.516 rad/s 씩 이동 (GripperProfile, drive_gains.yaml)    │      │          │         실험 전류 400 mA -> 0.4 / 3.33 x 170 = 약 20 N        │
+│ │        0.516 x 1/120 = 0.0043 rad 씩 목표 이동                                           │      │          │         (손가락 하나) -> 20 N x 2 x 0.057 m = 2.28 N*m        │
+│ │ Step3. q_k (drive 목표)  --> PhysX                                                      │      │          └───────────────────────────────────────────────────────────────┘
 │ │ Step4. /gripper/joint_states [30 Hz] (ROS) <-- PhysX : pos (raw 0 ~ 1150)              │      │
 │ └────────────────────────────────────────────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -229,14 +229,19 @@ option 4: 실물 radiolink 조종기 -> raspberry pico -> sim (드론 조종, [2
 │          -> 새 chunk 는 약 4 칸 위치에 도착 (추론 동안 지나간 칸은 건너뜀)              │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
   |  ^
-  |  |  websocket 0.0.0.0:8000 (지금은 localhost 사용)                         추론 = 약 4 ~ 5 Hz (측정 0.185 s)
-  |  |                                                                         action chunk (10, 7) = 10 칸 x (팔 6 + 그리퍼 1)
-  |  |  --> Obs (state 7 개, image 2 장, prompt 1 개)                            10 칸 = 25 Hz 에서 0.4 s 미래까지 (action_horizon 10, pi0_config)
-  |  |      (1) observation/state (7,) = 팔 6 (rad) + 그리퍼 (present / 1150)  (1) actions (10, 7) chunk
-  |  |      (2) observation/base_image  = third_view (480, 640, 3)             (2) policy timing - 모델 계산 시간 (flow matching)
-  |  |      (3) observation/wrist_image = wrist (480, 640, 3)                  (3) server timing - 모델 계산 + 입출력 변환 + GPU, CPU 통신
+  |  |  websocket 0.0.0.0:8000 (지금은 localhost 사용)
+  |  |
+  |  |  --> Obs (state 7 개, image 2 장, prompt 1 개)
+  |  |      (1) observation/state (7,) = 팔 6 (rad) + 그리퍼 (present / 1150)
+  |  |      (2) observation/base_image  = third_view (480, 640, 3)
+  |  |      (3) observation/wrist_image = wrist (480, 640, 3)
   |  |      (4) prompt = "pick up the drone"
   |  |  <-- action chunk (10, 7)
+  |  |      추론 = 약 4 ~ 5 Hz (측정 0.185 s)
+  |  |      action chunk (10, 7) = 10 칸 x (팔 6 + 그리퍼 1)
+  |  |        10 칸 = 25 Hz 에서 0.4 s 미래까지 (action_horizon 10, pi0_config)
+  |  |      policy timing = 모델 계산 시간 (flow matching)
+  |  |      server timing = 모델 계산 + 입출력 변환 + GPU, CPU 통신
   v  |
 ┌─ [C] Policy server - serve_policy.py ──────────────────────────────────────────────────┐    ┌─ [D] operator ──────────┐
 │ ~/openpi, 위치: desktop, JAX 라이브러리 사용                                           │    │ drone_cmd.py kill       │
