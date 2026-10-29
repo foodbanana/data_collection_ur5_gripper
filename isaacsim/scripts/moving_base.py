@@ -6,11 +6,16 @@
 #                      물리 스텝마다 (PHYSICS_PRE_STEP) 최상위 prim 의 USD 변환을 궤적 위치로 옮긴다.
 #                      PhysX 는 이것을 kinematic target 으로 받아 베이스 속도를 안다 (순간이동 아님 → 위에 붙은 팔이 관성력을 받음).
 #                      바퀴는 이동 거리 / 반지름 만큼 도는 표시만 (바퀴 물리·바닥 접촉 없음)
+#   SineTrajectory   : 6 축 사인파 q_k(t) = e(t)·s·A_k·sin(ω_k t + φ_k) (Stewart, 5 차 시작 램프, ω·위상은 seed 로)
+#   StewartBase      : Stewart 윗판 (kinematic 강체) 을 SineTrajectory 자세로 (USD translate + orient), 다리 메시는 역기구학으로
+#   make_base(cfg)   : 설정 kind (linear | stewart) 로 위 둘 중 하나
 #
 # 확인 (2026-10-28 실험): 최상위 prim translate 를 0.2 m/s 로 옮기면 차체·바퀴 강체 위치가 명령과 같고
 #   PhysX 가 보고하는 선속도도 0.200 m/s.
 #   바퀴 강체 prim 의 회전을 USD 로 바꾸면 PhysX 가 그 충돌 형상을 지우고 다시 만들어 tensor view 가 무효가 된다
 #   → 바퀴 링크 아래 보이는 메시 prim (설정 wheels.visual, 물리 없음) 만 돌린다
+#   Stewart 윗판 (부모가 강체가 아닌 kinematic 강체) 은 translate + orient 를 USD 로 바꿔도 괜찮다 (2026-10-28 실험:
+#   위치·roll 이 명령과 같고 PhysX 선속도·각속도도 맞음, tensor view 유지)
 # SimulationApp 을 만든 뒤에 import 할 것.
 # =============================================================
 
@@ -25,7 +30,9 @@ SIM_ROOT = os.path.dirname(HERE)
 CONFIG_DIR = os.path.join(SIM_ROOT, "config")
 DEFAULT_BASE_CONFIG = os.path.join(CONFIG_DIR, "base_husky.yaml")
 
+KINDS = ("linear", "stewart")
 BASE_KEYS = ("usd", "physics_variant", "prim_name", "body", "base_link_height", "wheels", "trajectory")
+STEWART_KEYS = ("usd", "prim_name", "body", "geometry", "legs", "imu", "motion")
 WHEEL_KEYS = ("links", "radius", "axis", "visual")
 TRAJ_KEYS = ("direction", "distance", "max_speed", "accel", "dwell")
 AXES = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}
@@ -39,6 +46,20 @@ def load_base_config(path=None):
     path = path or DEFAULT_BASE_CONFIG
     with open(path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+    if cfg.get("kind") not in KINDS:
+        raise KeyError(f"{path}: 'kind' 는 {KINDS} 중 하나: {cfg.get('kind')}")
+    cfg["path"] = path
+    if cfg["kind"] == "stewart":
+        for k in STEWART_KEYS:
+            if k not in cfg:
+                raise KeyError(f"{path}: '{k}' 항목이 없습니다")
+        import design_stewart as dst        # 부착점·회전·프리셋 식을 설계 스크립트와 같은 코드로
+
+        dst.load(path)                       # geometry·motion 항목 확인
+        for k in ("length_min", "length_max"):
+            if cfg["legs"].get(k) is None:
+                raise KeyError(f"{path}: 'legs.{k}' 가 비어 있음 (design_stewart.py 결과로 채울 것)")
+        return cfg
     for k in BASE_KEYS:
         if k not in cfg:
             raise KeyError(f"{path}: '{k}' 항목이 없습니다")
@@ -50,7 +71,6 @@ def load_base_config(path=None):
             raise KeyError(f"{path}: 'trajectory.{k}' 항목이 없습니다")
     if cfg["wheels"]["axis"] not in AXES:
         raise ValueError(f"{path}: wheels.axis 는 {tuple(AXES)} 중 하나: {cfg['wheels']['axis']}")
-    cfg["path"] = path
     return cfg
 
 
@@ -100,7 +120,48 @@ def _yaw_quat(yaw):
     return np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)])
 
 
-class KinematicBase:
+class _StepDriver:
+    """물리 스텝마다 (PHYSICS_PRE_STEP) self._apply(t) 를 부른다. t = start() 뒤 sim 시각 (이번 스텝이 끝나는 시각)."""
+
+    def _init_driver(self):
+        self.t = 0.0
+        self._t0 = None
+        self._cb = None
+        self._err = None
+
+    def start(self):
+        if self._cb is not None:
+            return
+        from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
+
+        self._t0 = SimulationManager.get_simulation_time()
+        self.t = 0.0
+        self._cb = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
+
+    def stop(self):
+        if self._cb is not None:
+            from isaacsim.core.simulation_manager import SimulationManager
+
+            SimulationManager.deregister_callback(self._cb)
+            self._cb = None
+
+    def _pre_step(self, dt, context):
+        # 이번 스텝이 끝나는 시각의 자세를 kinematic target 으로. 콜백 안 예외는 묻힐 수 있어 check() 에서 다시 올린다
+        try:
+            from isaacsim.core.simulation_manager import SimulationManager
+
+            self.t = SimulationManager.get_simulation_time() + dt - self._t0
+            self._apply(self.t)
+        except Exception as e:  # noqa: BLE001
+            self._err = e
+
+    def check(self):
+        if self._err is not None:
+            err, self._err = self._err, None
+            raise RuntimeError(f"{type(self).__name__} 물리 콜백 실패: {err}") from err
+
+
+class KinematicBase(_StepDriver):
     """베이스 USD 를 /World/<prim_name> 에 넣고 kinematic 궤적으로 움직인다.
 
     start_xy, start_yaw_deg: base_link 시작 위치 (world, 바닥 위 높이는 설정 base_link_height)·방향.
@@ -125,10 +186,7 @@ class KinematicBase:
         self.dir_world = Rz @ (d / np.linalg.norm(d))        # 궤적 방향 (world)
         self.p0 = np.array([start_xy[0], start_xy[1], float(cfg["base_link_height"])])
         self.traj = LinearTrajectory(tc["distance"], tc["max_speed"], tc["accel"], tc["dwell"])
-        self.t = 0.0
-        self._t0 = None
-        self._cb = None
-        self._err = None
+        self._init_driver()
         self._t_op = None
         self._wheel_ops = []
 
@@ -200,34 +258,190 @@ class KinematicBase:
             q = q0 * spin
             op.Set(qtype(q.GetReal(), *q.GetImaginary()))
 
-    # ── 물리 스텝 콜백 ──
-    def start(self):
-        if self._cb is not None:
-            return
-        from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
 
-        self._t0 = SimulationManager.get_simulation_time()
-        self.t = 0.0
-        self._cb = SimulationManager.register_callback(self._pre_step, event=SimulationEvent.PHYSICS_PRE_STEP)
+# ── Stewart 플랫폼 (6 축 사인파) ──
+SINE_AXES = ("x", "y", "z", "roll", "pitch", "yaw")
 
-    def stop(self):
-        if self._cb is not None:
-            from isaacsim.core.simulation_manager import SimulationManager
 
-            SimulationManager.deregister_callback(self._cb)
-            self._cb = None
+class SineTrajectory:
+    """q_k(t) = e(t) · s · A_k · sin(ω_k t + φ_k),  ω_k = c_k · Ω_k,  c_k ~ U(omega_scale_range),  φ_k ~ U(0, 2π)  (seed 로).
+    e(t) = 10u³ − 15u⁴ + 6u⁵, u = clamp(t / ramp_time, 0, 1) → 램프 시작·끝에서 위치·속도·가속도가 이어짐.
+    sample(t) → (q, q̇, q̈) 각각 (6,) 배열, 순서 SINE_AXES. omega_scale=(a, b) 로 범위를 덮어씀 (lab 재현 (1, 1))."""
 
-    def _pre_step(self, dt, context):
-        # 이번 스텝이 끝나는 시각의 위치를 kinematic target 으로. 콜백 안 예외는 묻힐 수 있어 check() 에서 다시 올린다
-        try:
-            from isaacsim.core.simulation_manager import SimulationManager
+    def __init__(self, motion, preset, seed=0, omega_scale=None):
+        import design_stewart as dst
 
-            self.t = SimulationManager.get_simulation_time() + dt - self._t0
-            self._apply(self.t)
-        except Exception as e:  # noqa: BLE001
-            self._err = e
+        if preset not in motion["presets"]:
+            raise ValueError(f"움직임 프리셋 '{preset}' 이 없음 (있는 것: {sorted(motion['presets'])})")
+        amp = dst.preset_amplitude(motion, preset)
+        lo, hi = omega_scale or motion["omega_scale_range"]
+        if not (0 < lo <= hi):
+            raise ValueError(f"omega_scale 범위가 잘못됨: {lo}, {hi}")
+        rng = np.random.default_rng(seed)
+        self.preset, self.seed = preset, int(seed)
+        self.ramp_time = float(motion["ramp_time"])
+        self.amp = np.array([amp[k] for k in SINE_AXES])
+        self.omega = np.array([float(motion["base_omega"][k]) * rng.uniform(lo, hi) for k in SINE_AXES])
+        self.phase = np.array([rng.uniform(0.0, 2 * np.pi) for _ in SINE_AXES])
+        self.collect = bool(motion["presets"][preset].get("collect", True))
 
-    def check(self):
-        if self._err is not None:
-            err, self._err = self._err, None
-            raise RuntimeError(f"KinematicBase 물리 콜백 실패: {err}") from err
+    def params(self):
+        """episode.json 에 남길 값."""
+        return {"preset": self.preset, "seed": self.seed, "ramp_time": self.ramp_time, "axes": list(SINE_AXES),
+                "amplitude": self.amp.round(6).tolist(), "omega": self.omega.round(6).tolist(), "phase": self.phase.round(6).tolist()}
+
+    def _ramp(self, t):
+        T = self.ramp_time
+        if t <= 0:
+            return 0.0, 0.0, 0.0
+        if t >= T:
+            return 1.0, 0.0, 0.0
+        u = t / T                    # 5 차 (smootherstep): 시작·끝에서 위치·속도·가속도가 이어짐 (IMU 계단 없음)
+        return 10 * u ** 3 - 15 * u ** 4 + 6 * u ** 5, 30 * u * u * (1 - u) ** 2 / T, 60 * u * (1 - u) * (1 - 2 * u) / (T * T)
+
+    def sample(self, t):
+        e, de, dde = self._ramp(t)
+        arg = self.omega * t + self.phase
+        s, ds, dds = self.amp * np.sin(arg), self.amp * self.omega * np.cos(arg), -self.amp * self.omega ** 2 * np.sin(arg)
+        return e * s, de * s + e * ds, dde * s + 2 * de * ds + e * dds
+
+
+def _quat_z_to(d):
+    """+z 를 단위 벡터 d 로 돌리는 쿼터니언 (w, x, y, z). d = −z 근처 아님 (다리는 항상 위쪽)."""
+    d = d / np.linalg.norm(d)
+    c = float(d[2])
+    if c < -1 + 1e-9:
+        return (0.0, 1.0, 0.0, 0.0)
+    w = math.sqrt((1 + c) / 2)
+    return (w, -d[1] / (2 * w), d[0] / (2 * w), 0.0)
+
+
+def _rz(yaw):
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+class StewartBase(_StepDriver):
+    """Stewart 플랫폼 USD (build_stewart_usd.py) 를 /World/<prim_name> 에 넣고, 윗판 (kinematic 강체) 을 SineTrajectory 로 움직인다.
+    윗판 원점 = 회전 중심 = 윗판 윗면 가운데 (= 로봇 base 자리). 최상위 prim 은 바닥 (start_xy, z 0), 방향 start_yaw_deg 에 고정.
+    다리 메시 (보이기만) 는 매 스텝 역기구학으로 방향·로드 위치를 맞춘다. 다리 길이가 legs 범위를 넘으면:
+    수집 프리셋은 에러 (check() 에서), collect: false 프리셋 (lab) 은 기록만 (leg_over).
+    순서: add() (재생 전) → 재생 → start() → 루프마다 check() → stop()"""
+
+    def __init__(self, cfg, preset, seed=0, start_xy=(0.0, 0.0), start_yaw_deg=0.0, omega_scale=None):
+        import design_stewart as dst
+
+        self.cfg = cfg
+        self.path = f"/World/{cfg['prim_name']}"
+        self.body_path = f"{self.path}/{cfg['body']}"
+        self.imu_path = f"{self.body_path}/imu_link"
+        g = cfg["geometry"]
+        self.height = float(g["height"])
+        self.B, self.P = dst.anchors(g)              # B: 최상위 prim 좌표 (아랫판 윗면), P: 윗판 좌표
+        self.lmin, self.lmax = float(cfg["legs"]["length_min"]), float(cfg["legs"]["length_max"])
+        self.traj = SineTrajectory(cfg["motion"], preset, seed, omega_scale)
+        self.yaw = math.radians(start_yaw_deg)
+        self.R0 = _rz(self.yaw)
+        self.p0 = np.array([start_xy[0], start_xy[1], 0.0])
+        self._rot = dst.rot
+        self.leg_over = 0.0                          # 다리 길이가 범위를 넘은 최대량 [m] (lab 기록용)
+        self._init_driver()
+        self._ops = None
+
+    def add(self, stage):
+        """reference + 최상위 prim 위치 (바닥). 윗판은 USD 에서 이미 kinematic. 재생 전에 부를 것."""
+        import isaacsim.core.experimental.utils.stage as stage_utils
+        from isaacsim.core.experimental.prims import XformPrim
+        from pxr import UsdGeom, UsdPhysics
+
+        usd = _abs(self.cfg["usd"])
+        if not os.path.isfile(usd):
+            raise FileNotFoundError(f"베이스 USD 가 없습니다: {usd} (build_stewart_usd.py 로 만들 것)")
+        stage_utils.add_reference_to_stage(usd, self.path)
+        XformPrim(self.path, reset_xform_op_properties=True).set_world_poses(
+            positions=[self.p0.tolist()], orientations=[_yaw_quat(self.yaw).tolist()])
+        top = stage.GetPrimAtPath(self.body_path)
+        if not (top.IsValid() and top.HasAPI(UsdPhysics.RigidBodyAPI) and UsdPhysics.RigidBodyAPI(top).GetKinematicEnabledAttr().Get()):
+            raise RuntimeError(f"윗판이 kinematic 강체가 아님: {self.body_path}")
+        if not stage.GetPrimAtPath(self.imu_path).IsValid():
+            raise RuntimeError(f"imu_link 가 없음: {self.imu_path}")
+        op = KinematicBase._op
+        tx = UsdGeom.Xformable(top)
+        self._ops = {"top_t": op(tx, UsdGeom.XformOp.TypeTranslate, self.body_path),
+                     "top_o": op(tx, UsdGeom.XformOp.TypeOrient, self.body_path), "cyl_o": [], "rod_t": [], "rod_o": []}
+        for i in range(6):
+            cyl = UsdGeom.Xformable(stage.GetPrimAtPath(f"{self.path}/legs/leg_{i + 1}/cylinder"))
+            rod = UsdGeom.Xformable(stage.GetPrimAtPath(f"{self.path}/legs/leg_{i + 1}/rod"))
+            for x, name in ((cyl, "cylinder"), (rod, "rod")):
+                if not x.GetPrim().IsValid():
+                    raise RuntimeError(f"다리 {i + 1} {name} prim 이 없음")
+                if x.GetPrim().HasAPI(UsdPhysics.RigidBodyAPI) or x.GetPrim().HasAPI(UsdPhysics.CollisionAPI):
+                    raise RuntimeError(f"다리 {i + 1} {name}: 보이기만 하는 prim 이어야 함")
+            self._ops["cyl_o"].append(op(cyl, UsdGeom.XformOp.TypeOrient, str(cyl.GetPath())))
+            self._ops["rod_t"].append(op(rod, UsdGeom.XformOp.TypeTranslate, str(rod.GetPath())))
+            self._ops["rod_o"].append(op(rod, UsdGeom.XformOp.TypeOrient, str(rod.GetPath())))
+        return {"path": self.path, "body": self.body_path, "motion": self.traj.params()}
+
+    # ── 자세 ──
+    def local_pose(self, t):
+        """최상위 prim 좌표의 윗판 (위치 c, 회전 R) 과 q, q̇, q̈."""
+        q, dq, ddq = self.traj.sample(t)
+        c = np.array([q[0], q[1], self.height + q[2]])
+        R = self._rot(np.array(q[3]), np.array(q[4]), np.array(q[5]))
+        return c, R, q, dq, ddq
+
+    @staticmethod
+    def omega_body(q, dq):
+        """ZYX 오일러 각속도 → 윗판 좌표 각속도."""
+        r, p = q[3], q[4]
+        dr, dp, dy = dq[3], dq[4], dq[5]
+        return np.array([dr - dy * math.sin(p),
+                         dp * math.cos(r) + dy * math.sin(r) * math.cos(p),
+                         -dp * math.sin(r) + dy * math.cos(r) * math.cos(p)])
+
+    def target(self, t):
+        """시각 t 의 윗판 회전 중심 (위치, 선속도, 선가속도, 회전 R, 각속도) world."""
+        c, R, q, dq, ddq = self.local_pose(t)
+        Rw = self.R0 @ R
+        return (self.p0 + self.R0 @ c, self.R0 @ dq[:3], self.R0 @ ddq[:3], Rw, Rw @ self.omega_body(q, dq))
+
+    def legs(self, t):
+        """(다리 길이 (6,), 윗판 부착점 (6, 3), 단위 방향 (6, 3)) 최상위 prim 좌표."""
+        c, R, *_ = self.local_pose(t)
+        top = (R @ self.P.T).T + c
+        v = top - self.B
+        L = np.linalg.norm(v, axis=1)
+        return L, top, v / L[:, None]
+
+    def _apply(self, t):
+        from pxr import Gf
+
+        c, R, q, *_ = self.local_pose(t)
+        self._ops["top_t"].Set(Gf.Vec3d(*c.tolist()))
+        h = [0.5 * q[3], 0.5 * q[4], 0.5 * q[5]]
+        qx = Gf.Quatd(math.cos(h[0]), Gf.Vec3d(math.sin(h[0]), 0, 0))
+        qy = Gf.Quatd(math.cos(h[1]), Gf.Vec3d(0, math.sin(h[1]), 0))
+        qz = Gf.Quatd(math.cos(h[2]), Gf.Vec3d(0, 0, math.sin(h[2])))
+        self._ops["top_o"].Set(qz * qy * qx)                    # Rz·Ry·Rx
+        L, top, d = self.legs(t)
+        over = max(float((self.lmin - L).max()), float((L - self.lmax).max()), 0.0)
+        if over > 0:
+            self.leg_over = max(self.leg_over, over)
+            if self.traj.collect:
+                raise RuntimeError(f"다리 길이 {L.round(3).tolist()} 가 범위 {self.lmin} ~ {self.lmax} 밖 (t {t:.2f}, 프리셋 {self.traj.preset})")
+        for i in range(6):
+            qc, qr = _quat_z_to(d[i]), _quat_z_to(-d[i])
+            self._ops["cyl_o"][i].Set(Gf.Quatd(float(qc[0]), Gf.Vec3d(*map(float, qc[1:]))))
+            self._ops["rod_t"][i].Set(Gf.Vec3d(*top[i].tolist()))
+            self._ops["rod_o"][i].Set(Gf.Quatd(float(qr[0]), Gf.Vec3d(*map(float, qr[1:]))))
+
+
+def make_base(cfg, start_xy=(0.0, 0.0), start_yaw_deg=0.0, motion=None, seed=0, omega_scale=None):
+    """설정 kind 로 베이스를 만든다. linear (Husky) 는 motion 을 받지 않음 (궤적은 설정 trajectory), stewart 는 motion = 프리셋 이름 필수."""
+    if cfg["kind"] == "linear":
+        if motion not in (None, "static"):
+            raise ValueError(f"linear 베이스 (Husky) 는 아직 움직임 프리셋이 없음 (설정 trajectory 하나): {motion}")
+        return KinematicBase(cfg, start_xy, start_yaw_deg)
+    if motion is None:
+        raise ValueError("stewart 베이스는 motion (프리셋 이름: small·mid·big·lab) 이 필요")
+    return StewartBase(cfg, motion, seed, start_xy, start_yaw_deg, omega_scale)

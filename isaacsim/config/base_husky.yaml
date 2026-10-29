@@ -6,6 +6,7 @@
 # 경로는 isaacsim/ 기준 상대 경로. 길이 m, 각도 deg
 # =============================================================
 
+kind: linear                      # moving_base.make_base: linear (Husky 직선 왕복) | stewart
 usd: assets/bases/husky/husky.usda
 physics_variant: physx            # Physics variant 기본 선택이 없어 명시
 prim_name: husky                  # 씬에서 /World/<prim_name>
