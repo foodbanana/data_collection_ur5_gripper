@@ -74,6 +74,25 @@ reset:
   drone_offset: 0.03              # [m]. sim_ros2 --reset-offset 으로 바꿀 수 있음 (0 = 항상 기준 위치). 2026-10-16 0.05 → 0.03 (기준 위치 목록이 다양성을 맡음, 여유 상자를 줄여 닿는 점을 늘림)
   kill_timeout: 3.0               # [s] 날고 있는 PX4 드론 kill 뒤 disarm 확인까지
 
+# 움직이는 베이스 (8단계, sim_ros2_moving_base.py 만 읽음. 고정 베이스 sim_ros2.py 는 이 섹션을 쓰지 않고 /base/* 를 발행하지 않음)
+#   모두 sim 정답값 (베이스가 kinematic 궤적으로 움직여서. 실물처럼 구동하는 버전에서는 바퀴 odometry·다리 FK 로 바뀔 것, PLAN 8단계)
+#   주기는 물리 120 Hz 의 약수, 발행 시각은 sim time 의 1/hz 배수 (30 Hz 면 카메라·그리퍼와 같은 스텝)
+#   /base/imu  sensor_msgs/Imu, frame imu_link (Husky = 차체 원점, Stewart = 윗판 아랫면 가운데). 잡음 없음 (Xsens 로 잡음을 재면 옵션으로 추가)
+#     angular_velocity [rad/s]·linear_acceleration [m/s²] = IMU 좌표계, 가속도는 비력 (정지 = (0, 0, +9.81)), orientation = world 기준
+#   /base/odom nav_msgs/Odometry, frame odom = 베이스 시작 자세 (실물 odometry 처럼 시작이 원점), child = 베이스 강체 (base_link / top_plate),
+#     twist 는 child 좌표계 (ROS 규칙). Stewart 위치는 윗판 회전 중심 (윗면 가운데 = 로봇 base 자리)
+#   /base/joint_states sensor_msgs/JointState: Husky 바퀴 4 개 (rad), Stewart 다리 6 개 길이 (m)
+base:
+  imu_topic: /base/imu
+  imu_hz: 120.0                   # 참고: Husky UM7 Clearpath 기본 60 Hz, 배 MRU 최대 200 Hz. 실물 IMU 와 맞출 때 바꿈
+  imu_frame_id: imu_link
+  odom_topic: /base/odom
+  odom_hz: 30.0
+  odom_frame_id: odom
+  joint_states_topic: /base/joint_states
+  joint_states_hz: 30.0
+  isaac_imu_topic: /base/imu_isaac  # 검사용 (sim_ros2_moving_base --imu-compare 일 때만): Isaac IMU 센서 값. 녹화하지 않음
+
 cameras:
   tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz
   # frame_id: realsense-ros 규칙 <카메라>_color_optical_frame. 실물 wrapper 값은 실물 PC 에서 확인 필요 (PLAN 3단계)

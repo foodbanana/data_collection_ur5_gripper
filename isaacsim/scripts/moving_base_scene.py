@@ -202,6 +202,8 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
     tv = dict(tv, position=[tv["position"][0], tv["position"][1], tv["position"][2] + dz],
               look_at=[tv["look_at"][0], tv["look_at"][1], tv["look_at"][2] + dz])
     s.third_cam, s.mount_h = ds.add_third_view_camera(s.stage, tv, 0.0)
+    s.tv_cfg = tv                                        # 이 씬 높이로 옮긴 third view 설정 (ros2_iface 카메라 발행이 읽음)
+    s.fixed_cfg = fixed                                  # 고정 씬 설정 (읽기만: 테이블 높이·기준 위치 목록·시작 자세)
 
     s.drone_pos = s.mid_robot + np.asarray(s.scene_cfg["drone_base"], dtype=float)
     s.drone_info = dr.add_drone(s.stage, s.drone_cfg, position=s.drone_pos, prop_spin=prop_spin)

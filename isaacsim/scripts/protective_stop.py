@@ -37,7 +37,6 @@ def enable_contact_report(stage):
 
 class ProtectiveStop:
     def __init__(self, s, cfg, node, mode="on", publish_hz=30.0):
-        from isaacsim.core.experimental.prims import RigidPrim
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
         from std_msgs.msg import Bool
 
@@ -63,13 +62,13 @@ class ProtectiveStop:
         body = [i for i, n in enumerate(names) if n not in c["finger_links"]]
         fing = [i for i, n in enumerate(names) if n in c["finger_links"]]
         self.link_names = [names[i] for i in body] + [names[i] for i in fing]
-        self.contacts = RigidPrim([links[i] for i in body], max_contact_count=64)    # 필터 없음 = 모든 물체와 순 접촉력
+        self.body_view = self._body_contact_view([links[i] for i in body])           # 필터 없음 = 모든 물체와 순 접촉력
         # 손가락 view 는 직접 만든다: RigidPrim(contact_filter_paths=...) 는 필터 수가 prim 수와 같으면 prim 마다 필터를 하나씩
         #   짝지어 버린다 (손가락 4 개 · 환경 4 개 → 각 손가락이 환경 하나만 봄, 2026-10-05 테이블 충돌을 못 잡음)
         sim_view = SimulationManager._physics_sim_view__warp
         self.finger_view = sim_view.create_rigid_contact_view([links[i] for i in fing], filter_patterns=[env for _ in fing],
                                                               max_contact_data_count=256)
-        if self.contacts._physics_rigid_contact_view is None or self.finger_view is None or not self.finger_view.check():
+        if self.body_view is None or self.finger_view is None or not self.finger_view.check():
             raise RuntimeError("보호 정지 접촉 view 를 만들지 못함 (재생 전?)")
         self.arm_i = np.asarray(s.drive.arm_i)
         self.joints = list(ts.ARM_JOINTS)
@@ -93,7 +92,7 @@ class ProtectiveStop:
             qd = (q - self._q_prev) / self.dt
             self._q_prev = q
             qt = v.get_dof_position_targets().numpy()[0][self.arm_i]
-            f_body = np.linalg.norm(self.contacts._physics_rigid_contact_view.get_net_contact_forces(self.dt).numpy().reshape(-1, 3), axis=1)
+            f_body = np.linalg.norm(self.body_view.get_net_contact_forces(self.dt).numpy().reshape(-1, 3), axis=1)
             f_fing = np.linalg.norm(self.finger_view.get_contact_force_matrix(self.dt).numpy(), axis=2).sum(axis=1)
             f = np.concatenate([f_body, f_fing])
             vals = {"force": (float(f.max()), self.link_names[int(f.argmax())]),
@@ -116,6 +115,15 @@ class ProtectiveStop:
                 self.pub.publish(m)
         except Exception as e:  # noqa: BLE001
             self.error = self.error or e
+
+    def _body_contact_view(self, paths):
+        """손가락 아닌 링크의 순 접촉력 view (rigid contact view). 고정 베이스는 RigidPrim 으로 만든다 (2026-10-05 부터 그대로).
+        움직이는 베이스 (floating 로봇) 는 재생 중 로봇 링크로 RigidPrim 을 만들면 PhysX 가 로봇을 다시 읽어 view 가 무효가 되므로
+        moving_base_ros2 가 이 메서드만 바꿔 sim view 로 직접 만든다 (2026-10-29)."""
+        from isaacsim.core.experimental.prims import RigidPrim
+
+        self._body_prim = RigidPrim(paths, max_contact_count=64)       # 참조 유지 (view 수명)
+        return self._body_prim._physics_rigid_contact_view
 
     def resync(self, q):
         """팔을 순간이동한 뒤 (리셋): 관절 속도 차분 기준을 새 자세로 (안 맞추면 순간이동 거리 / dt 가 속도로 잡혀 정지가 걸림)."""

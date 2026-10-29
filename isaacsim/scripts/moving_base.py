@@ -172,7 +172,9 @@ class KinematicBase(_StepDriver):
         self.cfg = cfg
         self.path = f"/World/{cfg['prim_name']}"
         self.body_path = f"{self.path}/{cfg['body']}"
+        self.imu_path = f"{self.body_path}/imu_link"
         self.wheel_paths = [f"{self.path}/{w}" for w in cfg["wheels"]["links"]]
+        self.joint_names = [f"{w.split('/')[-1]}_joint" for w in cfg["wheels"]["links"]]   # URDF 바퀴 관절 이름
         self.wheel_visual_paths = [f"{w}/{cfg['wheels']['visual']}" for w in self.wheel_paths]
         self.wheel_r = float(cfg["wheels"]["radius"])
         self.wheel_axis = np.array(AXES[cfg["wheels"]["axis"]])
@@ -207,6 +209,8 @@ class KinematicBase(_StepDriver):
         body = stage.GetPrimAtPath(self.body_path)
         if not body.IsValid() or not body.HasAPI(UsdPhysics.RigidBodyAPI):
             raise RuntimeError(f"차체 강체가 없습니다: {self.body_path}")
+        if not stage.GetPrimAtPath(self.imu_path).IsValid():
+            raise RuntimeError(f"imu_link 가 없음: {self.imu_path}")
         # articulation 을 풀어 강체 묶음으로: articulation root 를 떼고, 모든 강체 kinematic, 관절 (root_joint·바퀴·고정) 끔
         for s in list(body.GetAppliedSchemas()):
             if "ArticulationRoot" in s or s == "PhysxArticulationAPI":
@@ -247,6 +251,18 @@ class KinematicBase(_StepDriver):
         s, v, a = self.traj.sample(t)
         return self.p0 + s * self.dir_world, v * self.dir_world, a * self.dir_world, s / self.wheel_r
 
+    def kinematics(self, t):
+        """시각 t 의 차체 (base_link) (위치, 선속도, 선가속도, 회전 R, 각속도, 각가속도) world. 직선 이동이라 회전은 처음 yaw 그대로."""
+        p, v, a, _ = self.target(t)
+        z = np.zeros(3)
+        return p, v, a, _rz(self.yaw), z, z
+
+    def joint_states(self, t):
+        """(관절 이름, 위치, 속도): 바퀴 4 개 회전각 [rad]·각속도 [rad/s] (네 바퀴 같음, 미끄러짐 없음)."""
+        s, v, _ = self.traj.sample(t)
+        n = len(self.joint_names)
+        return self.joint_names, [s / self.wheel_r] * n, [v / self.wheel_r] * n
+
     def _apply(self, t):
         from pxr import Gf
 
@@ -261,6 +277,7 @@ class KinematicBase(_StepDriver):
 
 # ── Stewart 플랫폼 (6 축 사인파) ──
 SINE_AXES = ("x", "y", "z", "roll", "pitch", "yaw")
+DIFF_H = 1e-4                                    # [s] 궤적 식의 수치 미분 간격 (각가속도·다리 속도)
 
 
 class SineTrajectory:
@@ -345,6 +362,7 @@ class StewartBase(_StepDriver):
         self.p0 = np.array([start_xy[0], start_xy[1], 0.0])
         self._rot = dst.rot
         self.leg_over = 0.0                          # 다리 길이가 범위를 넘은 최대량 [m] (lab 기록용)
+        self.joint_names = [f"leg_{i + 1}" for i in range(6)]
         self._init_driver()
         self._ops = None
 
@@ -404,6 +422,20 @@ class StewartBase(_StepDriver):
         c, R, q, dq, ddq = self.local_pose(t)
         Rw = self.R0 @ R
         return (self.p0 + self.R0 @ c, self.R0 @ dq[:3], self.R0 @ ddq[:3], Rw, Rw @ self.omega_body(q, dq))
+
+    def kinematics(self, t):
+        """시각 t 의 윗판 회전 중심 (위치, 선속도, 선가속도, 회전 R, 각속도, 각가속도) world.
+        각가속도는 각속도의 중심 차분 (궤적이 식이라 h = 1e-4 s 에서 오차 ~1e-8)."""
+        p, v, a, R, w = self.target(t)
+        h = DIFF_H
+        alpha = (self.target(t + h)[4] - self.target(t - h)[4]) / (2 * h)
+        return p, v, a, R, w, alpha
+
+    def joint_states(self, t):
+        """(관절 이름, 위치, 속도): 다리 6 개 길이 [m]·늘어나는 속도 [m/s] (중심 차분)."""
+        h = DIFF_H
+        dL = (self.legs(t + h)[0] - self.legs(t - h)[0]) / (2 * h)
+        return self.joint_names, self.legs(t)[0].tolist(), dL.tolist()
 
     def legs(self, t):
         """(다리 길이 (6,), 윗판 부착점 (6, 3), 단위 방향 (6, 3)) 최상위 prim 좌표."""
