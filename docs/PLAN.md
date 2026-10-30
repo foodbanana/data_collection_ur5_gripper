@@ -2206,7 +2206,12 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 검사 `check_ros2_moving_base.py` 14/14 (Husky·Stewart small), 고정 베이스 회귀 `check_ros2` 9/9.
 결정 (사용자): IMU 잡음은 처음엔 없이 → 나중에 실물 Xsens (Stewart 용) 로 재서 옵션. odom = 정답값 (메시를 움직이는 방식이라. 실물처럼 구동하는 버전에서 다시).
 베이스 흔들림은 리셋이 끝난 뒤 시작 (R4 부터, 지금은 시작하자마자). 실제 배 데이터는 배 IMU 만 받을 예정 (찾는 중) → 받으면 형태를 보고 움직임 모드 (`--base-motion log:<파일>` 등) 로 붙일지 정함.
-다음: R4 리셋 (베이스·로봇 함께 순간이동, PX4 바닥 이륙, `/sim/drone_kill`, 에피소드 메타데이터) → R5 녹화·stage1 옵션 → R6 PICO 텔레옵 시험 (small) → R7 회귀·문서·커밋
+**R4** 리셋 (`MovingEpisodeReset`: 베이스 멈춤·시작 자세·새 seed + 로봇 root 함께 순간이동, PX4 바닥 이륙, 흔들림은 리셋 끝부터, 응답 `base`·`sim.base`), 드론 옵션 `sim_ros2.py` 와 같은 이름, `--base-motion static` (베이스 정지 = 난이도 1 단계).
+**R5** `record_toggle.py --base moving`, stage1 `--base-pose odom` (`base_pose.npy`), `make_fake_episodes_moving.py` (static 실제 잡기 → 병합·검수 + 흔들림 IMU·자세). 검사 `check_ros2_moving_base` 22/22, 가짜 에피소드 Stewart·Husky 4/4, 고정 회귀 3/3·9/9.
+**R6** 사용자 PICO 텔레옵 (Stewart static·mid, 둘 다 잡음, 변환·병합·검수 5/5). 찾은 것: stage1 이 녹화 시작 직후 늦게 들어온 `/base/imu` 때문에 첫 프레임에서 멈춤 → 베이스 토픽도 에피소드 구간 계산에 넣음.
+GUI RTF 0.61 ~ 0.64 (고정 0.98) → 사용자: 불편하면 그때 개선. 사용자 소감: static 쉬움, mid 조금 어렵지만 풀 문제.
+**R7** 회귀 (가짜 에피소드 moving 4/4·고정 3/3)·문서 (`docs/moving_base.md` 10 장)·커밋. **수집 연결 끝 (2026-10-30)**.
+남은 것 (나중): 베이스 프리셋이 다른 에피소드를 병합이 막지 않음 (지금은 작업명으로 나눔, 필요하면 옵션), GUI 보조 뷰포트, RTF, 정책 추론 연결 (/base/imu 를 관측에), IMU 잡음 옵션 (Xsens), 실물처럼 구동하는 버전·운동 보상
 
 ---
 

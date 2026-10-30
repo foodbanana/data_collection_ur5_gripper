@@ -70,11 +70,11 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 
 | 단계 | 실행 | 환경 |
 |------|------|------|
-| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (`record_toggle.py`): r 시작/종료, d 버리기, q 종료. `--sim`: r → `/sim/reset` → 녹화, k = 드론 모터 정지. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`): B 리셋 → Y 텔레옵 → A 녹화 시작 → X 모터 정지 → A 녹화 끝, 녹화 중 B = 실패로 `_discarded/` 로 옮기고 리셋. A 는 리셋 뒤에만 녹화 시작. bag 폴더에 `episode.json` | 시스템 python3 + ROS |
-| stage1 | `python3 lerobot_stage1_extract_bag.py <bag> --arm-action command\|next_state --base-imu const\|topic` (둘 다 필수) → `bag_lerobot_intermediate/<bag>/` | 시스템 python3 + ROS |
+| 녹화 | `./6_record_bag.sh <작업명> [--sim] [--base moving]` (`record_toggle.py`. `--base moving` = 베이스 토픽 3 개도 녹화, 8단계): r 시작/종료, d 버리기, q 종료. `--sim`: r → `/sim/reset` → 녹화, k = 드론 모터 정지. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`): B 리셋 → Y 텔레옵 → A 녹화 시작 → X 모터 정지 → A 녹화 끝, 녹화 중 B = 실패로 `_discarded/` 로 옮기고 리셋. A 는 리셋 뒤에만 녹화 시작. bag 폴더에 `episode.json` | 시스템 python3 + ROS |
+| stage1 | `python3 lerobot_stage1_extract_bag.py <bag> --arm-action command\|next_state --base-imu const\|topic` (둘 다 필수, 움직이는 베이스는 `--base-imu topic --base-pose odom`) → `bag_lerobot_intermediate/<bag>/` | 시스템 python3 + ROS |
 | 병합 | `python lerobot_merge_episodes_v21.py --manifest <txt> \| --all --repo-id <id>` (에피소드 1 개는 `lerobot_stage2_build_dataset_v21.py`) | conda `lerobot_v2` |
 | 검수 | `python inspect_dataset_v21.py <데이터셋> --load` → PASS/FAIL | conda `lerobot_v2` |
-| 전체 확인 | `python3 isaacsim/scripts/make_fake_episodes.py` (sim 을 띄워 가짜 에피소드 녹화 → 변환 → 병합 → 검수) → 3/3 PASS, 약 6 분 | 시스템 python3 + ROS |
+| 전체 확인 | `python3 isaacsim/scripts/make_fake_episodes.py` (sim 을 띄워 가짜 에피소드 녹화 → 변환 → 병합 → 검수) → 3/3 PASS, 약 6 분. 움직이는 베이스는 `make_fake_episodes_moving.py [--base husky] --cleanup` → 4/4 | 시스템 python3 + ROS |
 
 - conda: `~/miniconda3`, 환경 `lerobot_v2` (Python 3.10, `lerobot==0.3.3` = v2.1). base 자동 활성화 끔. ROS 를 source 한 터미널에서는 `env -u PYTHONPATH python …`
 - stage1 은 격자 시각에 고른 메시지 (카메라·팔·그리퍼) 가 66 ms 보다 오래됐으면 에러 (`--max-age`). `command` 면 첫 `/joint_command` 이전 구간을 뺀다
@@ -147,7 +147,8 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
   DLSS 모드는 새 stage 마다 기본값으로 돌아가므로 stage 를 만든 뒤 적용하고 다시 읽어 확인
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다
 - **움직이는 베이스 (8단계, `docs/moving_base.md`)는 고정 베이스 씬과 별도 파일** (`moving_base.py`, `moving_base_scene.py`, `config/base_husky.yaml`·`scene_husky.yaml`·`base_stewart.yaml`·`scene_stewart.yaml`,
-  에셋 `assets/bases/husky/`·`assets/bases/stewart/`). 베이스 설정에 `kind: linear | stewart` 필수. Stewart 프리셋 `--base-motion small|mid|big|lab` (수집은 small·mid, big 은 시작 자세 충돌 위험으로 보류, lab = 연구실 값 비교용)
+  에셋 `assets/bases/husky/`·`assets/bases/stewart/`). 베이스 설정에 `kind: linear | stewart` 필수. Stewart 프리셋 `--base-motion static|small|mid|big|lab` (static = 베이스 정지 (Husky 도 `static`), 수집은 small·mid, big 은 시작 자세 충돌 위험으로 보류, lab = 연구실 값 비교용).
+  수집 연결 = `sim_ros2_moving_base.py` (리셋 시 베이스·로봇 root 함께 순간이동, 흔들림은 리셋 끝부터, PX4 바닥 이륙) → `record_toggle.py --base moving` → stage1 `--base-imu topic --base-pose odom`. 검사 `check_ros2_moving_base.py` 22/22
   `drone_scene.py`·`sim_ros2.py`·`scene_drone.yaml` 은 베이스 작업으로 고치지 않는다
   - 로봇을 kinematic 베이스에 붙일 때: root 는 `robot_mount` 그대로 (`base="floating"`), `root_joint` body0 = 베이스 강체, **`physics:excludeFromArticulation = true` 필수**
     (없으면 USD Physics 해석기가 베이스 강체를 로봇 articulation 링크로 흡수 → 베이스가 kinematic 이동을 안 받고 내려앉음. 시험 하중 FixedJoint 흡수와 같은 현상)

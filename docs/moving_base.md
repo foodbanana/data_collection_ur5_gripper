@@ -1,9 +1,9 @@
 # 움직이는 베이스 씬 (Husky A200 / Stewart 플랫폼 위 UR5)
 
-작성: 2026-10-28 · Stewart 추가 2026-10-29 · 수집 연결 (sim ROS 2·베이스 토픽) 2026-10-29 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
+작성: 2026-10-28 · Stewart 추가 2026-10-29 · 수집 연결 (sim ROS 2·베이스 토픽) 2026-10-29 · 리셋·녹화·변환·PICO 시험 2026-10-30 · `docs/PLAN.md` 8단계, 브랜치 `isaacsim_v6.1.0`
 
 UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`drone_scene.py`, `sim_ros2.py`) 과 파일을 완전히 나눴다** (그쪽 파일·설정은 그대로).
-베이스는 두 가지: **Husky A200** (직선 왕복) 와 **Stewart 플랫폼** (윗판 6 축 사인파, sim 전용, 8 장). 수집 연결은 `sim_ros2_moving_base.py` (9 장: 토픽·베이스 IMU 식, 리셋·녹화는 다음).
+베이스는 두 가지: **Husky A200** (직선 왕복) 와 **Stewart 플랫폼** (윗판 6 축 사인파, sim 전용, 8 장). 수집 연결은 `sim_ros2_moving_base.py` (9 장: 토픽·베이스 IMU 식, 10 장: 리셋·녹화·변환·PICO 시험).
 둘 다 베이스를 kinematic 으로 정해진 대로 움직인다 (실물처럼 바퀴·액추에이터로 구동하는 버전은 나중, PLAN 8단계).
 
 ---
@@ -18,8 +18,9 @@ UR5 를 움직이는 베이스 위에 올린 sim 씬. **고정 베이스 씬 (`d
 | 설정 | `isaacsim/config/scene_husky.yaml` (마운트·드론·시작 자세), `isaacsim/config/base_husky.yaml` (Husky 에셋·궤적) |
 | 에셋 | `isaacsim/assets/bases/husky/` (Clearpath 공식 description, README) |
 | Stewart | 8 장 (`--scene-config isaacsim/config/scene_stewart.yaml --base-motion small\|mid\|big\|lab`) |
-| ROS 2 | 9 장 `sim_ros2_moving_base.py`: 고정 베이스와 같은 토픽 + `/base/imu`·`/base/odom`·`/base/joint_states` (검사 14/14) |
-| 범위 밖 (다음) | 리셋·PX4 드론 (R4), 녹화·변환 연결 (R5) |
+| ROS 2 | 9 장 `sim_ros2_moving_base.py`: 고정 베이스와 같은 토픽 + `/base/imu`·`/base/odom`·`/base/joint_states` |
+| 리셋·녹화·변환 | 10 장: `/sim/reset` (베이스·로봇 함께 순간이동, PX4 바닥 이륙), `record_toggle.py --base moving`, stage1 `--base-imu topic --base-pose odom`, `--base-motion static` (검사 22/22, 가짜 에피소드 4/4, PICO 시험) |
+| 다음 | 수집 (디스크 확보 뒤), 정책 추론 연결, 실물처럼 구동하는 버전·운동 보상 (PLAN 8단계) |
 
 ---
 
@@ -182,7 +183,7 @@ python3 isaacsim/scripts/design_stewart.py --config isaacsim/config/base_stewart
 ## 9. 수집 연결: sim ROS 2 (2026-10-29, PLAN 8단계 R2·R3)
 
 고정 베이스 `sim_ros2.py` 와 **같은 토픽 + 베이스 토픽 3 개**를 내는 별도 실행 파일. 고정 베이스 파일 (`sim_ros2.py`·`drone_scene.py`·`sim_reset.py`) 은 고치지 않고
-부품 (`ros2_iface` 브리지, `protective_stop`) 을 import·상속해서 쓴다. 아직 없음: `/sim/reset`·`/sim/drone_kill`·PX4 드론 (R4), 녹화·변환 연결 (R5).
+부품 (`ros2_iface` 브리지, `protective_stop`, `sim_reset`) 을 import·상속해서 쓴다. 리셋·녹화·변환은 10 장.
 
 | 파일 | 내용 |
 |---|---|
@@ -319,7 +320,7 @@ Stewart  L_i = | p_top + R_top · P_i − B_i |          (P_i 윗판 부착점, 
 - **보호 정지 접촉 view**: floating 로봇은 재생 중에 로봇 링크로 `RigidPrim` 을 만들면 PhysX 가 로봇을 다시 읽어 view 가 무효 → `MovingProtectiveStop` 이 sim view `create_rigid_contact_view` 로 직접 만듦
   (`protective_stop.py` 는 `_body_contact_view` 함수로만 나눔, 고정 베이스 동작 그대로)
 - 보호 정지 대상 (손가락이 닿으면 안 되는 환경) 은 이 씬에 맞게 메모리에서만 바꿈: 바닥·third view 받침대·베이스 충돌체 (테이블 없음)
-- Stewart RTF 0.81 은 물리 스텝마다 다리 12 개 USD op 를 갱신하는 영향으로 보임 (재지 않음. 필요하면 렌더 주기로 줄일 수 있음)
+- Stewart RTF 0.81 (headless) / 0.61 ~ 0.64 (GUI, 10.5) 은 물리 스텝마다 다리 12 개 USD op 를 갱신하는 영향으로 보임 (재지 않음. 필요하면 렌더 주기로 줄일 수 있음)
 
 ### 9.7 명령
 ```bash
@@ -329,4 +330,87 @@ source /opt/ros/jazzy/setup.bash
 ros2 topic echo /base/imu --once                                                                   # 다른 터미널
 python3 isaacsim/scripts/check_ros2_moving_base.py                                                 # 검사 (Husky + Stewart small)
 python3 isaacsim/scripts/check_ros2_moving_base.py --base stewart --base-motion mid
+```
+
+---
+
+## 10. 리셋·녹화·변환 (2026-10-29 ~ 30, PLAN 8단계 R4·R5·R6)
+
+### 10.1 리셋 `/sim/reset` (`moving_base_ros2.MovingEpisodeReset`, `sim_reset.EpisodeReset` 상속, 약 24 s)
+
+| 순서 | 하는 일 | 고정 베이스와 다른 점 |
+|---|---|---|
+| 1 | 팔·그리퍼 명령 무시, 보호 정지 해제 | 같음 |
+| 2 | 드론 kill → 이륙 지점으로 순간이동 → PX4 재시작 | 이륙 지점 = **바닥** (고정 씬 `px4.takeoff_xy` (1.2, 0.15), 높이 = 씬 `px4_surface_z` 0 + 0.06) |
+| 3 | **베이스 멈춤 → 궤적 시작 자세 (t = 0) 로 순간이동 → 새 seed (리셋 seed + 2 000 000)** | 새로 |
+| 4 | **로봇 root (`robot_mount`) 를 시작 자세로 순간이동 (속도 0)** → 마운트 거리 확인 (2 mm 넘으면 리셋 실패) | 새로 (articulation view `set_root_transforms`) |
+| 5 | 팔 시작 자세 (`--init-pose`, 기본 `under_drone`), 그리퍼 열림 | 같음 |
+| 6 | PX4 이륙 → 드론 기준 위치 | 기준 = **베이스 움직임 가운데의 로봇 base** + 씬 `drone_base` (`--drone-targets` 면 고정 씬 목록을 같은 기준으로) |
+| 7 | **베이스 움직임 시작** | 새로. 흔들림은 리셋 끝부터 (= 녹화 구간에만, 사용자 결정). sim 을 띄운 직후에는 서 있음 |
+
+- 응답 JSON: 고정 베이스와 같은 키 + `base` (이번 에피소드: seed, 궤적 값 (Stewart ω·위상), 마운트 거리, 시작 로봇 base) + `sim.base` (종류·프리셋·마운트·IMU 위치·잡음 없음)
+- 위치 메타데이터 (`drone_goal_base` 등) 의 기준 = **에피소드 시작 (궤적 t = 0) 의 로봇 base** (`robot.base_world`). Husky 는 왕복 한쪽 끝, Stewart 는 가운데
+- 리셋이 실패하면 베이스는 서 있고, 다음 리셋이 다시 시작 자세로 보낸다. `/sim/drone_kill` 은 고정 베이스와 같음
+
+### 10.2 sim 옵션 (`sim_ros2_moving_base.py`)
+
+| 인자 | 값 | 설명 |
+|---|---|---|
+| `--base` | `husky` \| `stewart` | 필수 |
+| `--base-motion` | Stewart `static`·`small`·`mid`·`big`·`lab` (필수) / Husky 없음·`static` | **`static` = 베이스 정지** (Husky 왕복 가운데, Stewart 진폭 0 프리셋). 토픽은 그대로 (정지값). 난이도 static → small → mid, 파이프라인 검사 |
+| `--flight` `--mode` `--hover` `--drone-targets` `--reset-offset` `--position-source` | `sim_ros2.py` 와 같은 이름·뜻 | 기본 PX4. `--flight geometric` = 리셋 약 2 s (연습용, 녹화 안 함) |
+| `--init-pose` | 관절각 6 개 또는 고정 씬 `init_poses` 이름 | 기본 `under_drone` |
+| `--seed` `--headless` `--duration` `--prop-spin` `--protective-stop` `--imu-compare` | | 9 장 |
+
+GUI 보조 뷰포트 (`--aux-views`) 는 아직 없음.
+
+### 10.3 녹화·변환
+
+| 단계 | 명령 | 움직이는 베이스에서 더해진 것 |
+|---|---|---|
+| 녹화 | `./6_record_bag.sh <작업명> --sim --base moving` | `/base/imu`·`/base/odom`·`/base/joint_states` 를 상태 토픽으로 (발행자 확인, `/base/imu` 수신 큐 120 Hz × 3 s). `episode.json` `"base": "moving"`. 기본 `--base fixed` 는 전과 같음 |
+| stage1 | `python3 lerobot_stage1_extract_bag.py <bag> --arm-action command --base-imu topic --base-pose odom` | `base_imu.npy` = `/base/imu` 를 격자 구간 (t − 40 ms, t] 평균 → `observation.base_imu`. `base_pose.npy` (N, 7) = `/base/odom` 자세 [x, y, z, qw, qx, qy, qz] (중간 파일만, 66 ms 나이 검사). 두 옵션을 주면 그 토픽도 에피소드 시작·끝 시각 계산에 들어감 |
+| 병합·검수 | 고정 베이스와 같음 | base_imu 방식 (`const` / `topic`) 이 다른 에피소드는 섞지 않음 → 고정 베이스 데이터와 자동으로 나뉨 |
+
+IMU 를 구간 평균하는 이유: 120 Hz → 25 Hz 로 한 개만 고르면 12.5 Hz 보다 빠른 흔들림이 섞여 들어오고 (엘리어싱) 실물 IMU 잡음이 그대로 남는다.
+평균 (약 5 개) 은 간단한 저역 통과 + 잡음 √5 배 감소. 직전 구간만 쓰는 것은 추론 때 클라이언트가 과거 IMU 만 갖고 있어서 (같은 규칙으로 붙일 계획). 대가는 약 20 ms 지연 (학습·추론이 같음).
+
+### 10.4 검사
+
+| 검사 | 결과 (2026-10-29 ~ 30) |
+|---|---|
+| `check_ros2_moving_base.py` (sim 을 PX4 + `--imu-compare` 로, 베이스마다) | **22/22** (Husky 11 + Stewart small 11). 9장 항목에 더해 9 첫 리셋 전 베이스 정지, 10 리셋 1 (23.9 / 24.2 s, 마운트 0.002 / 0.003 mm, 리셋 중 베이스 정지, 끝난 뒤 움직임), 11 `/sim/drone_kill` 뒤 리셋 2 (움직이던 베이스 → 시작 자세, Husky 팔 0.26°·마운트 0.51 mm), 11b 새 seed |
+| `make_fake_episodes_moving.py [--base husky] [--cleanup]` | **4/4** (Stewart·Husky). A static 베이스에서 고정 명령으로 실제로 잡는 에피소드 2 개 → 병합·검수, B 흔들리는 베이스 1 개 → stage1 만 (Stewart small 비력 범위 0.54 m/s², base_pose 75 mm / Husky 0.20 m/s², 300 mm) |
+| 회귀 | 고정 `make_fake_episodes.py` 3/3, `check_ros2` 9/9, 씬 `--check` 6/6 |
+
+### 10.5 실제 PICO 텔레옵 (R6, 2026-10-29, Stewart)
+
+| 에피소드 | 결과 |
+|---|---|
+| static | 17.3 s, 잡음 (그리퍼 state 최대 0.25), 리셋 24.3 s, 보호 정지 없음 |
+| mid | 61.6 s, 잡음 (0.50), base_imu 비력 x·y 범위 약 1.1 m/s²·자이로 0.05 ~ 0.09 rad/s, 보호 정지 없음 |
+
+- 변환·병합·검수 5/5 (시험 데이터는 지움). 사용자 소감: static 은 쉬움, mid 는 조금 어렵지만 풀 문제
+- **GUI RTF 0.61 ~ 0.64** (고정 베이스 GUI 약 0.98). 텔레옵 60 Hz 명령이 sim time 기준 약 95 개/s 로 들어옴. 사용자: 불편하면 그때 개선 (후보: 다리 12 op 갱신을 렌더 주기로)
+
+### 10.6 알아 둘 것 (해 보고 찾음)
+- **녹화 시작 직후 토픽마다 첫 메시지가 한 스텝씩 다를 수 있다** (R6: `/base/imu` 가 8.3 ms 늦음). stage1 이 시작 시각을 팔·그리퍼·카메라만 보고 정하면 첫 프레임 IMU 구간이 비어 에러 → `--base-imu topic`·`--base-pose odom` 이면 그 토픽도 구간 계산에 넣음 (2026-10-30). 가짜 에피소드는 명령 재생 전 대기가 있어 이 경계가 안 생겼음
+- **베이스 프리셋이 달라도 병합이 막지 않는다** (병합 검사는 팔 action 종류·base_imu 방식만). 수집 때는 작업명으로 나눈다 (`stw_bstatic`, `stw_bsmall`, …). 필요하면 병합에 베이스 종류·프리셋 검사를 옵션으로 추가
+- 작업명과 실제 설정이 다를 수 있다 (R6 에서 `bstatic` 이름으로 mid 녹화). 진짜 설정은 `episode.json` `sim_reset.base.preset`
+- 움직이는 중에 리셋하면 (Husky) 순간이동 뒤 팔 오차·마운트 거리가 조금 커진다 (0.26°, 0.51 mm, 기준 1°·2 mm 안)
+
+### 10.7 명령
+```bash
+source /opt/ros/jazzy/setup.bash
+# 터미널 1: sim (static 으로 손 풀기 → small → mid)
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2_moving_base.py --base stewart --base-motion small
+~/isaacsim/python.sh isaacsim/scripts/sim_ros2_moving_base.py --base stewart --base-motion small --drone-targets --mode hover --hover small
+# 터미널 2·3: 텔레옵 노드·손목 영상 (docs/pico_vr_data_collection.md 와 같음)
+# 터미널 4: 녹화
+./6_record_bag.sh stw_bsmall --sim --base moving
+# 변환
+python3 lerobot_stage1_extract_bag.py bags/<이름> --arm-action command --base-imu topic --base-pose odom
+# 검사
+python3 isaacsim/scripts/check_ros2_moving_base.py                       # 약 6 분
+python3 isaacsim/scripts/make_fake_episodes_moving.py --cleanup          # 약 6 분
 ```

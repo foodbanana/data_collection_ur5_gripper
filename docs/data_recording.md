@@ -12,7 +12,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| 녹화 | `./6_record_bag.sh <작업명> [--sim]` (= `record_toggle.py`). 키 `r` 시작/종료, `k` 드론 모터 정지 (sim), `d` 버리기, `q` 종료. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`, 녹화하지 않음, 2026-10-14): A 녹화 시작 (리셋 뒤에만)·종료, B 리셋 (녹화 중이면 실패로 `_discarded/` 로), X 모터 정지 |
+| 녹화 | `./6_record_bag.sh <작업명> [--sim] [--base moving]` (= `record_toggle.py`. `--base moving` = 움직이는 베이스, 베이스 토픽 3 개 추가, `docs/moving_base.md` 10 장). 키 `r` 시작/종료, `k` 드론 모터 정지 (sim), `d` 버리기, `q` 종료. PICO 컨트롤러 (텔레옵 노드 → `/teleop/request`, 녹화하지 않음, 2026-10-14): A 녹화 시작 (리셋 뒤에만)·종료, B 리셋 (녹화 중이면 실패로 `_discarded/` 로), X 모터 정지 |
 | 단위 | `r` ~ `r` 구간 1 개 = bag 1 개 = 에피소드 1 개. 저장 `bags/<YYYYMMDD_HHMMSS>_<작업명>/` (`.mcap` + `metadata.yaml` + `episode.json`). `episode.json` 에는 텔레옵 설정 (필터·배율) 이 들어가지 않으므로 설정이 바뀌면 작업명을 바꾼다 |
 | 토픽 | 상태 7 개 (팔·그리퍼·카메라 2 대와 camera_info) + 명령 2 개, sim 은 2 개 더 (3 장) |
 | 녹화 전 검사 | 상태 토픽마다 발행자가 있는지, 카메라 발행자가 RELIABLE 인지. 문제가 있으면 **녹화를 시작하지 않는다** |
@@ -94,6 +94,9 @@
 | `/gripper/command` | std_msgs/Float64 | 텔레옵 장치 | 값이 바뀔 때 | 명령 | 안 씀 (참고용. 그리퍼 action 은 `/gripper/target`) |
 | `/protective_stop` | std_msgs/Bool | sim | 30 Hz | 상태 (`--sim`) | `meta.json` 에 발생 여부·시각, 병합에서 기본 제외 |
 | `/clock` | rosgraph_msgs/Clock | sim | 120 Hz | 상태 (`--sim`) | header 없는 토픽 (`/protective_stop`) 의 시각을 sim time 으로 환산 |
+| `/base/imu` | sensor_msgs/Imu | sim (실물은 IMU 드라이버) | 120 Hz | 상태 (`--base moving`) | `observation.base_imu` (stage1 `--base-imu topic`: 구간 (t − 40 ms, t] 평균) |
+| `/base/odom` | nav_msgs/Odometry | sim | 30 Hz | 상태 (`--base moving`) | 안 씀. stage1 `--base-pose odom` → 중간 파일 `base_pose.npy` |
+| `/base/joint_states` | sensor_msgs/JointState | sim | 30 Hz | 상태 (`--base moving`) | 안 씀 (기록만: Husky 바퀴 4 / Stewart 다리 6) |
 
 - **상태 토픽**은 항상 발행되고 있어야 한다. `r` 을 누르면 발행자를 확인하고, 없는 토픽이 있으면 목록을 출력하고 녹화하지 않는다
 - **명령 토픽**은 발행자 확인을 하지 않는다 (텔레옵이 녹화 뒤에 움직이기 시작해도 된다). 녹화 중에 나타나면 녹화기가 찾아서 받는다
@@ -185,6 +188,8 @@ sim 이 떠 있는 채로 재생하면 bag 의 `/clock`·`/joint_command` 가 �
 ```bash
 # 1) bag 마다 stage1 (시스템 python3 + ROS). 텔레옵·sim = command, 고정 베이스 = const
 python3 lerobot_stage1_extract_bag.py bags/<이름> --arm-action command --base-imu const
+#    움직이는 베이스 (--base moving 으로 녹화한 bag)
+python3 lerobot_stage1_extract_bag.py bags/<이름> --arm-action command --base-imu topic --base-pose odom
 
 # 2) 병합·검수 (conda lerobot_v2)
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate lerobot_v2

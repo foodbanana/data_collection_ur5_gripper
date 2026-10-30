@@ -248,7 +248,8 @@ depth 는 제외(color 만). 압축 없음 (30 s 에피소드 약 1.5 GB). 토�
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
 | `--arm-action command\|next_state` | **필수** | 팔 action: `command` = `/joint_command` (텔레옵·sim), `next_state` = `states[i+1]` (freedrive) |
-| `--base-imu const\|topic` | **필수** | `const` = 고정 베이스 상수, `topic` = `/base/imu` 구간 평균 (흔들리는 베이스, PLAN 8단계) |
+| `--base-imu const\|topic` | **필수** | `const` = 고정 베이스 상수, `topic` = `/base/imu` 구간 (t − 40 ms, t] 평균 (흔들리는 베이스, PLAN 8단계) |
+| `--base-pose none\|odom` | `none` | (stage1 만) `odom` = `/base/odom` 자세 → 중간 파일 `base_pose.npy` (N, 7) [x, y, z, qw, qx, qy, qz]. 데이터셋에는 안 들어감 |
 | `--task "문장"` | `pick up the drone` | 언어 명령 |
 | `--fps 숫자` | `25` | 리샘플 목표 fps (25 고정 사용) |
 | `--namespace 이름` | `foodbanana` | repo_id 앞부분 |
