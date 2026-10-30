@@ -258,11 +258,13 @@ def main():
 
     # ── 에피소드 구간 ──
     #   상태 토픽이 모두 있는 구간. command 면 첫 /joint_command 부터 (그 앞은 "직전 최신 명령" 이 없음)
-    t_state_start = max(times[t][0] for t in state_topics)
+    #   --base-imu topic / --base-pose odom 이면 그 토픽도 구간에 넣는다 (녹화 시작 직후 첫 메시지가 한 스텝 늦을 수 있음, 2026-10-29)
+    span_topics = state_topics + [t for t in (TOPIC_IMU, TOPIC_ODOM) if t in times]
+    t_state_start = max(times[t][0] for t in span_topics)
     if args.skip_start < 0:
         fail(f"--skip-start 는 0 이상: {args.skip_start}")
     t_start = max(t_state_start + args.skip_start, times[TOPIC_ARM_CMD][0] if use_cmd else -np.inf)
-    t_end = min(times[t][-1] for t in state_topics)
+    t_end = min(times[t][-1] for t in span_topics)
     if t_end <= t_start:
         fail(f"공통 시간 구간이 없음 (상태 {t_state_start:.3f} ~ {t_end:.3f} s"
              + (f", /joint_command {times[TOPIC_ARM_CMD][0]:.3f} ~ {times[TOPIC_ARM_CMD][-1]:.3f} s. 명령 stamp 의 시계가 다른지 확인" if use_cmd else "") + ")")
