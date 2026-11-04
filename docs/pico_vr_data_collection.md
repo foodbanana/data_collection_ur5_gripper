@@ -107,14 +107,16 @@ source /opt/ros/jazzy/setup.bash
 
 **바꿔 쓰기** (위 명령의 `--drone-targets --mode hover --hover mid` 자리. 설정이 바뀌면 작업명도 바꾼다, 터미널 4)
 
-| 드론 위치 | 드론 움직임 | 명령 뒤쪽 | 작업명 끝 |
+| 드론 위치 | 드론 움직임 | 명령 뒤쪽 | 작업명 (2026-11-04 짧게) |
 |---|---|---|---|
-| 목록 25 점 | 사인파 mid (기본) | `--drone-targets --mode hover --hover mid` | `_tgt_hmid` |
-| 목록 25 점 | 사인파 small (빠르게 떨림 ±2 cm) | `--drone-targets --mode hover --hover small` | `_tgt_hsmall` |
-| 목록 25 점 | 사인파 big (±5 cm) | `--drone-targets --mode hover --hover big` | `_tgt_hbig` |
-| 목록 25 점 | 제자리 | `--drone-targets` | `_tgt_static` |
-| 기본 위치 하나 (±3 cm) | 제자리 | (아무것도 안 붙임) | `_fix_static` |
-| 목록 25 점 | 사람이 실물 조종기로 (두 사람) | `--drone-targets --drone-rc on` | `_tgt_rc` |
+| 목록 25 점 | 사인파 mid (기본) | `--drone-targets --mode hover --hover mid` | `drone_grasp_hmid` |
+| 목록 25 점 | 사인파 small (빠르게 떨림 ±2 cm) | `--drone-targets --mode hover --hover small` | `drone_grasp_hsmall` |
+| 목록 25 점 | 사인파 big (±5 cm) | `--drone-targets --mode hover --hover big` | `drone_grasp_hbig` |
+| 목록 25 점 | 제자리 | `--drone-targets` | `drone_grasp_static` |
+| 기본 위치 하나 (±3 cm) | 제자리 | (아무것도 안 붙임) | `drone_grasp_fix_static` |
+| 목록 25 점 | 사람이 실물 조종기로 (두 사람) | `--drone-targets --drone-rc on` | `drone_grasp_rc` |
+
+- `--hover` 는 `small`·`mid`·`big` 만 있다. 드론 제자리는 hover 프리셋이 아니라 `--mode static` (기본값) 이라 `--mode`·`--hover` 를 둘 다 빼면 된다
 
 - 같이 쓰면 시작 전에 에러: `--mode hover` + `--drone-rc on` (드론을 움직이는 쪽이 둘), `--drone-targets` + `--drone-pos`
 - 연습만 할 때: `--flight geometric` 을 붙이면 리셋이 약 2 s (기하 제어기. 수집은 PX4 로, 녹화하지 않는다)
@@ -154,15 +156,16 @@ ros2 run rqt_image_view rqt_image_view /cam/wrist/color/image_raw
 ```bash
 cd ~/data_collection_ur5_gripper
 source /opt/ros/jazzy/setup.bash
-./6_record_bag.sh <작업명> --sim             # 예 (수집 기본): ./6_record_bag.sh drone_grasp_t10_f1_tgt_hmid --sim
+./6_record_bag.sh <작업명> --sim             # 예 (수집 기본): ./6_record_bag.sh drone_grasp_hmid --sim
 ```
 
 - 첫 줄 `~/realsense_ws/install/setup.bash: No such file or directory` 는 무시해도 된다 (실물 PC 용 줄)
 - 도움말에 `컨트롤러 버튼 (/teleop/request ...)` 줄이 나오면 준비 끝
 - **작업명은 설정 (필터·배율·시작 자세·드론 움직임) 이 같은 데이터끼리 같게, 설정이 바뀌면 새 이름으로.** bag 이름은 `<날짜_시각>_<작업명>` 이 되고,
   나중에 병합할 때 작업명으로 골라 모은다 (10 장). 예: 필터를 켠 지금 설정 = `drone_grasp_f1`. **손목 카메라 마운트 기울기도 설정이다** (2026-10-15 부터 t10): 예 `drone_grasp_t10_f1`.
-  **드론 위치·움직임도 설정이다** (2026-10-16): 작업명 = `drone_grasp_<손목 마운트>_<필터>_<드론 위치>_<드론 움직임>`, 끝 부분은 터미널 1 "바꿔 쓰기" 표.
-  예 `drone_grasp_t10_f1_tgt_hmid` (수집 기본), `drone_grasp_t10_f1_fix_static` (예전 방식)
+  **드론 위치·움직임도 설정이다** (2026-10-16): 작업명 = `drone_grasp_<손목 마운트>_<필터>_<드론 위치>_<드론 움직임>` (옛 규칙, 예 `drone_grasp_t10_f1_tgt_hmid`).
+  **2026-11-04 부터 짧게**: 마운트 t10·필터 켬·목록 25 점은 늘 같아서 이름에서 빼고 (`episode.json` 에 자동 기록), 바뀌는 드론 움직임만 남긴다 (터미널 1 "바꿔 쓰기" 표).
+  기본과 다를 때만 꼬리표를 붙인다. 옛 bag (`…_t10_f1_tgt_hmid`) 은 새 `drone_grasp_hmid` 와 같은 설정이라 병합 때 `grep "_hmid$"` 로 같이 고른다
   (`xr_test` 로 녹화한 bag 에는 필터 끔 (2026-10-14) 과 켬 (2026-10-15) 이 섞여 있어 날짜로만 구분된다)
 
 ---

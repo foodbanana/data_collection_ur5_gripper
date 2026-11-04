@@ -2196,7 +2196,10 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
   ③ 흔들림 주기에 맞춰 잡는 시연 ④ **잡을 수 있는 시간 비율 계산 도구** (프리셋마다 드론이 팔 닿는 영역 안에 있는 시간 %, 기구학만, Stewart 때 같이) →
   ⑤ **운동 보상** (IMU·베이스 자세로 팔이 흔들림을 상쇄, 해양 크레인·갱웨이 방식) 은 ① ~ ④ 결과를 본 뒤 결정 (사용자)
 - 작업명: 이미 모은 데이터 이름은 그대로. **이름 규칙 바꾸기는 나중에 (2026-10-30 사용자: 전부 만든 뒤 한 번에 바꾸는 게 안전)**. 그때까지는 손으로 적는다
-  (고정 `drone_grasp_t10_f1_tgt_hmid`, 움직이는 베이스 `drone_grasp_t10_f1_stw_bsmall_tgt_hmid --base moving`). 정해 둔 계획:
+  **2026-11-04 사용자: 늘 같은 설정은 이름에서 뺌** (`t10` 마운트 하나로 확정·`f1` 필터 항상 켬·`tgt` 목록 25 점 항상 씀, 셋 다 `episode.json` 에 자동 기록).
+  바뀌는 것만 이름에: 고정 `drone_grasp_<드론 움직임>` (`static`·`hsmall`·`hmid`·`hbig`), 움직이는 베이스 `drone_grasp_<베이스>_<드론 움직임>` (예 `drone_grasp_stw_bsmall_hmid --base moving`).
+  기본 (마운트 t10·필터 켬·목록 25 점) 과 다를 때만 꼬리표를 붙임 (예 목록 없이 기준 위치 하나 = `drone_grasp_fix_static`, 조종기 = `drone_grasp_rc`).
+  옛 bag 16 개 (`drone_grasp_t10_f1_tgt_hmid`) 는 이름 그대로, 새 mid 와 같은 설정이라 병합 때 `grep "_hmid$"` 로 같이 고름. 정해 둔 계획:
   1. 녹화 도구 (`record_toggle.py`, `--sim` 만): 리셋 응답에서 이름 꼬리표 자동 (`<작업명>_<베이스 stw_bsmall·hsk_btraj>_<tgt|pos>_<hmid|static|rc>`),
      `--base` 도 응답의 `sim.base` 유무로 자동 (사용자 값과 다르면 에러), `episode.json` `name_tags`. `--no-name-tags` 로 끔. 실물은 지금 그대로
      (`t10`·`f1` 은 늘 같은 값이라 이름에서 뺌: 마운트는 이미 `episode.json` 에 자동 기록, 필터는 항상 켬)
