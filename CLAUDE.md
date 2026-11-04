@@ -148,7 +148,9 @@ sim 전용: `/protective_stop`(Bool), 서비스 `/sim/reset`·`/sim/drone_kill`.
 - URDF importer 에는 Merge fixed joints, Joint Drive Type 옵션이 없다. USD Output 폴더 안에 로봇 이름 폴더를 만든다
 - **움직이는 베이스 (8단계, `docs/moving_base.md`)는 고정 베이스 씬과 별도 파일** (`moving_base.py`, `moving_base_scene.py`, `config/base_husky.yaml`·`scene_husky.yaml`·`base_stewart.yaml`·`scene_stewart.yaml`,
   에셋 `assets/bases/husky/`·`assets/bases/stewart/`). 베이스 설정에 `kind: linear | stewart` 필수. Stewart 프리셋 `--base-motion static|small|mid|big|lab` (static = 베이스 정지 (Husky 도 `static`), 수집은 small·mid, big 은 시작 자세 충돌 위험으로 보류, lab = 연구실 값 비교용).
-  수집 연결 = `sim_ros2_moving_base.py` (리셋 시 베이스·로봇 root 함께 순간이동, 흔들림은 리셋 끝부터, PX4 바닥 이륙) → `record_toggle.py --base moving` → stage1 `--base-imu topic --base-pose odom`. 검사 `check_ros2_moving_base.py` 22/22
+  수집 연결 = `sim_ros2_moving_base.py` (리셋 시 베이스·로봇 root 함께 순간이동, 흔들림은 리셋 끝부터, PX4 바닥 이륙) → `record_toggle.py --base moving` → stage1 `--base-imu topic --base-pose odom`. 검사 `check_ros2_moving_base.py` 24/24
+  - **`/base/imu` = Gazebo VRX WAM-V IMU 와 sim2sim 맞춤 (2026-11-04, `docs/moving_base.md` 11 장)**: 평균 100 Hz (물리 120 Hz 라 간격 8.33 / 16.67 ms 섞임), Stewart IMU 위치 = 로봇 base 기준 (−0.15, 0, 0) (`scene_stewart.yaml` `imu`),
+    잡음 = gz-sensors GaussianNoiseModel 식·Gazebo 값 (`ros2_iface.yaml` `base.imu_noise_models`, Stewart 기본 켬, 바이어스는 sim 시작에 한 번). `--imu-noise none` 으로 끔
   `drone_scene.py`·`sim_ros2.py`·`scene_drone.yaml` 은 베이스 작업으로 고치지 않는다
   - 로봇을 kinematic 베이스에 붙일 때: root 는 `robot_mount` 그대로 (`base="floating"`), `root_joint` body0 = 베이스 강체, **`physics:excludeFromArticulation = true` 필수**
     (없으면 USD Physics 해석기가 베이스 강체를 로봇 articulation 링크로 흡수 → 베이스가 kinematic 이동을 안 받고 내려앉음. 시험 하중 FixedJoint 흡수와 같은 현상)

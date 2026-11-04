@@ -19,7 +19,7 @@ PLAN 8단계 "움직이는 베이스 수집 연결" R2 ~ R5 까지 만든 것 (2
 
 ```text
 ┌─ teleop node ─────┐  <-- (ROS)  /clock [120 Hz], /joint_states [120 Hz], /protective_stop [30 Hz]
-│ xr_teleop_node.py │  <-- (ROS)  (*) /base/imu [120 Hz], /base/odom [30 Hz], /base/joint_states [30 Hz]
+│ xr_teleop_node.py │  <-- (ROS)  (*) /base/imu [avg 100 Hz], /base/odom [30 Hz], /base/joint_states [30 Hz]
 └───────────────────┘  --> (ROS)  /joint_command [60 Hz], /gripper/command
 
 ┌─ (*) Simulation: sim_ros2_moving_base.py --base husky|stewart --base-motion ... (30 Hz / 120 Hz) ─┐          ┌─ PhysX scene [120 Hz] ───────────┐
@@ -49,7 +49,7 @@ PLAN 8단계 "움직이는 베이스 수집 연결" R2 ~ R5 까지 만든 것 (2
 │ a_imu = a + alpha x r_w + w x (w x r_w)          (접선 + 구심 가속도)                 │
 │                                                                                    │
 │ /base/imu  : 비력 f = R^T (a_imu - g),  g = (0, 0, -9.81)   (정지 = (0, 0, +9.81))   │
-│              자이로 = R^T w,  자세 = R (world 기준 쿼터니언),  잡음 없음                  │
+│              자이로 = R^T w,  자세 = R (world),  평균 100 Hz, 잡음 = 씬 설정            │
 │ /base/odom : 위치 = R0^T (p - p0),  자세 = R0^T R     (원점 = 베이스 시작 자세)          │
 │              twist = R^T v, R^T w   (child 좌표계)                                  │
 │ /base/joint_states : Husky 바퀴 4 개 회전각 / Stewart 다리 6 개 길이                    │
@@ -85,7 +85,7 @@ PLAN 8단계 "움직이는 베이스 수집 연결" R2 ~ R5 까지 만든 것 (2
 ┌─ Recorder: record_toggle.py (*) --base moving ──────────────────────────────────────────┐
 │ Step1. /teleop/request 구독 (버튼 A / B / X)                                              │
 │ Step2. 토픽 구독: 고정 베이스와 같은 것 + (*) /base/imu, /base/odom, /base/joint_states       │
-│        (발행자 확인, /base/imu 수신 큐 120 Hz x 3 s)                                        │
+│        (발행자 확인, /base/imu 수신 큐 3 s 분량)                                             │
 │ Step3. A -> 녹화 시작 / 끝,  B -> /sim/reset,  X -> /sim/drone_kill                        │
 │ episode.json: (*) "base": "moving", sim_reset.base                                      │
 │ 실행: 6_record_bag.sh <작업명> --sim (*) --base moving                                    │

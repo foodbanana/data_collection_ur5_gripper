@@ -197,23 +197,24 @@ python3 isaacsim/scripts/design_stewart.py --config isaacsim/config/base_stewart
 
 | 토픽 | 타입 | 주기 | frame | 내용 |
 |---|---|---|---|---|
-| `/base/imu` | sensor_msgs/Imu | 120 Hz (물리 스텝마다) | `imu_link` | 각속도 [rad/s]·비력 [m/s²] (IMU 좌표계), 자세 (world 기준). 잡음 없음, 공분산 0 (= 모름) |
+| `/base/imu` | sensor_msgs/Imu | **평균 100 Hz** (2026-11-04, 11 장. 그 전 120 Hz) | `imu_link` | 각속도 [rad/s]·비력 [m/s²] (IMU 좌표계), 자세 (world 기준, 잡음 없음). 잡음 = 씬 설정 `imu.noise` (Stewart Gazebo 모델, Husky 없음), 공분산 0 (= 모름) |
 | `/base/odom` | nav_msgs/Odometry | 30 Hz | `odom` → `base_link` / `top_plate` | 시작 자세 기준 위치·자세, twist 는 child 좌표계 |
 | `/base/joint_states` | sensor_msgs/JointState | 30 Hz | | Husky 바퀴 4 개 회전각 [rad] / Stewart 다리 6 개 길이 [m] |
-| `/base/imu_isaac` | sensor_msgs/Imu | 120 Hz | `imu_link` | `--imu-compare` 일 때만. Isaac IMU 센서 값 (검사용, 녹화 안 함) |
+| `/base/imu_isaac` | sensor_msgs/Imu | 120 Hz (물리 스텝마다) | `imu_link` | `--imu-compare` 일 때만. Isaac IMU 센서 값 (검사용, 녹화 안 함) |
+| `/base/imu_truth` | sensor_msgs/Imu | 120 Hz (물리 스텝마다) | `imu_link` | `--imu-compare` 일 때만. 잡음 넣기 전 정답값 (검사용, 녹화 안 함) |
 
 - stamp = sim time. 30 Hz 토픽은 sim time 의 1/30 s 배수 시각 (카메라·그리퍼와 같은 물리 스텝)
 - **모두 정답값**: 베이스가 궤적 식대로 kinematic 으로 움직이므로, BaseBridge 가 **같은 식·같은 시각**으로 계산한다.
   실물처럼 구동하는 버전 (Husky `/cmd_vel`·바퀴 물리, Stewart 모터) 에서는 궤적 식으로 계산할 수 없으므로 측정값 (Isaac IMU 센서·바퀴 odometry·다리 FK) 으로 바꾼다 (PLAN 8단계)
 - **수집 때는 `/base/imu` (궤적 계산값) 를 녹화** → stage1 이 25 Hz 구간 평균으로 `observation.base_imu`. `/base/odom`·`/base/joint_states` 는 bag·중간 파일에만
-- IMU 잡음: 처음엔 없음. 실물 Xsens (나중에 실물 Stewart 를 쓸 때 윗판 IMU) 로 잡음을 재면 옵션으로 추가. 실제 배 데이터는 배 IMU 만 받을 예정 (Xsens 아님)
+- IMU 잡음: ~~처음엔 없음, 나중에 Xsens 로 재서 옵션~~ → **2026-11-04 Gazebo VRX WAM-V IMU 잡음 모델로 (Stewart 기본 켬, 11 장)**. 실제 배 데이터는 배 IMU 만 받을 예정 (Xsens 아님)
 
 ### 9.2 IMU 위치 (메시 없음)
 
 | 베이스 | prim | 위치 (베이스 강체 기준) |
 |---|---|---|
 | Husky | `/World/husky/Geometry/base_link/imu_link` | (0, 0, 0) = 차체 원점, 바닥 위 0.132 m. 공식 URDF 에서 들어온 것 (실물 위치는 Husky 를 고친 뒤 확인) |
-| Stewart | `/World/stewart/top_plate/imu_link` | (0, 0, −0.05) = 윗판 아랫면 가운데 (배의 갑판 아래 IMU 와 같은 구조). `build_stewart_usd.py` 가 넣음 |
+| Stewart | `/World/stewart/top_plate/imu_link` | **(−0.15, 0, 0) = 로봇 base 기준 (−0.15, 0, 0)** (2026-11-04, Gazebo WAM-V 와 같게, 씬 설정 `imu.offset_robot_base` 로 메모리 stage 에서 옮김). 에셋 (`build_stewart_usd.py`) 의 자리는 (0, 0, −0.05) = 윗판 아랫면 가운데 그대로 |
 
 - 둘 다 빈 `Xform` (메시·충돌·질량 없음). 방향은 베이스 강체와 같아야 함 (다르면 에러, `imu_offset`)
 - BaseBridge 는 시작할 때 이 위치 r 만 한 번 읽고, 값은 궤적 식으로 계산한다 (prim 을 매 스텝 읽지 않음)
@@ -298,7 +299,7 @@ Stewart  L_i = | p_top + R_top · P_i − B_i |          (P_i 윗판 부착점, 
 | 1 | 토픽 주기 (베이스 움직이는 중): `/joint_states`·`/clock` 120, 카메라·그리퍼 30, `/protective_stop` 약 30 Hz | ±1 %, 끊김 0 |
 | 2 | 같은 시계: 카메라·그리퍼 stamp ∈ `/joint_states` stamp | 안 맞음 0 |
 | 4 | 팔 명령 응답: 시작 자세에서 shoulder_pan 계단 0.03 rad | 50 % ≤ 80 ms, 보호 정지 없음 |
-| 5 | 베이스 토픽 주기 (imu 120, odom·joint_states 30 Hz) + stamp ∈ `/joint_states` stamp | ±1 %, 끊김·안 맞음 0 |
+| 5 | 베이스 토픽 주기 (imu 평균 100 Hz·간격 ≤ 16.7 ms, odom·joint_states 30 Hz) + stamp ∈ `/joint_states` stamp | ±1 %, 끊김·안 맞음 0 |
 | 6 | IMU 두 방법 일치 (같은 stamp) | 각속도 차 ≤ 0.005 rad/s, 비력 차 RMS ≤ 0.02·최대 ≤ 0.15 m/s², 자세 차 ≤ 0.1°, 짝 ≥ 95 % (기준은 처음 잰 값 보고 정함) |
 | 7 | IMU 물리 확인: 비력 z 평균 ≈ \|g\|. Husky 는 각속도 0, 등속·정지 구간 비력 = (0, 0, \|g\|) | ±0.05 / ±0.01 m/s² |
 | 8 | odom 일관성: 위치 차분 ≈ twist (child → odom 으로 돌려서), frame 하나, joint_states 개수 (4 / 6) | ≤ 2 mm/s |
@@ -414,3 +415,38 @@ python3 lerobot_stage1_extract_bag.py bags/<이름> --arm-action command --base-
 python3 isaacsim/scripts/check_ros2_moving_base.py                       # 약 6 분
 python3 isaacsim/scripts/make_fake_episodes_moving.py --cleanup          # 약 6 분
 ```
+
+---
+
+## 11. Gazebo 와 IMU 맞추기 (2026-11-04, sim2sim)
+
+Isaac Sim 에서 정책 (VLA·RL·MPC) 을 학습하고 Gazebo (`~/vrx_ws`, VRX 바다·WAM-V 위 로봇) 에 옮긴다 (sim2sim). 정책이 보는 `/base/imu` 가 두 sim 에서 같은 모양이어야 하므로
+배를 흉내 내는 **Stewart 씬의 IMU 를 Gazebo WAM-V IMU 에 맞춤** (사용자 결정: Stewart 만, 주기 방식 A, 잡음 기본 켬, 바이어스는 sim 시작에 한 번).
+
+| 항목 | Gazebo (WAM-V) | Isaac Sim (Stewart) |
+|---|---|---|
+| 토픽·형식 | `/base/imu`, sensor_msgs/Imu | 같음 (원래부터) |
+| 위치 | wamv/base_link (−0.15, 0, 1.3) = 로봇 base (갑판 위 1.30 m) 기준 (−0.15, 0, 0) | 로봇 base 기준 (−0.15, 0, 0) (`scene_stewart.yaml` `imu.offset_robot_base`) |
+| 주기 | 100 Hz (물리 240 Hz 단위라 간격 8.33 / 12.5 ms 섞임, 평균 100) | 평균 100 Hz (물리 120 Hz: `k / 100` s 를 지난 첫 물리 스텝에서 발행, 간격 8.33 / 16.67 ms 섞임) |
+| 자이로 잡음 | stddev 0.009, bias 평균 0.00075 (stddev 0.005), 동적 바이어스 0.00002 (상관 시간 400 s), 해상도 0.00025 | 같은 값·같은 식 (`ros2_iface.yaml` `base.imu_noise_models.gazebo`) |
+| 가속도계 잡음 | stddev 0.021, bias 평균 0.05 (stddev 0.0075), 동적 바이어스 0.000375 (175 s), 해상도 0.005 | 같음 |
+| 자세 | 잡음 없음, world (ENU) | 잡음 없음, Isaac world (z 위. x 가 동쪽이라는 보장은 없어 yaw 기준이 상수만큼 다를 수 있음. 데이터셋에는 자세가 안 들어감) |
+
+- 값 출처: `~/vrx_ws/src/vrx/vrx_urdf/wamv_gazebo/urdf/components/wamv_imu.xacro` (기본 xacro 위치는 (0.3, −0.2, 1.3), 위 (−0.15, 0, 1.3) 은 사용자가 고친 WAM-V 설정)
+- **잡음 식** (gz-sensors8 `src/GaussianNoiseModel.cc` 와 같게, `moving_base_ros2.GzNoise`, 축마다 독립):
+  ```text
+  시작 (한 번): bias = N(bias_mean, bias_stddev), 50 % 확률로 부호 반대
+  매 샘플:      bias = exp(-dt/τ)·bias + N(0, σ_d),  σ_d = sqrt(-σ_b²·τ/2·expm1(-2dt/τ))   (σ_b = 동적 바이어스, τ = 상관 시간)
+                out  = in + bias + N(mean, stddev)
+                precision ≠ 0 이면 out = round(out / precision)·precision
+  ```
+- 잡음 seed = sim `--seed` + 3 000 000 (sim 시작에 한 번, 리셋해도 바이어스 그대로 = Gazebo 처럼). 모델·값·seed·시작 바이어스는 `episode.json` `sim_reset.sim.base.imu_noise`
+- 옵션: `sim_ros2_moving_base.py --imu-noise none|gazebo` (기본 씬 설정 `imu.noise`: Stewart `gazebo`, Husky `none`). 주기 100 Hz 는 Husky 도 같음 (`ros2_iface.yaml` `base.imu_hz`)
+- `--imu-compare` 면 검사용 `/base/imu_isaac` (Isaac 센서)·`/base/imu_truth` (잡음 전 정답값) 를 **물리 스텝마다** 발행
+  (Isaac 센서 값의 시각이 한 스텝 앞일 때가 있어, 정답값이 모든 스텝에 있어야 같은 시각끼리 짝지어짐)
+- stage1: 25 Hz 프레임 구간 (40 ms) 에 IMU 3 ~ 5 개 → 평균하면 백색 잡음이 약 1/2 로 줄고 바이어스는 그대로
+
+**검사 (2026-11-04)**: `check_ros2_moving_base.py` **24/24** (12 번 새로: `/base/imu` − 정답값 표준편차 자이로 0.0084 ~ 0.0091 (모델 0.009)·가속도계 0.021 (0.021),
+바이어스 (평균) 한계 안, 해상도 단위 그대로. Husky 는 잡음 없음 = 정답값과 같음), 5 번 평균 100.0 Hz (간격 8.33 ~ 16.67 ms), Stewart IMU 위치 (−0.15, 0, 0) 확인.
+`make_fake_episodes_moving.py --cleanup` 4/4 (static 상수 검사 때문에 `--imu-noise none`), 씬 `--check` Husky·Stewart 6/6
+

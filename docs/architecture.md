@@ -227,7 +227,7 @@
           drone (geometric, world-fixed hover)   third view (world-fixed)            check: --check 6/6 (Husky; Stewart small/mid/big)
         isaacsim/scripts/reach_moving_base.py   (kinematics only: graspable time %, start-pose clearance)
  now  : isaacsim/scripts/sim_ros2_moving_base.py --base husky|stewart [--base-motion static|small|mid|big]
-          = [2] with a moving base: same topics + /base/imu (120 Hz) + /base/odom + /base/joint_states (from the base trajectory)
+          = [2] with a moving base: same topics + /base/imu (avg 100 Hz, Gazebo noise model on Stewart) + /base/odom + /base/joint_states (from the base trajectory)
           + /sim/reset (base + robot teleport, PX4 takeoff from the floor, base moves after reset), /sim/drone_kill
           -> [3] record_toggle.py --base moving -> [4] stage1 --base-imu topic --base-pose odom -> [5] [6] unchanged
  next : policy inference with /base/imu (client + new openpi config)

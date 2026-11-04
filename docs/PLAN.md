@@ -2220,6 +2220,9 @@ B-4 bag 2 개 (`20261014_181704`·`181812_xr_test`, 첫 명령 ~ 마지막 명�
 **R6** 사용자 PICO 텔레옵 (Stewart static·mid, 둘 다 잡음, 변환·병합·검수 5/5). 찾은 것: stage1 이 녹화 시작 직후 늦게 들어온 `/base/imu` 때문에 첫 프레임에서 멈춤 → 베이스 토픽도 에피소드 구간 계산에 넣음.
 GUI RTF 0.61 ~ 0.64 (고정 0.98) → 사용자: 불편하면 그때 개선. 사용자 소감: static 쉬움, mid 조금 어렵지만 풀 문제.
 **R7** 회귀 (가짜 에피소드 moving 4/4·고정 3/3)·문서 (`docs/moving_base.md` 10 장)·커밋. **수집 연결 끝 (2026-10-30)**.
+**Gazebo sim2sim IMU (2026-11-04, `docs/moving_base.md` 11 장)**: Isaac 에서 학습한 정책 (VLA·RL·MPC) 을 Gazebo VRX (`~/vrx_ws`, WAM-V) 에 옮기려고 Stewart IMU 를 WAM-V IMU 에 맞춤.
+위치 = 로봇 base 기준 (−0.15, 0, 0), `/base/imu` 평균 100 Hz (Husky 도), 잡음 = gz-sensors GaussianNoiseModel 식·Gazebo 값 (Stewart 기본 켬, 바이어스는 sim 시작에 한 번).
+**결정 바뀜**: IMU 잡음 "처음엔 없이, 나중에 Xsens" → Gazebo 값. 검사 24/24, 가짜 에피소드 4/4, 씬 6/6
 남은 것 (나중): 베이스 프리셋이 다른 에피소드를 병합이 막지 않음 (지금은 작업명으로 나눔, 필요하면 옵션), GUI 보조 뷰포트, RTF, 정책 추론 연결 (/base/imu 를 관측에), IMU 잡음 옵션 (Xsens), 실물처럼 구동하는 버전·운동 보상
 
 ---

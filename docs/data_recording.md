@@ -94,7 +94,7 @@
 | `/gripper/command` | std_msgs/Float64 | 텔레옵 장치 | 값이 바뀔 때 | 명령 | 안 씀 (참고용. 그리퍼 action 은 `/gripper/target`) |
 | `/protective_stop` | std_msgs/Bool | sim | 30 Hz | 상태 (`--sim`) | `meta.json` 에 발생 여부·시각, 병합에서 기본 제외 |
 | `/clock` | rosgraph_msgs/Clock | sim | 120 Hz | 상태 (`--sim`) | header 없는 토픽 (`/protective_stop`) 의 시각을 sim time 으로 환산 |
-| `/base/imu` | sensor_msgs/Imu | sim (실물은 IMU 드라이버) | 120 Hz | 상태 (`--base moving`) | `observation.base_imu` (stage1 `--base-imu topic`: 구간 (t − 40 ms, t] 평균) |
+| `/base/imu` | sensor_msgs/Imu | sim (실물은 IMU 드라이버) | 평균 100 Hz | 상태 (`--base moving`) | `observation.base_imu` (stage1 `--base-imu topic`: 구간 (t − 40 ms, t] 평균) |
 | `/base/odom` | nav_msgs/Odometry | sim | 30 Hz | 상태 (`--base moving`) | 안 씀. stage1 `--base-pose odom` → 중간 파일 `base_pose.npy` |
 | `/base/joint_states` | sensor_msgs/JointState | sim | 30 Hz | 상태 (`--base moving`) | 안 씀 (기록만: Husky 바퀴 4 / Stewart 다리 6) |
 
