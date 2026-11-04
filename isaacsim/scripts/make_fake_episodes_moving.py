@@ -114,7 +114,9 @@ def main():
         w.writerow(["t", *ARM, "gripper_goal_raw"])
         for i in range(1, int(HOLD_SEC * 60) + 1):
             w.writerow([f"{i / 60:.6f}", *[f"{x:.6f}" for x in HOME], "0.000000"])
-    common = ["--base", args.base, "--flight", "geometric", "--reset-offset", "0", "--init-pose", *[f"{x:.6f}" for x in HOME]]
+    # IMU 잡음은 끔: 3 번 (static base_imu = 상수) 을 정확히 보려고. 잡음은 check_ros2_moving_base.py 12 번이 본다
+    common = ["--base", args.base, "--flight", "geometric", "--reset-offset", "0", "--imu-noise", "none",
+              "--init-pose", *[f"{x:.6f}" for x in HOME]]
     log(f"make_fake_episodes_moving {stamp}: 베이스 {args.base}, A static 잡기 {args.success} 개, B 흔들림 1 개  (리포트 {out_dir})")
 
     bags_a = record_session(common + ["--base-motion", "static"], [("success", GRASP_CSV)] * args.success, out_dir, "A_static", log)

@@ -8,8 +8,9 @@
 #   1 토픽 주기 (베이스가 움직이는 동안)   2 같은 시계 (카메라·그리퍼 stamp ∈ /joint_states stamp)
 #   4 팔 명령 응답 (지금 자세에서 shoulder_pan 계단 0.03 rad, 50 % 도달 ≤ 80 ms, 보호 정지 없음)   + RTF (참고)
 #   베이스 토픽 (R3, sim 을 --imu-compare 로 띄움):
-#   5 /base/imu 120 Hz·/base/odom·/base/joint_states 30 Hz, stamp ∈ /joint_states stamp (같은 sim time)
-#   6 IMU 두 방법 일치: 궤적 계산값 (/base/imu) vs Isaac IMU 센서 (/base/imu_isaac), 같은 stamp 끼리
+#   5 /base/imu 평균 100 Hz (간격 ≤ 16.7 ms)·/base/odom·/base/joint_states 30 Hz, stamp ∈ /joint_states stamp (같은 sim time)
+#   6 IMU 두 방법 일치: 궤적 계산 정답값 (/base/imu_truth) vs Isaac IMU 센서 (/base/imu_isaac), 같은 stamp 끼리
+#   12 IMU 잡음: /base/imu − 정답값의 표준편차·평균 (바이어스)·해상도가 씬 설정 imu.noise 모델과 맞는지 (none 이면 같아야 함)
 #   7 IMU 물리 확인: 비력 z 평균 ≈ |g|, Husky 는 각속도 0·등속·정지 구간 비력 = (0, 0, |g|)
 #   8 odom 일관성: 위치 차분 ≈ twist (child → odom 좌표계로 돌려서), joint_states 이름·개수
 #   리셋 (R4, 드론 PX4 바닥 이륙):
@@ -35,6 +36,7 @@ import time
 
 import numpy as np
 import rclpy
+import yaml
 from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -46,7 +48,9 @@ import check_ros2 as c2
 SCRIPT = os.path.join(c2.SCRIPTS, "sim_ros2_moving_base.py")
 READY = "[sim_ros2_moving_base] 준비"
 G = 9.81
-BASE_HZ = {"imu": 120.0, "odom": 30.0, "joint_states": 30.0}
+BASE_HZ = {"odom": 30.0, "joint_states": 30.0}
+IMU_HZ = 100.0                     # 평균 (물리 120 Hz 의 약수가 아니라 간격 8.33 / 16.67 ms 섞임)
+CONFIG = os.path.join(os.path.dirname(c2.SCRIPTS), "config")
 JOINTS = {"husky": 4, "stewart": 6}
 CRIT_IMU = {"gyro_max": 0.005,     # [rad/s] 두 방법 차이 최대 (임시: 처음 재 보고 정함)
             "acc_rms": 0.02,       # [m/s²] 두 방법 차이 RMS
@@ -56,7 +60,9 @@ CRIT_IMU = {"gyro_max": 0.005,     # [rad/s] 두 방법 차이 최대 (임시: �
             "match": 0.95,         # 짝지어진 비율 최소 (가장 가까운 stamp, match_tol 이내)
             "match_tol": 1e-4,     # [s] Isaac 센서 시각은 float32 라 소수 6 자리가 가끔 다름 (물리 스텝 8.3 ms 보다 훨씬 작게)
             "g_mean": 0.05,        # [m/s²] 비력 z 평균 − |g|
-            "odom_v": 0.002}       # [m/s] 위치 차분 − twist 최대
+            "odom_v": 0.002,       # [m/s] 위치 차분 − twist 최대
+            "noise_std_rel": 0.15, # 잡음 (/base/imu − 정답) 표준편차가 모델 stddev 의 ±15 % 안 (샘플 약 1000 개, 해상도 반올림 포함)
+            "noise_bias_sigma": 4.0}  # 잡음 평균 (= 바이어스) 이 |bias_mean| ± 4 bias_stddev 안
 CRIT_RESET = {"duration_s": 40.0,  # 리셋 sim 시간 최대 (고정 베이스 약 24 s + 바닥 이륙 상승이 더 김)
               "arm_deg": 1.0, "drone_mm": 50.0, "mount_mm": 2.0,
               "rest_mm": 1.0,      # [mm] 리셋 중 odom 위치 (원점 = 시작 자세) 최대
@@ -96,8 +102,9 @@ class BaseRos(c2.Ros):
     def __init__(self):
         super().__init__()
         rel = QoSProfile(depth=500, reliability=ReliabilityPolicy.RELIABLE)
-        self.base = {"imu": [], "isaac_imu": [], "odom": [], "joint_states": []}
+        self.base = {"imu": [], "isaac_imu": [], "imu_truth": [], "odom": [], "joint_states": []}
         self.create_subscription(Imu, "/base/imu", lambda m: self._add("imu", imu_row(m)), rel)
+        self.create_subscription(Imu, "/base/imu_truth", lambda m: self._add("imu_truth", imu_row(m)), rel)
         self.create_subscription(Imu, "/base/imu_isaac", lambda m: self._add("isaac_imu", imu_row(m)), rel)
         self.create_subscription(Odometry, "/base/odom", lambda m: self._add("odom", self._odom_row(m)), rel)
         self.create_subscription(JointState, "/base/joint_states",
@@ -138,12 +145,28 @@ def R_wxyz(q):
                      [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
 
 
+def noise_model(base):
+    """씬 설정 imu.noise → (이름, {gyro, accel} 값) 또는 (None, None)."""
+    sc = yaml.safe_load(open(os.path.join(CONFIG, f"scene_{base}.yaml"), encoding="utf-8"))
+    name = sc["imu"]["noise"]
+    if name in (None, "none"):
+        return None, None
+    rc = yaml.safe_load(open(os.path.join(CONFIG, "ros2_iface.yaml"), encoding="utf-8"))
+    return name, rc["base"]["imu_noise_models"][name]
+
+
 def check_base_topics(ros, R, tag, base, t0, t1, js):
     with ros.lock:
         rows = {k: [r for r in v if t0 <= r[0] <= t1] for k, v in ros.base.items()}
     # 5 주기·같은 시계
     js_set = set(np.round(js, 6))
     ok, parts = True, []
+    st = np.array([r[0] for r in rows["imu"]])
+    gaps = np.diff(st)
+    r_imu = (len(st) - 1) / (st[-1] - st[0]) if len(st) > 2 else 0.0
+    miss = sum(1 for s in st if round(s, 6) not in js_set)
+    ok &= abs(r_imu - IMU_HZ) <= c2.CRIT["rate_rel"] * IMU_HZ and len(gaps) > 0 and gaps.max() <= 2 / 120 + 1e-6 and miss == 0
+    parts.append(f"imu 평균 {r_imu:.2f} Hz (간격 {gaps.min() * 1000:.2f} ~ {gaps.max() * 1000:.2f} ms, stamp 안 맞음 {miss})")
     for k, hz in BASE_HZ.items():
         st = [r[0] for r in rows[k]]
         r, n_gap, _ = c2.rate_of(st)
@@ -153,17 +176,18 @@ def check_base_topics(ros, R, tag, base, t0, t1, js):
         parts.append(f"{k} {r:.2f} Hz (끊김 {n_gap}, stamp 안 맞음 {miss})")
     R.item(f"[{tag}] 5 베이스 토픽 주기·같은 시계", ok, ", ".join(parts))
 
-    # 6 두 방법 일치 (같은 stamp)
+    # 6 두 방법 일치 (같은 stamp): 잡음 전 정답값 (/base/imu_truth) vs Isaac IMU 센서
     c = CRIT_IMU
+    truth = rows["imu_truth"]
     ist = np.array([r[0] for r in rows["isaac_imu"]])
     pairs, off = [], []
     if len(ist):
-        for r in rows["imu"]:
+        for r in truth:
             j = int(np.argmin(np.abs(ist - r[0])))
             if abs(ist[j] - r[0]) <= c["match_tol"]:
                 pairs.append((r, rows["isaac_imu"][j]))
                 off.append(abs(ist[j] - r[0]))
-    frac = len(pairs) / max(len(rows["imu"]), 1)
+    frac = len(pairs) / max(len(truth), 1)
     if pairs:
         dg = np.array([a[1] - b[1] for a, b in pairs])
         da = np.array([a[2] - b[2] for a, b in pairs])
@@ -175,12 +199,12 @@ def check_base_topics(ros, R, tag, base, t0, t1, js):
         g_max = a_rms = a_max = q_max = acc_amp = gyro_amp = float("nan")
     R.item(f"[{tag}] 6 IMU 두 방법 일치 (궤적 계산 vs Isaac IMU 센서)",
            frac >= c["match"] and g_max <= c["gyro_max"] and a_rms <= c["acc_rms"] and a_max <= c["acc_max"] and q_max <= c["ori_deg"],
-           f"짝 {len(pairs)}/{len(rows['imu'])} ({frac:.0%}, stamp 차 최대 {max(off, default=float('nan')) * 1e6:.1f} µs), 각속도 차 최대 {g_max:.5f} rad/s (크기 최대 {gyro_amp:.4f}), "
+           f"짝 {len(pairs)}/{len(truth)} ({frac:.0%}, stamp 차 최대 {max(off, default=float('nan')) * 1e6:.1f} µs), 각속도 차 최대 {g_max:.5f} rad/s (크기 최대 {gyro_amp:.4f}), "
            f"비력 차 RMS {a_rms:.4f}·최대 {a_max:.4f} m/s² (비력 − (0,0,g) 최대 {acc_amp:.4f}), 자세 차 최대 {q_max:.4f}°  기준 {c}")
 
-    # 7 물리 확인
-    acc = np.array([r[2] for r in rows["imu"]])
-    gyro = np.array([r[1] for r in rows["imu"]])
+    # 7 물리 확인 (정답값)
+    acc = np.array([r[2] for r in truth])
+    gyro = np.array([r[1] for r in truth])
     fz = float(acc[:, 2].mean())
     ok7 = abs(fz - G) <= c["g_mean"]
     extra = ""
@@ -189,6 +213,29 @@ def check_base_topics(ros, R, tag, base, t0, t1, js):
         ok7 &= float(np.abs(gyro).max()) == 0.0 and flat.any() and bool(np.allclose(acc[flat], [0, 0, G], atol=0.01))
         extra = f", 각속도 최대 {np.abs(gyro).max():.2e}, 등속·정지 샘플 {int(flat.sum())}/{len(flat)} 비력 {acc[flat].mean(axis=0).round(4).tolist() if flat.any() else None}"
     R.item(f"[{tag}] 7 IMU 물리 확인", ok7, f"비력 z 평균 {fz:.4f} (|g| {G}){extra}")
+
+    # 12 잡음: /base/imu − 정답값 (같은 stamp). 모델이 없으면 둘이 같아야 함
+    name, model = noise_model(base)
+    tmap = {round(r[0], 6): r for r in truth}
+    pr = [(r, tmap[round(r[0], 6)]) for r in rows["imu"] if round(r[0], 6) in tmap]
+    dg = np.array([a[1] - b[1] for a, b in pr])
+    da = np.array([a[2] - b[2] for a, b in pr])
+    if model is None:
+        ok12 = len(pr) > 0 and float(np.abs(dg).max()) == 0.0 and float(np.abs(da).max()) == 0.0
+        R.item(f"[{tag}] 12 IMU 잡음 (없음)", ok12, f"/base/imu = 정답값, 짝 {len(pr)}")
+    else:
+        ok12, parts12 = len(pr) > 100, []
+        for key, d, vals in (("gyro", dg, np.array([a[1] for a, _ in pr])), ("accel", da, np.array([a[2] for a, _ in pr]))):
+            m = model[key]
+            std, mean = d.std(axis=0), d.mean(axis=0)
+            q = m["precision"]
+            quant = float(np.abs(vals / q - np.round(vals / q)).max())
+            lim = abs(m["bias_mean"]) + c["noise_bias_sigma"] * m["bias_stddev"] + 3 * m["stddev"] / np.sqrt(len(d))
+            good = (np.all(np.abs(std / m["stddev"] - 1) <= c["noise_std_rel"]) and np.all(np.abs(mean) <= lim) and quant < 1e-6)
+            ok12 &= bool(good)
+            parts12.append(f"{key} 표준편차 {np.round(std, 5).tolist()} (모델 {m['stddev']}), 평균 (바이어스) {np.round(mean, 5).tolist()} "
+                           f"(한계 ±{lim:.4f}), 해상도 {q} 단위 벗어남 최대 {quant:.1e}")
+        R.item(f"[{tag}] 12 IMU 잡음 ({name}, /base/imu − 정답값)", ok12, f"짝 {len(pr)}, " + " | ".join(parts12))
 
     # 8 odom 일관성
     od = rows["odom"]
@@ -208,7 +255,7 @@ def check_base_topics(ros, R, tag, base, t0, t1, js):
 def rest_stats(ros, t0, t1):
     """구간의 odom 위치 최대 [mm]·속도 최대 [m/s]·IMU 비력 − (0,0,g) 최대 [m/s²]·각속도 최대."""
     od = ros.base_rows("odom", t0, t1)
-    im = ros.base_rows("imu", t0, t1)
+    im = ros.base_rows("imu_truth", t0, t1)        # 정답값 (잡음 전)
     if not od or not im:
         return None
     p = max(float(np.linalg.norm(r[1])) for r in od) * 1000

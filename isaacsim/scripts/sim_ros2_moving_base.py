@@ -6,7 +6,7 @@
 # sim_ros2.py·drone_scene.py·sim_reset.py 는 고치지 않고 부품 (ros2_iface 브리지, protective_stop, sim_reset, px4_takeoff) 을 import·상속해서 쓴다.
 #   발행: /clock, /joint_states (120 Hz), /cam/{wrist,third_view}/color/image_raw·camera_info (30 Hz),
 #         /gripper/joint_states·/gripper/target (30 Hz), /protective_stop (30 Hz),
-#         /base/imu (120 Hz)·/base/odom·/base/joint_states (30 Hz) (moving_base_ros2.BaseBridge, 베이스 궤적 정답값, ros2_iface.yaml base)
+#         /base/imu (평균 100 Hz, 잡음 = 씬 설정 imu.noise)·/base/odom·/base/joint_states (30 Hz) (moving_base_ros2.BaseBridge, 베이스 궤적 식, ros2_iface.yaml base)
 #   구독: /joint_command, /gripper/command   (텔레옵 노드·녹화 도구는 고정 베이스와 같은 것)
 #   서비스: /sim/reset, /sim/drone_kill (moving_base_ros2.MovingEpisodeReset: 고정 베이스 순서 + 베이스·로봇 root 를 시작 자세로 순간이동)
 #   베이스는 **리셋이 끝난 뒤부터** 움직인다 (sim 을 띄운 직후에는 서 있음 → 첫 /sim/reset 뒤 움직임, 2026-10-29 사용자 결정).
@@ -22,7 +22,8 @@
 #         --scene-config <yaml> (기본 scene_<base>.yaml), --init-pose q1..q6 | <이름> (기본 under_drone),
 #         --seed (안 주면 시작 시각), --headless --duration [sim s], --prop-spin on|off, --protective-stop on|measure, --ros2-config,
 #         드론 (sim_ros2.py 와 같은 이름): --flight px4|geometric --position-source --mode static|hover --hover small|mid|big --drone-targets --reset-offset [m]
-#         --imu-compare (검사용: Isaac IMU 센서 값을 /base/imu_isaac 로 같이 발행)
+#         --imu-noise none|<모델> (기본 씬 설정 imu.noise: Stewart gazebo = Gazebo VRX WAM-V IMU 잡음, Husky none)
+#         --imu-compare (검사용: Isaac IMU 센서 값 /base/imu_isaac, 잡음 전 정답값 /base/imu_truth 를 같이 발행)
 #   검사: python3 isaacsim/scripts/check_ros2_moving_base.py
 # =============================================================
 
@@ -72,6 +73,8 @@ def parse():
                    help="팔 시작 자세: 관절각 6 개 [rad] 또는 고정 씬 init_poses 이름 (기본 씬 설정 init_pose = under_drone). /sim/reset 도 이 자세로")
     p.add_argument("--ros2-config", default=None)
     p.add_argument("--report-dir", default=ts.REPORT_DIR)
+    p.add_argument("--imu-noise", default=None,
+                   help="IMU 잡음: none 또는 ros2_iface.yaml base.imu_noise_models 이름 (기본 씬 설정 imu.noise, Stewart = gazebo)")
     p.add_argument("--imu-compare", action="store_true", help="검사용: Isaac IMU 센서를 imu_link 에 달고 /base/imu_isaac 로 발행 (궤적 계산값과 비교)")
     args = p.parse_args()
     if args.prop_spin is None:
@@ -126,7 +129,9 @@ def episode_info(s, cfg, args, render, base_bridge):
                  "mount_xyz": [float(x) for x in s.scene_cfg["mount"]["xyz"]], "mount_yaw_deg": float(s.scene_cfg["mount"]["yaw_deg"]),
                  "robot_base_mid_world": [float(x) for x in s.mid_robot],          # 베이스 움직임 가운데의 로봇 base (드론 기준 위치의 기준)
                  "imu_frame": cfg["base"]["imu_frame_id"], "imu_offset_body": [float(x) for x in base_bridge.r_imu],
-                 "imu_hz": float(cfg["base"]["imu_hz"]), "imu_noise": None,       # 잡음 없음 (궤적 정답값)
+                 "imu_offset_robot_base": s.scene_cfg["imu"]["offset_robot_base"],   # 씬 설정 (null = 에셋 imu_link)
+                 "imu_hz": float(cfg["base"]["imu_hz"]), "imu_rate_mode": "average (k / imu_hz 를 지난 첫 물리 스텝)",
+                 "imu_noise": base_bridge.noise_info(),                            # 잡음 모델·값·seed·시작 바이어스 (null = 잡음 없음)
                  "odom_child_frame": base_bridge.child_frame, "source": "trajectory"},
         "gripper": {"joint": gname, "max_force_nm": float(gc["max_force"]), "profile_velocity": float(gc["profile_velocity"]),
                     "finger_friction": [float(c["finger_material"]["static_friction"]), float(c["finger_material"]["dynamic_friction"])]},
@@ -195,7 +200,8 @@ def main():
         grip = ri.GripperBridge(s, cfg, node)
         stop = mbr.MovingProtectiveStop(s, protective_stop_config(cfg, s), node, mode=args.protective_stop, publish_hz=cfg["gripper"]["publish_hz"])
         arm.stop = stop
-        base = mbr.BaseBridge(s, cfg, node, isaac_imu=s.pre_play)
+        noise = args.imu_noise if args.imu_noise is not None else s.scene_cfg["imu"]["noise"]
+        base = mbr.BaseBridge(s, cfg, node, isaac_imu=s.pre_play, noise=None if noise in (None, "none") else noise, seed=args.seed)
         sim_time = SimulationManager.get_simulation_time
         pace = {"t0": None, "w0": None}
 
@@ -231,7 +237,8 @@ def main():
               f"렌더 {render}, loop {loop_hz:g} Hz, "
               f"발행 {cfg['arm']['clock_topic']} {cfg['arm']['joint_states_topic']} {cfg['gripper']['joint_states_topic']} {cfg['gripper']['target_topic']} "
               f"{[cfg['cameras'][n]['topic'] for n in ri.CAMERA_NAMES]} {[cfg['base'][k] for k in ('imu_topic', 'odom_topic', 'joint_states_topic')]}"
-              f"{' ' + cfg['base']['isaac_imu_topic'] if args.imu_compare else ''}, "
+              f"{' ' + cfg['base']['isaac_imu_topic'] + ' ' + cfg['base']['imu_truth_topic'] if args.imu_compare else ''}, "
+              f"IMU {cfg['base']['imu_hz']:g} Hz (평균) 잡음 {base.noise_name or 'none'}, "
               f"IMU 위치 (베이스 강체 기준) {np.round(base.r_imu, 4).tolist()}, 중력 {np.round(base.g, 3).tolist()}, "
               f"구독 {cfg['arm']['joint_command_topic']} {cfg['gripper']['command_topic']}, "
               f"서비스 {cfg['reset']['service']} {cfg['reset']['kill_service']}", flush=True)

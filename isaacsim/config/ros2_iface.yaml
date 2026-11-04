@@ -77,21 +77,33 @@ reset:
 # 움직이는 베이스 (8단계, sim_ros2_moving_base.py 만 읽음. 고정 베이스 sim_ros2.py 는 이 섹션을 쓰지 않고 /base/* 를 발행하지 않음)
 #   모두 sim 정답값 (베이스가 kinematic 궤적으로 움직여서. 실물처럼 구동하는 버전에서는 바퀴 odometry·다리 FK 로 바뀔 것, PLAN 8단계)
 #   주기는 물리 120 Hz 의 약수, 발행 시각은 sim time 의 1/hz 배수 (30 Hz 면 카메라·그리퍼와 같은 스텝)
-#   /base/imu  sensor_msgs/Imu, frame imu_link (Husky = 차체 원점, Stewart = 윗판 아랫면 가운데). 잡음 없음 (Xsens 로 잡음을 재면 옵션으로 추가)
+#   /base/imu  sensor_msgs/Imu, frame imu_link (위치는 씬 설정 imu.offset_robot_base: Stewart = 로봇 base 기준 (-0.15, 0, 0) = Gazebo WAM-V 와 같음,
+#              Husky = 에셋 imu_link (차체 원점)). 잡음은 imu_noise_models (씬 설정 imu.noise: Stewart gazebo, Husky none)
 #     angular_velocity [rad/s]·linear_acceleration [m/s²] = IMU 좌표계, 가속도는 비력 (정지 = (0, 0, +9.81)), orientation = world 기준
 #   /base/odom nav_msgs/Odometry, frame odom = 베이스 시작 자세 (실물 odometry 처럼 시작이 원점), child = 베이스 강체 (base_link / top_plate),
 #     twist 는 child 좌표계 (ROS 규칙). Stewart 위치는 윗판 회전 중심 (윗면 가운데 = 로봇 base 자리)
 #   /base/joint_states sensor_msgs/JointState: Husky 바퀴 4 개 (rad), Stewart 다리 6 개 길이 (m)
 base:
   imu_topic: /base/imu
-  imu_hz: 120.0                   # 참고: Husky UM7 Clearpath 기본 60 Hz, 배 MRU 최대 200 Hz. 실물 IMU 와 맞출 때 바꿈
+  imu_hz: 100.0                   # 평균 주기 (2026-11-04: 실물 배 IMU·Gazebo VRX WAM-V IMU 와 같게 100 Hz). 물리 120 Hz 의 약수가 아니므로
+                                  #   1/imu_hz 시각마다 그 바로 다음 물리 스텝에서 발행 (간격 8.33 / 16.67 ms 섞임, 평균 100 Hz. Gazebo 도 240 Hz 물리에서 8.33 / 12.5 ms 섞임)
   imu_frame_id: imu_link
   odom_topic: /base/odom
   odom_hz: 30.0
   odom_frame_id: odom
   joint_states_topic: /base/joint_states
   joint_states_hz: 30.0
-  isaac_imu_topic: /base/imu_isaac  # 검사용 (sim_ros2_moving_base --imu-compare 일 때만): Isaac IMU 센서 값. 녹화하지 않음
+  isaac_imu_topic: /base/imu_isaac  # 검사용 (sim_ros2_moving_base --imu-compare 일 때만, 물리 스텝마다): Isaac IMU 센서 값. 녹화하지 않음
+  imu_truth_topic: /base/imu_truth  # 검사용 (--imu-compare 일 때만, 물리 스텝마다): 잡음을 넣기 전 정답값. 녹화하지 않음
+  # IMU 잡음 모델 (sim_ros2_moving_base --imu-noise, 기본은 씬 설정 imu.noise). 축마다 독립, gz-sensors GaussianNoiseModel 과 같은 식:
+  #   시작할 때 bias = N(bias_mean, bias_stddev), 50 % 확률로 부호 반대 (sim 시작에 한 번, 리셋해도 그대로)
+  #   매 샘플: bias = exp(-dt/τ) bias + N(0, σ_d),  σ_d = sqrt(-σ_b² τ / 2 · expm1(-2 dt / τ))   (σ_b = dynamic_bias_stddev, τ = 상관 시간)
+  #            out = in + bias + N(mean, stddev),  precision > 0 이면 round(out / precision) · precision
+  #   자세 (orientation) 는 잡음 없음
+  imu_noise_models:
+    gazebo:                       # Gazebo VRX WAM-V IMU (~/vrx_ws/src/vrx/vrx_urdf/wamv_gazebo/urdf/components/wamv_imu.xacro, sim2sim 2026-11-04)
+      gyro:  {mean: 0.0, stddev: 0.009, bias_mean: 0.00075, bias_stddev: 0.005, dynamic_bias_stddev: 0.00002, dynamic_bias_correlation_time: 400.0, precision: 0.00025}
+      accel: {mean: 0.0, stddev: 0.021, bias_mean: 0.05, bias_stddev: 0.0075, dynamic_bias_stddev: 0.000375, dynamic_bias_correlation_time: 175.0, precision: 0.005}
 
 cameras:
   tick_rate: 30.0                 # [Hz] 카메라 prim omni:sensor:tickRate (렌더·발행 주기). 실물 RealSense color 30 Hz

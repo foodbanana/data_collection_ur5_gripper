@@ -30,3 +30,7 @@ third_view_camera_config: config/third_view_camera.yaml
 # UR5 base 쪽 링크와 Husky 사이 충돌 끔 (UR5 바닥이 윗판 위 6.5 mm 라 접촉 거리 안에서 서로 밀지 않게). 팔 나머지 링크 ↔ Husky 충돌은 그대로
 collision_filter:
   robot_links: [robot_mount, base_link_inertia]   # 강체만 (base_link 은 질량 없는 Xform)
+
+imu:
+  offset_robot_base: null                 # null = 에셋 imu_link 그대로 (차체 base_link 원점)
+  noise: none                             # 잡음 없음 (sim2sim 맞춤은 Stewart 만, 2026-11-04)

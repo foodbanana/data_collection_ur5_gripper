@@ -5,7 +5,9 @@
 #   MovingProtectiveStop : protective_stop.ProtectiveStop 에서 손가락 아닌 링크 접촉 view 만 sim view 로 직접 만든다
 #                          (floating 로봇은 재생 중 로봇 링크로 RigidPrim 을 만들면 PhysX 가 로봇을 다시 읽어 view 가 무효, 2026-10-29)
 #   BaseBridge           : /base/imu·/base/odom·/base/joint_states (ros2_iface.yaml base). 값은 베이스 궤적 식에서 계산한 정답값 (R3)
-#   add_isaac_imu(s)     : 검사용 Isaac IMU 센서 (재생 전). BaseBridge 가 /base/imu_isaac 로 같이 발행 → 궤적 계산값과 비교
+#                          /base/imu 는 평균 imu_hz (100 Hz, 물리 120 Hz 의 약수가 아니라 간격 8.33 / 16.67 ms 섞임) + 잡음 모델 (GzNoise, 씬 설정 imu.noise)
+#   GzNoise              : gz-sensors GaussianNoiseModel 과 같은 IMU 잡음 (Gazebo VRX WAM-V 값과 sim2sim 맞춤, 2026-11-04)
+#   add_isaac_imu(s)     : 검사용 Isaac IMU 센서 (재생 전). BaseBridge 가 /base/imu_isaac (센서)·/base/imu_truth (잡음 전 정답값) 로 같이 발행
 #   MovingEpisodeReset   : /sim/reset·/sim/drone_kill (sim_reset.EpisodeReset 상속, R4). 고정 베이스 순서에 베이스 단계만 더함:
 #                          명령 무시 → 드론 kill·바닥 이륙 지점 순간이동 + PX4 재시작 → **베이스 멈춤·시작 자세로 순간이동·새 seed + 로봇 root 같이 순간이동 (속도 0)**
 #                          → 팔 시작 자세 → 드론 이륙 → **베이스 움직임 시작** (흔들림은 리셋이 끝난 뒤부터, 2026-10-29 사용자 결정)
@@ -21,7 +23,9 @@ import ros2_iface as ri
 import sim_reset as sr
 
 BASE_KEYS = ("imu_topic", "imu_hz", "imu_frame_id", "odom_topic", "odom_hz", "odom_frame_id",
-             "joint_states_topic", "joint_states_hz", "isaac_imu_topic")
+             "joint_states_topic", "joint_states_hz", "isaac_imu_topic", "imu_truth_topic", "imu_noise_models")
+NOISE_KEYS = ("mean", "stddev", "bias_mean", "bias_stddev", "dynamic_bias_stddev", "dynamic_bias_correlation_time", "precision")
+IMU_NOISE_SEED_OFFSET = 3_000_000  # IMU 잡음 seed = sim --seed + 이 값 (sim 시작에 한 번)
 ISAAC_IMU_NAME = "isaac_imu"
 BASE_SEED_OFFSET = 2_000_000      # 베이스 움직임 seed = 리셋 seed + 이 값 (드론 위치·hover 난수열과 겹치지 않게, sim_reset.HOVER_SEED_OFFSET 과 다름)
 MOUNT_TOL_MM = 2.0                # 리셋 뒤 robot_mount ↔ 베이스 마운트 위치 거리 최대
@@ -85,15 +89,50 @@ def add_isaac_imu(s):
     return IMUSensor(IMU.create(f"{s.base.imu_path}/{ISAAC_IMU_NAME}", translations=[[0.0, 0.0, 0.0]]))
 
 
+class GzNoise:
+    """gz-sensors GaussianNoiseModel (gz-sensors8 src/GaussianNoiseModel.cc) 와 같은 식, 축 n 개 독립.
+    Load: bias = N(bias_mean, bias_stddev) (bias_stddev 0 이면 bias_mean), 50 % 확률로 부호 반대 (만들 때 한 번)
+    Apply(x, dt): bias = exp(-dt/τ) bias + N(0, σ_d), σ_d = sqrt(-σ_b² τ / 2 · expm1(-2 dt / τ))  (σ_b > 0, τ > 0, dt > 0 일 때)
+                  out = x + bias + N(mean, stddev) (stddev 0 이면 mean), precision ≠ 0 이면 round(out / precision) · precision"""
+
+    def __init__(self, p, rng, n=3):
+        miss = [k for k in NOISE_KEYS if k not in p]
+        if miss:
+            raise KeyError(f"IMU 잡음 설정에 없는 항목: {miss}")
+        self.p = {k: float(p[k]) for k in NOISE_KEYS}
+        self.rng = rng
+        q = self.p
+        b = rng.normal(q["bias_mean"], q["bias_stddev"], n) if q["bias_stddev"] > 0 else np.full(n, q["bias_mean"])
+        flip = rng.uniform(size=n) < 0.5
+        self.bias = np.where(flip, -b, b)
+        self.bias0 = self.bias.copy()
+
+    def apply(self, x, dt):
+        q = self.p
+        sb, tau = q["dynamic_bias_stddev"], q["dynamic_bias_correlation_time"]
+        if sb > 0 and tau > 0 and dt > 0:
+            sd = np.sqrt(-sb * sb * tau / 2 * np.expm1(-2 * dt / tau))
+            self.bias = np.exp(-dt / tau) * self.bias + self.rng.normal(0.0, sd, self.bias.shape)
+        white = self.rng.normal(q["mean"], q["stddev"], self.bias.shape) if q["stddev"] > 0 else np.full(self.bias.shape, q["mean"])
+        out = np.asarray(x, dtype=float) + self.bias + white
+        if abs(q["precision"]) > 1e-6:
+            out = np.round(out / q["precision"]) * q["precision"]
+        return out
+
+
 class BaseBridge:
     """움직이는 베이스 ROS 2 발행 (ros2_iface.yaml base 머리말). 물리 스텝 뒤 (PHYSICS_POST_STEP) sim time 이 1/hz 배수일 때 발행.
     - 값은 베이스 궤적 식 (moving_base kinematics·joint_states) 의 이번 스텝 끝 시각 값 = PhysX 에 넣은 kinematic 자세와 같은 시각.
       베이스가 서 있으면 (start 전·stop 뒤) 그 자리 자세, 속도·가속도 0
     - IMU: a_imu = a + α × (R r) + ω × (ω × (R r)),  비력 f = Rᵀ (a_imu − g),  각속도 Rᵀ ω   (r = 강체 좌표계 imu_link 위치)
-    - isaac_imu 를 주면 (add_isaac_imu, --imu-compare) Isaac IMU 센서 값을 같은 시각에 isaac_imu_topic 으로 (stamp = 센서 읽은 sim time)
+    - /base/imu 주기: 평균 imu_hz. 1/imu_hz 시각 (k / imu_hz) 을 지난 첫 물리 스텝에서 발행 (물리 120 Hz 의 약수가 아니어도 됨, 간격이 섞임)
+    - noise: ros2_iface.yaml base.imu_noise_models 의 이름 (자이로·가속도계 각각 GzNoise, seed = sim seed + IMU_NOISE_SEED_OFFSET, sim 시작에 한 번)
+      또는 None (잡음 없음). 자세는 잡음 없음
+    - isaac_imu 를 주면 (add_isaac_imu, --imu-compare) Isaac IMU 센서 값을 isaac_imu_topic (stamp = 센서 읽은 sim time),
+      잡음 전 정답값을 imu_truth_topic 으로 같은 시각에
     콜백 안 예외는 저장해 두고 check() 에서 다시 올린다."""
 
-    def __init__(self, s, cfg, node, isaac_imu=None):
+    def __init__(self, s, cfg, node, isaac_imu=None, noise=None, seed=0):
         from isaacsim.core.simulation_manager import SimulationEvent, SimulationManager
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import Imu, JointState
@@ -108,10 +147,22 @@ class BaseBridge:
                 raise KeyError(f"{cfg['path']}: 'base.{k}' 항목이 없습니다")
         phys_hz = 1.0 / ts.PHYSICS_DT
         self.hz = {k: float(c[f"{k}_hz"]) for k in ("imu", "odom", "joint_states")}
-        for k, hz in self.hz.items():
-            n = phys_hz / hz
-            if not hz > 0 or abs(n - round(n)) > 1e-9:
-                raise ValueError(f"base.{k}_hz {hz} 는 물리 {phys_hz:g} Hz 의 약수여야 함")
+        if not 0 < self.hz["imu"] <= phys_hz:
+            raise ValueError(f"base.imu_hz {self.hz['imu']} 는 0 보다 크고 물리 {phys_hz:g} Hz 이하")
+        for k in ("odom", "joint_states"):
+            n = phys_hz / self.hz[k]
+            if not self.hz[k] > 0 or abs(n - round(n)) > 1e-9:
+                raise ValueError(f"base.{k}_hz {self.hz[k]} 는 물리 {phys_hz:g} Hz 의 약수여야 함")
+        self.noise_name = noise
+        self.noise = None
+        if noise is not None:
+            models = c["imu_noise_models"] or {}
+            if noise not in models:
+                raise ValueError(f"IMU 잡음 모델 '{noise}' 이 ros2_iface.yaml base.imu_noise_models 에 없음 ({sorted(models)})")
+            rng = np.random.default_rng(int(seed) + IMU_NOISE_SEED_OFFSET)
+            self.noise = {k: GzNoise(models[noise][k], rng) for k in ("gyro", "accel")}
+            self.noise_seed = int(seed) + IMU_NOISE_SEED_OFFSET
+        self._t_imu = None                            # 지난 /base/imu 시각 (잡음 dt)
         self.s, self.c, self._sm = s, c, SimulationManager
         self._Imu, self._Odometry, self._JointState = Imu, Odometry, JointState
         self.base = s.base
@@ -125,7 +176,8 @@ class BaseBridge:
                     "joint_states": node.create_publisher(JointState, c["joint_states_topic"], ri.pub_depth(cfg, self.hz["joint_states"]))}
         self.isaac_imu = isaac_imu
         if isaac_imu is not None:
-            self.pub["isaac_imu"] = node.create_publisher(Imu, c["isaac_imu_topic"], ri.pub_depth(cfg, self.hz["imu"]))
+            self.pub["isaac_imu"] = node.create_publisher(Imu, c["isaac_imu_topic"], ri.pub_depth(cfg, phys_hz))   # 검사용: 물리 스텝마다
+            self.pub["imu_truth"] = node.create_publisher(Imu, c["imu_truth_topic"], ri.pub_depth(cfg, phys_hz))
         self.n = {k: 0 for k in self.pub}
         self._last_k = {k: None for k in self.hz}
         self.error = None
@@ -150,7 +202,23 @@ class BaseBridge:
         a_imu = a + np.cross(alpha, rw) + np.cross(w, np.cross(w, rw))
         return R.T @ w, R.T @ (a_imu - self.g), R
 
+    def noise_info(self):
+        """episode.json 에 남길 잡음 설정 (모델 이름·값·seed·시작 바이어스)."""
+        if self.noise is None:
+            return None
+        return {"model": self.noise_name, "seed": self.noise_seed,
+                **{k: {**n.p, "bias_initial": np.round(n.bias0, 6).tolist()} for k, n in self.noise.items()}}
+
+    def _due_imu(self, t):
+        k = int(np.floor(t * self.hz["imu"] + 1e-6))  # k / imu_hz 를 지난 첫 물리 스텝
+        if k == self._last_k["imu"]:
+            return False
+        self._last_k["imu"] = k
+        return True
+
     def _due(self, key, t):
+        if key == "imu":
+            return self._due_imu(t)
         hz = self.hz[key]
         k = int(round(t * hz))
         if abs(t - k / hz) > 1e-6 or k == self._last_k[key]:
@@ -167,29 +235,41 @@ class BaseBridge:
         m.orientation.w, m.orientation.x, m.orientation.y, m.orientation.z = map(float, q)
         m.angular_velocity.x, m.angular_velocity.y, m.angular_velocity.z = map(float, gyro)
         m.linear_acceleration.x, m.linear_acceleration.y, m.linear_acceleration.z = map(float, acc)
-        return m                                      # 공분산 0 = 모름 (잡음 없음)
+        return m                                      # 공분산 0 = 모름
 
     def _post_step(self, dt, context):
         try:
             t = self._sm.get_simulation_time()
             due = {k: self._due(k, t) for k in self.hz}
-            if not any(due.values()):
+            compare = self.isaac_imu is not None          # 검사용 토픽 (Isaac 센서·정답값) 은 물리 스텝마다
+            if not (any(due.values()) or compare):
                 return
             sec, nsec = ri.sim_stamp(t)
             tb, _, k = self.state()
+            if due["imu"] or compare:
+                gyro, acc, R = self.imu_values(k)
             if due["imu"]:
-                self.pub["imu"].publish(self._imu_msg(sec, nsec, *self.imu_values(k)))
+                dt_imu = 0.0 if self._t_imu is None else t - self._t_imu
+                self._t_imu = t
+                if self.noise is not None:
+                    gyro_n, acc_n = self.noise["gyro"].apply(gyro, dt_imu), self.noise["accel"].apply(acc, dt_imu)
+                else:
+                    gyro_n, acc_n = gyro, acc
+                self.pub["imu"].publish(self._imu_msg(sec, nsec, gyro_n, acc_n, R))
                 self.n["imu"] += 1
-                if self.isaac_imu is not None:
-                    r = self.isaac_imu.get_sensor_reading(read_gravity=True)
-                    if not r.is_valid:
-                        raise RuntimeError("Isaac IMU 값이 유효하지 않음")
-                    Rq = _R_wxyz(r.orientation_w, r.orientation_x, r.orientation_y, r.orientation_z)   # C++ 값 (orientation_w … z)
-                    s2, n2 = ri.sim_stamp(r.time)
-                    self.pub["isaac_imu"].publish(self._imu_msg(
-                        s2, n2, (r.angular_velocity_x, r.angular_velocity_y, r.angular_velocity_z),
-                        (r.linear_acceleration_x, r.linear_acceleration_y, r.linear_acceleration_z), Rq))
-                    self.n["isaac_imu"] += 1
+            if compare:
+                # Isaac 센서 값의 시각은 한 스텝 앞일 수 있어 (센서 갱신 순서), 정답값도 모든 스텝에 내야 같은 시각끼리 짝지어짐
+                self.pub["imu_truth"].publish(self._imu_msg(sec, nsec, gyro, acc, R))
+                self.n["imu_truth"] += 1
+                r = self.isaac_imu.get_sensor_reading(read_gravity=True)
+                if not r.is_valid:
+                    raise RuntimeError("Isaac IMU 값이 유효하지 않음")
+                Rq = _R_wxyz(r.orientation_w, r.orientation_x, r.orientation_y, r.orientation_z)   # C++ 값 (orientation_w … z)
+                s2, n2 = ri.sim_stamp(r.time)
+                self.pub["isaac_imu"].publish(self._imu_msg(
+                    s2, n2, (r.angular_velocity_x, r.angular_velocity_y, r.angular_velocity_z),
+                    (r.linear_acceleration_x, r.linear_acceleration_y, r.linear_acceleration_z), Rq))
+                self.n["isaac_imu"] += 1
             if due["odom"]:
                 p, v, _, R, w, _ = k
                 m = self._Odometry()

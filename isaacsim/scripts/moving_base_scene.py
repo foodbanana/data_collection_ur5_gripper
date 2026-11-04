@@ -34,7 +34,7 @@ import yaml  # noqa: E402
 import test_scene as ts  # noqa: E402
 
 DEFAULT_SCENE_CONFIG = os.path.join(ts.CONFIG_DIR, "scene_husky.yaml")
-SCENE_KEYS = ("base_config", "fixed_scene_config", "mount", "init_pose", "drone_base", "drone_flight", "px4_surface_z",
+SCENE_KEYS = ("base_config", "fixed_scene_config", "mount", "init_pose", "drone_base", "drone_flight", "px4_surface_z", "imu",
               "third_view_camera_config", "collision_filter")
 FLIGHTS = ("geometric", "px4")
 
@@ -51,6 +51,12 @@ def load_scene_config(path=None):
             raise KeyError(f"{path}: 'mount.{k}' 항목이 없습니다")
     if sc["drone_flight"] not in FLIGHTS:
         raise ValueError(f"{path}: drone_flight 는 {FLIGHTS} 중 하나: {sc['drone_flight']}")
+    for k in ("offset_robot_base", "noise"):
+        if k not in (sc["imu"] or {}):
+            raise KeyError(f"{path}: 'imu.{k}' 항목이 없습니다 (offset_robot_base 는 null = 에셋 imu_link 그대로, noise 는 none 가능)")
+    off = sc["imu"]["offset_robot_base"]
+    if off is not None and np.asarray(off, dtype=float).shape != (3,):
+        raise ValueError(f"{path}: imu.offset_robot_base 는 [x, y, z] 또는 null: {off}")
     sc["path"] = path
     return sc
 
@@ -58,6 +64,24 @@ def load_scene_config(path=None):
 def _rz(yaw):
     c, s = math.cos(yaw), math.sin(yaw)
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def place_imu(stage, base, mount_xyz, mount_yaw, offset_robot_base):
+    """씬 설정 imu.offset_robot_base (로봇 base 기준 [m]) 로 imu_link 를 옮긴다 (메모리 stage, 재생 전). null 이면 에셋 그대로.
+    imu_link 는 베이스 강체의 자식이고 방향은 강체와 같게 둔다. → 강체 좌표계 위치 (3,) 또는 None"""
+    if offset_robot_base is None:
+        return None
+    from pxr import Gf, UsdGeom
+
+    p = np.asarray(mount_xyz, dtype=float) + _rz(mount_yaw) @ np.asarray(offset_robot_base, dtype=float)
+    prim = stage.GetPrimAtPath(base.imu_path)
+    if not prim.IsValid() or prim.GetParent().GetPath() != stage.GetPrimAtPath(base.body_path).GetPath():
+        raise RuntimeError(f"imu_link 가 베이스 강체 바로 아래에 없음: {base.imu_path}")
+    ops = [op for op in UsdGeom.Xformable(prim).GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
+    if len(ops) != 1:
+        raise RuntimeError(f"{base.imu_path}: translate xform op 가 하나가 아님 ({len(ops)})")
+    ops[0].Set(Gf.Vec3d(*p.tolist()))
+    return p
 
 
 def _yaw_quat(yaw):
@@ -202,6 +226,7 @@ def build_scene(scene_config=None, prop_spin=False, seed=0, pre_play=None, base_
     s.base = mb.make_base(s.base_cfg, start_xy=base_xy, start_yaw_deg=math.degrees(base_yaw), motion=base_motion, seed=seed)
     s.base_info = s.base.add(s.stage)
     s.root_joint = attach_robot(s.stage, s.base, mount_xyz, mount_yaw)
+    s.imu_placed = place_imu(s.stage, s.base, mount_xyz, mount_yaw, s.scene_cfg["imu"]["offset_robot_base"])
     s.filtered, n_husky = filter_base_collisions(s.stage, s.base, s.scene_cfg["collision_filter"]["robot_links"])
     print(f"[moving_base_scene] 베이스 {s.kind} {s.base_info}, UR5 root_joint {s.root_joint} → {s.base.body_path} "
           f"(마운트 {mount_xyz.tolist()}, yaw {math.degrees(mount_yaw):+.1f}°), 충돌 끔: {len(s.filtered)} 링크 × 베이스 강체 {n_husky}",

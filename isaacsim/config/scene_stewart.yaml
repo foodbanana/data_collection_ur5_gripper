@@ -28,3 +28,7 @@ third_view_camera_config: config/third_view_camera.yaml
 # UR5 base 쪽 강체 ↔ Stewart 윗판 충돌 끔 (UR5 바닥이 윗판 윗면에 바로 앉음). 팔 나머지 링크 ↔ 플랫폼 충돌은 그대로
 collision_filter:
   robot_links: [robot_mount, base_link_inertia]   # 강체만 (base_link 은 질량 없는 Xform)
+
+imu:                                      # 베이스 IMU (2026-11-04, Gazebo VRX WAM-V IMU 와 sim2sim 맞춤)
+  offset_robot_base: [-0.15, 0.0, 0.0]    # [m] 로봇 base (robot_mount) 기준 imu_link 위치 (메모리 stage 에서만 옮김, 에셋은 그대로). Gazebo: wamv/base_link (-0.15, 0, 1.3) = 갑판 위 로봇 base 높이
+  noise: gazebo                           # ros2_iface.yaml base.imu_noise_models 의 이름 또는 none. --imu-noise 로 바꿈
